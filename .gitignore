@@ -1,0 +1,19 @@
+# Credentials
+.git-credentials
+.netrc
+.env
+.ssh/
+*.pem
+*.key
+id_ed25519*
+.gitconfig
+
+# Build and cache output
+.cache/
+.venv/
+node_modules/
+dist/
+build/
+out/
+target/
+__pycache__/

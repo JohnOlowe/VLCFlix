@@ -60,16 +60,30 @@ artwork live in `%LOCALAPPDATA%\VLCFlix`, and survive an uninstall.
 
 ### If the window stays black
 
-From version 1.0.1 the app no longer fails silently. Every step writes to
-`%LOCALAPPDATA%\VLCFlix\launcher.log`:
+From 1.0.2 the app never shows an unexplained black window. The "Starting VLCFlix..."
+label stays on top until the page has actually painted, and if it does not paint
+within 8 seconds the shell retries with GPU acceleration switched off
+(`--disable-gpu`, the standard remedy for a browser surface that is created but never
+draws), then shows the panel below.
+
+Every step is written to `%LOCALAPPDATA%\VLCFlix\launcher.log`:
 
 ```
 [launch] port    = 58619
 [launch] node.exe started, pid=14744
 [health] server answered on port 58619 after 800 ms
 [webview2] loader = ...\resources\WebView2Loader.dll
-[webview2] CreateCoreWebView2EnvironmentWithOptions -> 0x80070002 (ERROR_FILE_NOT_FOUND)
+[webview2] attempt 0 starting (args='', profile='...\webview')
+[webview2] CreateCoreWebView2Controller -> 0x00000000
+[webview2] add_NavigationStarting -> 0x00000000
+[webview2] Navigate -> 0x00000000
+[webview2] watchdog armed for 8000 ms
+[webview2] WATCHDOG: no navigation completion after 8000 ms
+[webview2] state: visible=1 bounds=1229x651 source=about:blank browserPid=4120
 ```
+
+That last line is the decisive one: `source=about:blank` means the navigation never
+happened, while `bounds=0x0` or `visible=0` would point at the surface itself.
 
 If the embedded browser cannot start, the window shows a **native panel** instead of a
 black rectangle: the reason, the local address to open in any browser, a button to do

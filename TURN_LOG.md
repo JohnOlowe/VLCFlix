@@ -253,3 +253,36 @@
   fallback path is proven, the success path is not. The real cause of the user's
   black window should now be identifiable from `launcher.log`, but it is not yet
   confirmed — most likely a missing/blocked WebView2 runtime.
+
+## 2026-10-26 — v1.0.2: WebView2 succeeds yet nothing renders
+- User ran **both** the installer and the portable build; identical result, so it is not
+  a packaging problem. New log (1.0.1) is decisive:
+  `environment Invoke -> 0`, `CreateCoreWebView2Controller -> 0`, `controller Invoke -> 0`,
+  `get_CoreWebView2 -> 0`, `Navigate -> 0`, and **no `navigation starting`/`completed`**.
+  The runtime IS present and every call succeeds, but the page never loads.
+  1.0.1 hid the loading label at controller-attach, which is exactly the moment the
+  screen went black. "Maximise then click closes it" is the same failure seen again.
+- This matches a documented failure class: JUCE #1642 — "controller is created
+  successfully, Navigate() returns S_OK, but no events fire … page source remains
+  about:blank".
+- v1.0.2:
+  1. watchdog (8 s): if NavigationCompleted has not fired, dump browser state and escalate;
+     `LogWebViewState()` records visible / bounds / source / browserPid — the three
+     possible causes are told apart by that single line.
+  2. second attempt with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu` and a
+     separate profile (a wedged browser process must not answer the retry);
+     `--disable-gpu` is the standard remedy for a surface that is created but never paints.
+  3. every previously unchecked call is logged: put_IsVisible, put_Bounds, all three
+     add_*Event calls, get_Settings.
+  4. the label now stays **above** the webview until the page paints, so a browser failure
+     can never present as an unexplained black window again.
+  5. `SetUnhandledExceptionFilter` logs exception code, address and module, which covers
+     the "maximise and click closes it" symptom if it is a real crash.
+  6. the final message now distinguishes "runtime could not be started (hr)" from
+     "started but never drew the page" — the first version told users to install a
+     runtime they already had, whenever the environment call failed for another reason.
+- Verified under Wine (no WebView2 present): attempt 0 -> 0x80070002 -> attempt 1 with
+  --disable-gpu -> panel reading "The Microsoft Edge WebView2 Runtime could not be
+  started (0x80070002)". Screenshot read. Retry ladder and accounting both work.
+- Removed a diagnostic that passed a null handler to add_WebMessageReceived: it can only
+  ever fail, so its result proves nothing.

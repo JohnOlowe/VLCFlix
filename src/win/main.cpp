@@ -58,6 +58,11 @@ static std::wstring g_baseUrl;
 static ICoreWebView2Controller* g_controller = nullptr;
 static ICoreWebView2* g_webview = nullptr;
 static bool g_webviewAttached = false;
+static int  g_attempt = 0;         // which browser attempt is live
+static bool g_pageLoaded = false;  // the page really rendered
+static UINT_PTR g_watchdog = 0;
+static HRESULT g_envHr = S_OK;     // last environment creation result
+static bool g_gotController = false;  // did any attempt reach a controller?
 static const wchar_t* g_closeReason = L"none";
 
 #define WM_APP_SERVER_READY  (WM_APP + 1)
@@ -135,44 +140,69 @@ static void ShowFallbackPanel(const std::wstring& reason);
 
 class EnvironmentHandler final
     : public ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler {
+ public:
+  explicit EnvironmentHandler(int attempt) : attempt_(attempt) {}
   COM_HANDLER_BOILERPLATE(EnvironmentHandler,
                           ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler,
                           IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler)
   HRESULT STDMETHODCALLTYPE Invoke(HRESULT result,
                                    ICoreWebView2Environment* environment) override;
+
+ private:
+  int attempt_;
 };
 
 class ControllerHandler final
     : public ICoreWebView2CreateCoreWebView2ControllerCompletedHandler {
+ public:
+  explicit ControllerHandler(int attempt) : attempt_(attempt) {}
   COM_HANDLER_BOILERPLATE(ControllerHandler,
                           ICoreWebView2CreateCoreWebView2ControllerCompletedHandler,
                           IID_ICoreWebView2CreateCoreWebView2ControllerCompletedHandler)
   HRESULT STDMETHODCALLTYPE Invoke(HRESULT result,
                                    ICoreWebView2Controller* controller) override;
+
+ private:
+  int attempt_;
 };
 
 class NavigationStartingHandler final : public ICoreWebView2NavigationStartingEventHandler {
+ public:
+  explicit NavigationStartingHandler(int attempt) : attempt_(attempt) {}
   COM_HANDLER_BOILERPLATE(NavigationStartingHandler,
                           ICoreWebView2NavigationStartingEventHandler,
                           IID_ICoreWebView2NavigationStartingEventHandler)
   HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender,
                                    ICoreWebView2NavigationStartingEventArgs* args) override;
+
+ private:
+  int attempt_;
 };
 
 class NavigationCompletedHandler final
     : public ICoreWebView2NavigationCompletedEventHandler {
+ public:
+  explicit NavigationCompletedHandler(int attempt) : attempt_(attempt) {}
   COM_HANDLER_BOILERPLATE(NavigationCompletedHandler,
                           ICoreWebView2NavigationCompletedEventHandler,
                           IID_ICoreWebView2NavigationCompletedEventHandler)
   HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender,
                                    ICoreWebView2NavigationCompletedEventArgs* args) override;
+
+ private:
+  int attempt_;
 };
 
 class ProcessFailedHandler final : public ICoreWebView2ProcessFailedEventHandler {
+ public:
+  explicit ProcessFailedHandler(int attempt) : attempt_(attempt) {}
   COM_HANDLER_BOILERPLATE(ProcessFailedHandler, ICoreWebView2ProcessFailedEventHandler,
                           IID_ICoreWebView2ProcessFailedEventHandler)
   HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender,
                                    ICoreWebView2ProcessFailedEventArgs* args) override;
+
+ private:
+  int attempt_;
 };
 
 // ---------------------------------------------------------------------------
@@ -481,17 +511,112 @@ static void ShowFallbackPanel(const std::wstring& reason) {
 
 // ---------------------------------------------------------------------------
 // WebView2
+//
+// The page is served by our own process on loopback, so the only thing that can
+// realistically go wrong is the embedded browser itself. v1.0.0 assumed it would
+// simply work, and when it did not the user got a black window with no clue.
+//
+// The sequence below never assumes. Every call is checked, a watchdog fires if
+// the page does not finish loading, and a second attempt runs with GPU
+// acceleration disabled -- the standard remedy for a WebView2 surface that
+// creates successfully but never paints.
 // ---------------------------------------------------------------------------
+
+static const int kAttempts = 2;
+static const UINT_PTR TIMER_WATCHDOG = 1;
+static const UINT kWatchdogMs = 8000;
+
+static void ShowFallbackPanel(const std::wstring& reason);
+static void StartAttempt();
+
+static const wchar_t* AttemptArgs(int attempt) {
+  return attempt == 1 ? L"--disable-gpu" : L"";
+}
+
+// A separate profile per attempt: the browser process for a user data folder is
+// shared, so reusing the folder would let a wedged process answer the retry.
+static std::wstring AttemptDataFolder(int attempt) {
+  return JoinPath(AppDataDir(), attempt == 0 ? L"webview" : L"webview-sw");
+}
 
 static void ResizeWebView() {
   if (!g_controller) return;
   RECT bounds;
   GetClientRect(g_window, &bounds);
-  g_controller->put_Bounds(bounds);
+  HRESULT hr = g_controller->put_Bounds(bounds);
+  if (FAILED(hr)) LogHr(L"put_Bounds", hr);
+}
+
+// Dumps what the browser actually thinks it is doing. Called when an attempt is
+// abandoned, because "Navigate returned 0" plus "source is still about:blank"
+// plus "bounds are 0x0" are three very different problems.
+static void LogWebViewState() {
+  if (!g_controller || !g_webview) {
+    Log(L"[webview2] state: no controller/webview");
+    return;
+  }
+  BOOL visible = FALSE;
+  RECT bounds{};
+  g_controller->get_IsVisible(&visible);
+  g_controller->get_Bounds(&bounds);
+  LPWSTR source = nullptr;
+  g_webview->get_Source(&source);
+  UINT32 browserPid = 0;
+  g_webview->get_BrowserProcessId(&browserPid);
+  Log(L"[webview2] state: visible=%d bounds=%ldx%ld source=%ls browserPid=%lu", visible,
+      bounds.right - bounds.left, bounds.bottom - bounds.top,
+      source ? source : L"(null)", browserPid);
+  if (source) CoTaskMemFree(source);
+}
+
+static void TearDownWebView() {
+  if (g_watchdog) { KillTimer(g_window, TIMER_WATCHDOG); g_watchdog = 0; }
+  if (g_webview) { g_webview->Release(); g_webview = nullptr; }
+  if (g_controller) { g_controller->Release(); g_controller = nullptr; }
+  g_webviewAttached = false;
+}
+
+/** Give up on the current attempt and move to the next one, or to the panel. */
+static void NextAttempt(const wchar_t* reason) {
+  Log(L"[webview2] attempt %d abandoned: %ls", g_attempt, reason);
+  LogWebViewState();
+  TearDownWebView();
+  ++g_attempt;
+  if (g_attempt < kAttempts) {
+    Log(L"[webview2] retrying with arguments '%ls'", AttemptArgs(g_attempt));
+    StartAttempt();
+    return;
+  }
+  // Report what actually went wrong, not a generic guess: "the runtime is not
+  // installed" and "it started but never painted" call for different fixes.
+  if (!g_gotController && FAILED(g_envHr)) {
+    wchar_t msg[512];
+    _snwprintf_s(msg, 512, _TRUNCATE,
+                 L"The Microsoft Edge WebView2 Runtime could not be started "
+                 L"(0x%08lX).\r\nIt is a standard Windows 10/11 component but is "
+                 L"absent on some images and can be blocked by policy.\r\nInstall it, "
+                 L"then press Retry.",
+                 static_cast<unsigned long>(g_envHr));
+    ShowFallbackPanel(msg);
+  } else {
+    ShowFallbackPanel(
+        L"The built-in browser started but never drew the page.\r\n"
+        L"Both a normal and a software-rendered attempt were tried.");
+  }
+}
+
+/** The page is on screen: stand down the label and the watchdog. */
+static void PageLoaded(const wchar_t* how) {
+  if (g_pageLoaded) return;
+  g_pageLoaded = true;
+  if (g_watchdog) { KillTimer(g_window, TIMER_WATCHDOG); g_watchdog = 0; }
+  if (g_loading) ShowWindow(g_loading, SW_HIDE);
+  Log(L"[webview2] PAGE VISIBLE (%ls) on attempt %d", how, g_attempt);
 }
 
 HRESULT STDMETHODCALLTYPE NavigationStartingHandler::Invoke(
     ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) {
+  if (attempt_ != g_attempt) return S_OK;
   LPWSTR uri = nullptr;
   args->get_Uri(&uri);
   if (!uri) return S_OK;
@@ -510,70 +635,78 @@ HRESULT STDMETHODCALLTYPE NavigationStartingHandler::Invoke(
 
 HRESULT STDMETHODCALLTYPE NavigationCompletedHandler::Invoke(
     ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) {
+  if (attempt_ != g_attempt) return S_OK;
   BOOL success = FALSE;
   args->get_IsSuccess(&success);
   COREWEBVIEW2_WEB_ERROR_STATUS webError = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
   args->get_WebErrorStatus(&webError);
   UINT status = 0;
-  // HttpStatusCode lives on a derived interface; older runtimes may not expose
-  // it, so the query is optional and the log copes with 0.
   ICoreWebView2NavigationCompletedEventArgs2* args2 = nullptr;
   if (SUCCEEDED(args->QueryInterface(IID_ICoreWebView2NavigationCompletedEventArgs2,
                                      reinterpret_cast<void**>(&args2))) && args2) {
-    args2->get_HttpStatusCode(reinterpret_cast<int*>(&status));
+    int code = 0;
+    args2->get_HttpStatusCode(&code);
+    status = static_cast<UINT>(code);
     args2->Release();
   }
   Log(L"[webview2] navigation completed: success=%d http=%u webError=%d", success, status,
       static_cast<int>(webError));
 
-  if (!success) {
-    // A failed load is exactly the black window the user sees: report it
-    // instead of leaving an empty surface.
-    wchar_t reason[512];
-    _snwprintf_s(reason, 512, _TRUNCATE,
-                 L"The page did not load (status %u, WebView2 error %d). "
-                 L"The background service is running on:\r\n%s",
-                 status, static_cast<int>(webError), g_baseUrl.c_str());
-    ShowFallbackPanel(reason);
+  if (success) {
+    PageLoaded(L"navigation completed");
+    return S_OK;
   }
+  // The controller exists and Navigate was accepted, yet the page did not load.
+  // That is the black window; do not leave it on screen.
+  NextAttempt(L"navigation reported failure");
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE ProcessFailedHandler::Invoke(
     ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) {
+  if (attempt_ != g_attempt) return S_OK;
   COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
   if (args) args->get_ProcessFailedKind(&kind);
   Log(L"[webview2] PROCESS FAILED, kind=%d", static_cast<int>(kind));
-  wchar_t reason[256];
-  _snwprintf_s(reason, 256, _TRUNCATE,
-               L"The WebView2 browser process stopped unexpectedly (kind %d).",
-               static_cast<int>(kind));
-  ShowFallbackPanel(reason);
+  NextAttempt(L"browser process failed");
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE ControllerHandler::Invoke(
     HRESULT result, ICoreWebView2Controller* controller) {
   LogHr(L"controller Invoke", result);
+  if (attempt_ != g_attempt) { Log(L"[webview2] stale controller handler ignored"); return S_OK; }
   if (FAILED(result) || !controller) {
-    ShowFallbackPanel(L"WebView2 created no browser controller.");
+    NextAttempt(L"controller creation failed");
     return S_OK;
   }
   g_controller = controller;
-  g_controller->put_IsVisible(TRUE);
+  LogHr(L"put_IsVisible", g_controller->put_IsVisible(TRUE));
 
   HRESULT hr = g_controller->get_CoreWebView2(&g_webview);
   LogHr(L"get_CoreWebView2", hr);
   if (FAILED(hr) || !g_webview) {
-    ShowFallbackPanel(L"WebView2 did not expose its browser object.");
+    NextAttempt(L"get_CoreWebView2 failed");
     return S_OK;
   }
   g_webviewAttached = true;
-  if (g_loading) ShowWindow(g_loading, SW_HIDE);
   ResizeWebView();
 
+  // Keep "Starting VLCFlix..." above the browser surface. The WebView2 child
+  // window sits on top of our own children, so without this the user would be
+  // looking at an unexplained black rectangle whenever the page does not paint.
+  if (g_loading) {
+    RECT client;
+    GetClientRect(g_window, &client);
+    SetWindowPos(g_loading, HWND_TOP, 0, (client.bottom - 40) / 2, client.right, 40,
+                 SWP_NOACTIVATE);
+    ShowWindow(g_loading, SW_SHOW);
+  }
+
   ICoreWebView2Settings* settings = nullptr;
-  if (SUCCEEDED(g_webview->get_Settings(&settings)) && settings) {
+  hr = g_webview->get_Settings(&settings);
+  LogHr(L"get_Settings", hr);
+  if (SUCCEEDED(hr) && settings) {
     settings->put_AreDevToolsEnabled(FALSE);
     settings->put_AreDefaultContextMenusEnabled(FALSE);
     settings->put_IsStatusBarEnabled(FALSE);
@@ -581,39 +714,42 @@ HRESULT STDMETHODCALLTYPE ControllerHandler::Invoke(
   }
 
   EventRegistrationToken token;
-  g_webview->add_NavigationStarting(new NavigationStartingHandler(), &token);
-  g_webview->add_NavigationCompleted(new NavigationCompletedHandler(), &token);
-  g_webview->add_ProcessFailed(new ProcessFailedHandler(), &token);
-
+  LogHr(L"add_NavigationStarting",
+        g_webview->add_NavigationStarting(new NavigationStartingHandler(attempt_), &token));
+  LogHr(L"add_NavigationCompleted",
+        g_webview->add_NavigationCompleted(new NavigationCompletedHandler(attempt_), &token));
+  LogHr(L"add_ProcessFailed",
+        g_webview->add_ProcessFailed(new ProcessFailedHandler(attempt_), &token));
   hr = g_webview->Navigate(g_baseUrl.c_str());
   LogHr(L"Navigate", hr);
   if (FAILED(hr)) {
-    ShowFallbackPanel(L"WebView2 refused to navigate to the local service.");
+    NextAttempt(L"Navigate returned a failure");
+    return S_OK;
   }
+
+  g_watchdog = SetTimer(g_window, TIMER_WATCHDOG, kWatchdogMs, nullptr);
+  Log(L"[webview2] watchdog armed for %u ms", kWatchdogMs);
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE EnvironmentHandler::Invoke(
     HRESULT result, ICoreWebView2Environment* environment) {
   LogHr(L"environment Invoke", result);
+  if (attempt_ != g_attempt) { Log(L"[webview2] stale environment handler ignored"); return S_OK; }
   if (FAILED(result) || !environment) {
-    ShowFallbackPanel(
-        L"The Microsoft Edge WebView2 Runtime is not available.\r\n"
-        L"It normally ships with Windows 10 and 11.");
+    NextAttempt(L"environment creation failed");
     return S_OK;
   }
-  HRESULT hr = environment->CreateCoreWebView2Controller(g_window, new ControllerHandler());
-  LogHr(L"CreateCoreWebView2Controller", hr);
-  if (FAILED(hr)) {
-    ShowFallbackPanel(L"WebView2 could not create a browser controller.");
-  }
+  g_gotController = true;
+  LogHr(L"CreateCoreWebView2Controller",
+        environment->CreateCoreWebView2Controller(g_window, new ControllerHandler(attempt_)));
   return S_OK;
 }
 
-static void InitWebView2() {
-  if (g_fallbackShown) return;  // already degraded; the Retry button re-enters here
+static void StartAttempt() {
+  Log(L"[webview2] attempt %d starting (args='%ls', profile='%ls')", g_attempt,
+      AttemptArgs(g_attempt), AttemptDataFolder(g_attempt).c_str());
 
-  Log(L"[webview2] initialising");
   PFN_CreateEnvWithOptions create = LoadWebView2Loader();
   if (!create) {
     ShowFallbackPanel(
@@ -622,18 +758,35 @@ static void InitWebView2() {
     return;
   }
 
-  std::wstring dataDir = JoinPath(AppDataDir(), L"webview");
-  CreateDirectoryW(dataDir.c_str(), nullptr);
+  // Documented switch for pass-through browser flags. Set before the environment
+  // is created, otherwise the browser process has already started without it.
+  SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", AttemptArgs(g_attempt));
 
-  HRESULT hr = create(nullptr, dataDir.c_str(), nullptr, new EnvironmentHandler());
+  std::wstring data = AttemptDataFolder(g_attempt);
+  CreateDirectoryW(data.c_str(), nullptr);
+
+  HRESULT hr = create(nullptr, data.c_str(), nullptr, new EnvironmentHandler(g_attempt));
+  g_envHr = hr;
   LogHr(L"CreateCoreWebView2EnvironmentWithOptions", hr);
   if (FAILED(hr)) {
-    // Some failures return synchronously without ever invoking the handler, so
-    // the panel has to be raised here too.
-    ShowFallbackPanel(
-        L"WebView2 could not be initialised.\r\n"
-        L"Install the Microsoft Edge WebView2 Runtime and press Retry.");
+    NextAttempt(L"CreateCoreWebView2EnvironmentWithOptions failed");
   }
+}
+
+/** Called by the window when the watchdog fires. */
+static void WatchdogFired() {
+  g_watchdog = 0;
+  Log(L"[webview2] WATCHDOG: no navigation completion after %u ms", kWatchdogMs);
+  NextAttempt(L"the page never finished loading");
+}
+
+static void InitWebView2() {
+  if (g_fallbackShown) return;
+  g_attempt = 0;
+  g_pageLoaded = false;
+  g_gotController = false;
+  g_envHr = S_OK;
+  StartAttempt();
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +799,10 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
       ResizeWebView();
       LayoutFallback();
       return 0;
+
+    case WM_TIMER:
+      if (wParam == TIMER_WATCHDOG) { WatchdogFired(); return 0; }
+      break;
 
     case WM_ERASEBKGND: {
       if (!g_fallbackShown) break;
@@ -678,9 +835,7 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
           if (child) DestroyWindow(child);
         }
         g_fallbackShown = false;
-        if (g_controller) { g_controller->Release(); g_controller = nullptr; }
-        if (g_webview) { g_webview->Release(); g_webview = nullptr; }
-        g_webviewAttached = false;
+        TearDownWebView();
         if (g_loading) ShowWindow(g_loading, SW_SHOW);
         InitWebView2();
         return 0;
@@ -689,7 +844,8 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
     }
 
     case WM_APP_SERVER_READY:
-      if (g_loading) ShowWindow(g_loading, SW_HIDE);
+      // The label stays up until the page has actually painted. Hiding it here
+      // is what turned a browser failure into an unexplained black window.
       InitWebView2();
       return 0;
 
@@ -711,8 +867,7 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
 
     case WM_DESTROY:
       Log(L"[window] WM_DESTROY; webview attached was %d", g_webviewAttached ? 1 : 0);
-      if (g_webview) { g_webview->Release(); g_webview = nullptr; }
-      if (g_controller) { g_controller->Release(); g_controller = nullptr; }
+      TearDownWebView();
       StopServer();
       PostQuitMessage(0);
       return 0;
@@ -723,8 +878,28 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
   return DefWindowProcW(window, message, wParam, lParam);
 }
 
+/** A windowed app that dies silently is undebuggable; record where it died. */
+static LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* info) {
+  if (info && info->ExceptionRecord) {
+    wchar_t module[MAX_PATH] = L"?";
+    HMODULE mod = nullptr;
+    void* address = info->ExceptionRecord->ExceptionAddress;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(address), &mod)) {
+      GetModuleFileNameW(mod, module, MAX_PATH);
+    }
+    Log(L"[crash] code=0x%08lX address=%p module=%ls",
+        static_cast<unsigned long>(info->ExceptionRecord->ExceptionCode), address, module);
+  } else {
+    Log(L"[crash] unhandled exception, no record");
+  }
+  return EXCEPTION_CONTINUE_SEARCH;  // let Windows report it as usual
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   g_instance = instance;
+  SetUnhandledExceptionFilter(OnUnhandledException);
 
   // Logging first, before anything at all can fail. A previous build initialised
   // the log after the window was created, so an early exit left no trace.

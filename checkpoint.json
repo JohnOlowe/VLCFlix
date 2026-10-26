@@ -103,10 +103,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.0.3.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.0.3.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.1.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.1.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.0.3 bash build script: scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.1 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -128,7 +128,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.0",
+    "version": "1.1.1",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -158,5 +158,9 @@
     "subtitles": "sidecar .srt/.vtt beside the video, Movie.srt / Movie.en.srt / Movie.forced.srt; served as WebVTT via /api/subtitles/:id/:index; CC button in the player",
     "ffmpeg_engine": "third playMode 'ffmpeg': /api/stream/:id?engine=ffmpeg&t=N, hwaccel qsv/d3d11va/dxva2 on Windows, copies H.264 instead of re-encoding, restarts the stream to seek"
   },
-  "tests": "37 passing (23 original + 14 subtitle conversion/discovery)"
+  "tests": "37 passing (23 original + 14 subtitle conversion/discovery)",
+  "features_v111": {
+    "scan_watcher": "decoupled from the Settings panel; header chip shows progress anywhere; grid refreshes as artwork lands",
+    "bug_fixed": "closeSettings() cleared the poll interval AND pollScan() bailed when #scanStatus was gone, so the UI froze while the server kept working"
+  }
 }

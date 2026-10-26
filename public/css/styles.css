@@ -216,6 +216,41 @@ body:not([data-view='home']) .nav {
 .icon-btn:hover { background: rgba(255, 255, 255, 0.12); }
 .icon-btn--sm { padding: 5px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
 
+/* Background-scan indicator: proves the scan is alive while you browse. */
+.scan-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e8ee;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 240px;
+}
+.scan-chip:hover { background: rgba(255, 255, 255, 0.12); }
+/* A class rule with display: inline-flex beats the UA [hidden] rule, so the
+   element stayed on screen after the scan finished. Hide it explicitly. */
+.scan-chip[hidden] { display: none; }
+.scan-chip__label { overflow: hidden; text-overflow: ellipsis; }
+.scan-chip__spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: var(--brand-red);
+  animation: scan-spin 0.8s linear infinite;
+}
+@keyframes scan-spin { to { transform: rotate(360deg); } }
+@media (max-width: 860px) { .scan-chip { display: none; } }
+
 /* Subtitle toggle: outlined when off, solid when a track is showing. */
 .icon-btn--cc {
   font-size: 11px;

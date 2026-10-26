@@ -48,6 +48,10 @@
         </button>
         <input id="searchInput" class="search__input" type="search" placeholder="Titles, genres, years" aria-label="Search your library" autocomplete="off" />
       </form>
+      <button class="scan-chip" id="scanChip" type="button" hidden title="Library scan in progress — click for details">
+        <span class="scan-chip__spinner" aria-hidden="true"></span>
+        <span class="scan-chip__label" id="scanChipLabel">Scanning…</span>
+      </button>
       <button class="engine" id="engineBtn" type="button" title="Where playback happens">
         <span class="engine__dot" id="engineDot"></span>
         <span class="engine__label" id="engineLabel">VLC</span>

@@ -352,3 +352,37 @@ subtitles.
 ffmpeg/ffprobe are NOT installed by default in this sandbox (packages do not
 persist between turns). With them missing, `tools.canRender` is false and no
 artwork is produced — that is correct behaviour, not a bug: install ffmpeg.
+
+## 2026-10-26 — v1.1.1: the scan always continued; the UI just stopped reporting it
+User asked whether the scan keeps going after closing Settings. Answer: yes on the
+server, no on screen — and the second part was three client bugs.
+
+Proved the server half first: with zero requests for 6 seconds, posters went 0 -> 8
+(`phase=art done=8/8`). The scan is a server-side job and nothing cancels it.
+
+The client half was broken:
+1. `closeSettings()` called `clearInterval(state.scanPoll)` — polling died with the panel.
+2. Even without that, the tick did `const status = $('#scanStatus'); if (!status) { clearInterval(...) }`,
+   and that element does not exist once the panel is closed.
+3. `refreshCatalog()` was only reachable from that poll, so the grid never updated.
+4. On boot `if (state.scan?.running) openSettings()` force-opened the panel.
+
+v1.1.1:
+- `watchScan()` owns the polling, independent of any panel, and updates whatever
+  happens to be on screen.
+- Header chip (`#scanChip`) shows "Reading 40/113" then "Artwork 40/113 · 35%"
+  anywhere in the app; clicking it opens Settings. Hidden when idle.
+- Grid refreshes as artwork lands (throttled to 1.5 s).
+- Boot no longer hijacks the view; it just starts the watcher.
+- Reopening Settings paints current progress immediately (one `tick()` on start)
+  instead of waiting up to 750 ms for the first interval.
+
+Second bug found while verifying: `.scan-chip { display: inline-flex }` beats the UA
+`[hidden]` rule, so the chip never disappeared. Added `.scan-chip[hidden] { display: none }`.
+
+Verified in real headless Chromium (playwright 1.49, temp install) with the settings
+panel closed the whole time:
+  idle page            chip hidden
+  closed 6 s           chip "Artwork 4/32 · 13%", 12 artwork images in the grid
+  reopen mid-scan      "Library ready — drawing artwork 6/32" after 150 ms
+  finished             chip hidden, 100 artwork images, 0 console errors

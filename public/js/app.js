@@ -168,7 +168,9 @@ async function boot() {
   paintEngine();
   paintFooter();
   route();
-  if (state.scan?.running) openSettings();
+  // A scan already in progress on load shows in the header; forcing the settings
+  // modal open would steal the view the user actually opened the app for.
+  if (state.scan?.running) watchScan();
 }
 
 async function refreshCatalog({ keepView = true } = {}) {
@@ -1075,8 +1077,9 @@ async function openSettings() {
 
 function closeSettings() {
   $('#settingsModal').hidden = true;
-  clearInterval(state.scanPoll);
-  state.scanPoll = null;
+  // The scan watcher deliberately keeps running: the scan belongs to the server,
+  // and the header chip is the only sign it is alive once this panel is gone.
+
   if (!$('#detailModal').hidden || !$('#player').hidden) return;
   document.body.classList.remove('is-locked');
 }
@@ -1280,7 +1283,7 @@ async function renderSettings() {
     fullscreenToggle
   ));
 
-  if (state.scan?.running) pollScan();
+  if (state.scan?.running) watchScan();
   else if (state.scan?.finishedAt) {
     $('#scanStatus').textContent = `Last scan finished ${new Date(state.scan.finishedAt).toLocaleTimeString()} — ${state.items.length} titles.`;
     $('#scanFill').style.width = '100%';
@@ -1295,60 +1298,96 @@ async function saveSettings(patch) {
   paintEngine();
 }
 
-function pollScan() {
-  clearInterval(state.scanPoll);
+/** Header chip: the only progress indicator visible outside Settings. */
+function paintScanChip(scan) {
+  const chip = $('#scanChip');
+  const label = $('#scanChipLabel');
+  if (!chip || !label) return;
+
+  if (!scan || !scan.running) {
+    chip.hidden = true;
+    return;
+  }
+  chip.hidden = false;
+  const pct = scan.total ? Math.round((scan.done / scan.total) * 100) : 0;
+  if (scan.phase === 'art') {
+    label.textContent = scan.total ? `Artwork ${scan.done}/${scan.total} · ${pct}%` : 'Drawing artwork…';
+  } else {
+    label.textContent = scan.total ? `Reading ${scan.done}/${scan.total}` : 'Reading library…';
+  }
+}
+
+/**
+ * Watch a running scan.
+ *
+ * Runs independently of the Settings panel. The scan itself is a server-side job
+ * that continues whether or not anything is polling, but the catalogue only
+ * reaches the screen through this watcher -- so tying it to the panel meant the
+ * library silently stopped updating when the panel closed, which is exactly how
+ * "it did not continue in the background" looked from the outside.
+ */
+function watchScan() {
+  if (state.scanPoll) return; // already watching
   let lastArt = -1;
-  let refreshedItems = false;
   let lastRefresh = 0;
 
-  state.scanPoll = setInterval(async () => {
+  const tick = async () => {
+    let scan;
     try {
-      const scan = await api('/api/scan/status');
-      state.scan = scan;
-      const status = $('#scanStatus');
-      const fill = $('#scanFill');
-      if (!status) { clearInterval(state.scanPoll); return; }
-
-      if (scan.running) {
-        const pct = scan.total ? Math.round((scan.done / scan.total) * 100) : 0;
-        if (scan.phase === 'art') {
-          // Phase 1 is done: the library is already usable, thumbnails are still
-          // being drawn. Say so plainly instead of showing a stalled progress bar.
-          status.textContent = scan.total
-            ? `Library ready — drawing artwork ${scan.done}/${scan.total}`
-            : 'Library ready — drawing artwork…';
-          const now = Date.now();
-          const grew = scan.done !== lastArt;
-          if ((!refreshedItems || grew) && now - lastRefresh > 1500) {
-            refreshedItems = true;
-            lastArt = scan.done;
-            lastRefresh = now;
-            refreshCatalog().catch(() => {});
-          }
-        } else {
-          status.textContent = scan.total
-            ? `Reading ${scan.done}/${scan.total} — ${scan.current}`
-            : 'Reading library…';
-        }
-        if (fill) fill.style.width = `${pct}%`;
-      } else {
-        clearInterval(state.scanPoll);
-        state.scanPoll = null;
-        if (fill) fill.style.width = '100%';
-        if (scan.error) {
-          status.textContent = `Scan failed: ${scan.error}`;
-          toast(`Scan failed: ${scan.error}`, { error: true });
-        } else {
-          status.textContent = `Scan complete — ${state.items.length} titles.`;
-          await refreshCatalog();
-          paintFoldersAfterScan();
-          toast(`Library scanned: ${state.items.length} title${state.items.length === 1 ? '' : 's'}`);
-        }
-      }
+      scan = await api('/api/scan/status');
     } catch {
-      clearInterval(state.scanPoll);
+      return; // transient: keep the watcher alive rather than giving up
     }
-  }, 750);
+    state.scan = scan;
+    paintScanChip(scan);
+
+    // Settings may or may not be on screen; update it only if it is.
+    const status = $('#scanStatus');
+    const fill = $('#scanFill');
+    if (status) {
+      if (scan.running) {
+        status.textContent = scan.phase === 'art'
+          ? (scan.total ? `Library ready — drawing artwork ${scan.done}/${scan.total}` : 'Library ready — drawing artwork…')
+          : (scan.total ? `Reading ${scan.done}/${scan.total} — ${scan.current}` : 'Reading library…');
+        if (fill) fill.style.width = `${scan.total ? Math.round((scan.done / scan.total) * 100) : 0}%`;
+      }
+    }
+
+    if (scan.running) {
+      // Pull the catalogue in as artwork lands, so the grid fills while browsing.
+      const now = Date.now();
+      if (scan.phase === 'art' && scan.done !== lastArt && now - lastRefresh > 1500) {
+        lastArt = scan.done;
+        lastRefresh = now;
+        refreshCatalog().catch(() => {});
+      }
+      return;
+    }
+
+    // finished
+    clearInterval(state.scanPoll);
+    state.scanPoll = null;
+    paintScanChip(null);
+    if (fill) fill.style.width = '100%';
+    if (status) {
+      if (scan.error) status.textContent = `Scan failed: ${scan.error}`;
+      else status.textContent = `Scan complete — ${state.items.length} titles.`;
+    }
+    await refreshCatalog().catch(() => {});
+    paintFoldersAfterScan();
+    if (scan.error) toast(`Scan failed: ${scan.error}`, { error: true });
+    else toast(`Library scanned: ${state.items.length} title${state.items.length === 1 ? '' : 's'}`);
+  };
+
+  state.scanPoll = setInterval(tick, 750);
+  tick(); // paint immediately instead of waiting for the first interval
+}
+
+// Kept as the name the rest of the file uses.
+function pollScan() {
+  clearInterval(state.scanPoll);
+  state.scanPoll = null;
+  watchScan();
 }
 
 function paintFoldersAfterScan() {
@@ -1459,6 +1498,7 @@ function wireEvents() {
   /* settings + engine */
   $('#settingsBtn').addEventListener('click', () => openSettings());
   $('#engineBtn').addEventListener('click', () => openSettings());
+  $('#scanChip').addEventListener('click', () => openSettings());
 
   /* modal closing */
   $$('[data-close]').forEach((node) => node.addEventListener('click', () => {

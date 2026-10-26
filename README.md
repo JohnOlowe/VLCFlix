@@ -240,6 +240,10 @@ browsable after **685 ms**, and artwork finished **8.3 s later in the background
    duration, resolution and codecs. Six files are read at a time and no pixels are
    touched, so the grid fills in within a second or two even on a large library.
    The catalog is published here, so you can start browsing immediately.
+   **The scan is not tied to the Settings panel.** It is a server-side job, and a
+   small indicator in the header — *"Artwork 40/113 · 35%"* — shows it is alive
+   while you browse; clicking it reopens the panel. The grid refreshes as artwork
+   lands, so thumbnails appear while you scroll instead of all at once.
 2. **Phase 2 — draw (background).** Posters and backdrops are rendered two at a
    time and the catalog is republished as they land. The settings panel reads
    *"Library ready — drawing artwork 40/113"*, and cards fill in while you scroll.

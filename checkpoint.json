@@ -87,12 +87,17 @@
       "administration": 403,
       "repos_visible": 15
     },
-    "scope_caveats": [
-      "all 15 visible repos are public, so 200s do not prove read scope",
-      "write scope beyond VLCFlix was not tested - that would require mutating another repo",
-      "token is broader than a single repository; recommend narrowing and rotating"
-    ],
+    "scope_caveats": [],
     "negative_control": "hiding the token + clearing .git-credentials produced 'No anonymous write access'; restoring made dry-run succeed",
-    "token_value_in_state_files": false
+    "token_value_in_state_files": false,
+    "scope_verification": {
+      "method": "git push --dry-run with the token sent explicitly via http.extraheader, so credential.useHttpPath could not mask the result",
+      "control": "JohnOlowe/VLCFlix -> accepted (* [new branch] HEAD -> scope-probe)",
+      "other_repositories": "14 of 14 returned HTTP 403",
+      "side_effects": "none - --dry-run created no refs; VLCFlix still has only main, no scope-probe branch on any repo",
+      "conclusion": "effective scope is Contents: read/write on VLCFlix only",
+      "retracted_claim": "an earlier note said the token was broader than one repository; that was wrong - the 15 visible repos are all public, which requires no permission"
+    },
+    "recommend_rotation_reason": "chat exposure only, not over-scoping"
   }
 }

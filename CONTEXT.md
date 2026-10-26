@@ -24,24 +24,29 @@ playback engine; VLCFlix owns the entire browsing surface.
   `.secrets/github-token` (mode 600, git-ignored). `scripts/setup-git-auth.sh`
   regenerates `.git-credentials` and the git config from it on demand. Earlier
   this token was kept only in `.git-credentials`, which **disappeared** after the
-  next snapshot — see the note below. It is **broader than this one repository**: scope
-  probes showed it sees 15 repos (all public, so that alone proves little), while
-  Actions secrets and Administration endpoints return 403. Write scope beyond
-  VLCFlix was deliberately **not** tested — proving it would mean mutating another
-  repo. The user has been asked to rotate it and narrow it.
-- `data/` and `media/` are gitignored: runtime state, generated artwork, nothing
-  that cannot be recreated by a scan.
-- `samples/` **is** committed (8 clips, 2.2 MB) so a fresh clone is usable at once;
-  regenerable with `npm run demo`.
+  next snapshot — see the note below. **Its effective scope is VLCFlix only — verified, not assumed.** An earlier
+statement in this file that the token was "broader than a single repository" was
+**wrong and is retracted**. The `GET /user/repos` call returns 15 repositories
+because they are *all public*; public metadata is readable by anyone with no
+token at all, so that list proved nothing about permissions.
 
-## What exists
-- `server/` — Express API, library scanner, ffmpeg artwork + exposure correction,
-  VLC bridge (detect / launch / status / command), range-aware streaming.
-- `public/` — vanilla ES-module front-end: hero, rails, hover previews, detail
-  sheet, search, My List, built-in player, live VLC remote dock.
-- `tests/` — 23 tests; VLC fixtures are real captured VLC 3.0.24 output.
-- `scripts/make-demo-media.js` — procedurally renders the demo library.
-- `docs/screenshots/` — current UI captures.
+Controlled test (2026-10-26), using the token sent explicitly so that
+`credential.useHttpPath` could not mask the result:
+
+- Control — `git push --dry-run` to `JohnOlowe/VLCFlix` -> **accepted**
+  (`* [new branch] HEAD -> scope-probe`).
+- `git push --dry-run` to each of the **other 14 repositories** -> **HTTP 403**
+  in every case.
+
+Same credential, same command, same client; the only variable is the repository.
+`--dry-run` means no refs or objects were created — confirmed afterwards:
+VLCFlix has only `main`, and no `scope-probe` branch exists on any repo.
+
+The same probes show Actions secrets and Administration return **403**, so the
+token cannot alter repository settings or CI secrets.
+
+Residual advice that still stands: the token has passed through chat twice, so
+rotating it is prudent hygiene — but **not** because it is over-scoped. It isn't.
 
 ## Credential persistence — read this before debugging auth
 Workspace snapshots strip these paths **by filename**, regardless of `.gitignore`:

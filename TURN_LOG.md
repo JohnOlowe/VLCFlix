@@ -142,3 +142,23 @@
 - Verified absence from GitHub independently: cloned the remote to /tmp and
   confirmed no `.secrets`, no `.git-credentials`, and no `github_pat_` string
   anywhere in the tree.
+
+## 2026-10-26 — Token scope verified: effective access is VLCFlix only (claim retracted)
+- **Correction.** I previously recorded that the token was "broader than a single
+  repository" and advised narrowing it on that basis. That was wrong. `GET
+  /user/repos` listing 15 repos proves nothing: all 15 are public, and public
+  metadata is readable with no token. I asserted a scope conclusion from evidence
+  that could not support it.
+- The user stated only VLCFlix is writable and authorised testing other repos.
+- Controlled test, with the token passed explicitly via `http.extraheader` so that
+  `credential.useHttpPath` (which only supplies it for the VLCFlix path) could not
+  produce a false negative:
+  - control `git push --dry-run` to VLCFlix -> accepted, `* [new branch] HEAD -> scope-probe`
+  - `git push --dry-run` to each of the other 14 repos -> **HTTP 403, 14/14**
+- No side effects: `--dry-run` creates nothing. Verified afterwards that VLCFlix
+  still has only `main` at `87fbefc`, and that no `scope-probe` branch exists on
+  any repository (spot-checked OmniPost, whose branches are its own).
+- Combined with earlier probes (Actions secrets 403, Administration 403), the
+  token is scoped to repository contents on VLCFlix only.
+- Rotation is still reasonable because the token passed through chat, but that is
+  hygiene, not a defect in its scope.

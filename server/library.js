@@ -658,6 +658,9 @@ async function scan(folders, {
       height: info.height,
       vcodec: info.vcodec || null,
       acodec: info.acodec || null,
+      // Kept so the hardware-decode ladder can ask a 10-bit film for a 10-bit
+      // download instead of guessing and failing a trial.
+      pixFmt: info.pixFmt || null,
       subtitles,
       // Rendered in phase 2; carried over when the file has not changed.
       poster: cached?.poster || null,

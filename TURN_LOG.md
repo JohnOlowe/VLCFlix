@@ -814,3 +814,48 @@ delay canvas live the chrome computed `z-index: 3` over the canvas's `2`, the cl
 button hit-tested as the top element, and the screenshot shows the scrub bar and the
 "Audio −300 ms" pill drawn over the picture. Regressions all green: player 14/14,
 fallback 10/10, HEVC 6/6, chrome 6/6, 64/64 unit tests.
+
+## 2026-10-26 — v1.2.0: hardware decoding, but only if you ask for it
+
+"Add it, but add it as an option that you have to explicitly go and activate.
+Normally, it should use software, but if the option is explicitly selected, it
+should try hardware first."
+
+So the GPU is back in the transcode path, behind a switch that starts off:
+
+- `settings.hwDecode` (Settings → Playback → **Hardware decoding (experimental)**),
+  default `false`, validated as a boolean, whitelisted in `POST /api/settings`.
+- when on, `streamViaFfmpeg` builds a plan ladder from the decoders this ffmpeg
+  build lists — `qsv`, `d3d11va`, `dxva2` on Windows — each with
+  `-hwaccel_output_format` and an explicit `hwdownload,format=…` filter. That
+  filter is the whole fix: without it the scaler and x264 cannot read GPU frames,
+  which is the black screen of v1.1.0–v1.1.10.
+- 10/12-bit films ask for `p010le` first and 8-bit films for `nv12`, so the first
+  trial is not a conversion the hardware is likely to refuse.
+- every attempt is a trial: no first frame within **2.5 s**, an early exit, or a
+  device that will not open marks that plan broken and replays the *same request*
+  in software. Broken plans are remembered for the run, so the ladder retires
+  itself instead of charging 2.5 s to every seek.
+- the log says which pipe ran: `transcode (hardware qsv -> p010le)` or
+  `transcode (software decode)`, plus why a hardware plan was abandoned.
+
+Caught by a test rather than by the user: `POST /api/settings` copies only keys in
+its `allowed` list, and `hwDecode` was not in it — the validator existed, the value
+was silently dropped, and the switch did nothing. The settings test failed with
+`200 !== 400` on a deliberately invalid value, which is exactly what a whitelist
+that eats a key looks like from outside.
+
+Verified on this GPU-less machine, which is the interesting case: with the option
+on, a 10-bit HEVC film is sent to `qsv -> p010le`, ffmpeg answers
+`Device creation failed: -542398533.`, the request is replayed in software, and the
+browser gets a picture (1280x720, 192 frames, readyState 4, no fallback notice). The
+ladder retired `qsv -> nv12` and `vaapi -> nv12` one request each and then went
+straight to software; an H.264 film is still copied with the option on; the choice
+survives a restart. Settings UI: the row renders, the switch saves, the choice
+survives a reload, and the engine button no longer claims to be hardware. 72/72
+tests.
+
+Also added `tools/hwdecode-probe.cmd` for the laptop: it runs the same eight plans
+against a real film (or a 3-second 10-bit HEVC clip it makes itself) and writes a
+report of which ones produce frames. **Not yet run on Windows** — that is the next
+thing to do with it.

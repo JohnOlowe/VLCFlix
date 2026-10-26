@@ -29,6 +29,10 @@ const DEFAULTS = {
     // Compensate automatically for the output latency of the audio device
     // (Bluetooth earbuds add a variable 100-300 ms). Off unless asked for.
     autoLatency: false,
+    // Ask the GPU to decode films that need transcoding. Off unless asked for:
+    // a GPU decoder that cannot hand frames back produces a black screen, so it
+    // is a trial, never a default (see HW_PLANS in index.js).
+    hwDecode: false,
   },
   progress: {}, // { [itemId]: { position, duration, updatedAt } }
   myList: [], // [itemId]

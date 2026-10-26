@@ -69,9 +69,9 @@
     ]
   },
   "next_steps": [
-    "user reports whether the three player bugs are gone on real Windows (1.1.13)",
-    "if scroll still feels too fast: ask which surface (home grid / settings / player subtitle panel); wheel input measures 1:1 and src/win is unchanged since 1.1.4",
-    "keep release/ to the current pair only (1.1.13)"
+    "user runs tools/hwdecode-probe.cmd on the Windows laptop and sends back vlcflix-hwdecode-report.txt",
+    "use that report to pin the ladder order/download format for their GPU (the app already falls back safely without it)",
+    "user confirms on real Windows that the switch is off by default and that turning it on still plays the film"
   ],
   "git_auth": {
     "token_location": ".secrets/github-token",
@@ -106,10 +106,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.13.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.13.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.2.0.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.2.0.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.13 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.2.0 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -131,7 +131,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.13",
+    "version": "1.2.0",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -241,5 +241,13 @@
     "seek_replaces_offset": "resumed streams carry ?t=<resume>; restartStream() appended a second t, so Express delivered ['14','9'], Number() => NaN => 0, and every seek restarted from 0s. streamUrlAt() rebuilds the query with searchParams.set and the server takes the last value defensively",
     "only_the_icon_toggles": "the middle third toggled playback; now only event.target.closest('.player__center') does, with the 84px svg alone given pointer-events:auto while the chrome is up; a click beside it just reveals the chrome. A hidden icon is never an invisible target (gated on .player.is-active), and the double-tap-while-hidden path still toggles",
     "v115_comparison": "git show 3d2e10b:public/js/app.js shows v1.1.5 seek/scrub code identical to the current code, so no seek regression was introduced after 1.1.5; the resume URL added later is what broke it"
+  },
+  "features_v120": {
+    "option": "settings.hwDecode, off by default; Settings -> Playback -> Hardware decoding (experimental); must be explicitly switched on",
+    "ladder": "qsv/d3d11va/dxva2 (win32), videotoolbox (darwin), qsv/vaapi (linux), each with -hwaccel_output_format plus an explicit -vf hwdownload,format=...; p010le first for 10/12-bit films, nv12 first for 8-bit",
+    "trial": "2.5 s first-frame watchdog; early exit, missing device or timeout marks the plan broken and replays the same request in software; broken plans persist for the run",
+    "reason_for_hwdownload": "without it ffmpeg fails with 'Impossible to convert between the formats supported by the filter Parsed_null_0 and auto_scale_0' - the v1.1.0-v1.1.10 black screen",
+    "bug_caught_by_test": "POST /api/settings copies only allowed keys; hwDecode was missing from that list, so the switch silently saved nothing (test failed 200 !== 400 before the fix)",
+    "probe_script": "tools/hwdecode-probe.cmd - runs S0 software plus H1-H7 hardware plans on a real film or a self-made 3 s 10-bit HEVC clip, writes vlcflix-hwdecode-report.txt to the Desktop; NOT yet run on Windows"
   }
 }

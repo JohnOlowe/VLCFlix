@@ -191,15 +191,44 @@ Three engines, chosen in **Settings → Playback**:
 | Engine | What it does |
 |---|---|
 | **Real VLC** | Drives your installed `vlc.exe` through its HTTP interface. Most compatible; opens VLC's own window. |
-| **FFmpeg (hardware)** | Pipes the film through `ffmpeg` into the in-app player. Uses a hardware decoder when the machine offers one. |
+| **FFmpeg** | Pipes the film through `ffmpeg` into the in-app player. Decodes in software by default; hardware decoding is an opt-in switch. |
 | **Built-in player** | Serves the file byte-for-byte over a range-aware stream (HTTP 206). Zero CPU. |
 
-**FFmpeg (hardware)** is for containers and codecs the browser cannot open itself
-(MKV, AVI, HEVC, AC3…) and for machines where software decoding stutters. ffmpeg
-detects an accelerator once at startup — QSV, D3D11VA or DXVA2 on Windows,
-VideoToolbox on macOS — and hands the decoded frames back for encoding. If the file
-is already H.264 the video is **copied, not re-encoded**, because decoding and
-re-encoding something the player can already decode is pure waste.
+**FFmpeg** is for containers and codecs the browser cannot open itself (MKV, AVI,
+HEVC, AC3…). If the file is already H.264 the video is **copied, not re-encoded**,
+because decoding and re-encoding something the player can already decode is pure
+waste. Everything else is transcoded, and decoded in **software** unless you turn
+hardware decoding on.
+
+### Hardware decoding (off by default)
+
+Settings → Playback → **Hardware decoding (experimental)**. It is deliberately a
+switch you have to find and turn on, because the failure mode is invisible: a GPU
+decoder that cannot hand its frames back writes nothing at all, and the viewer sees
+a black rectangle rather than an error.
+
+When it is on, each transcode tries a GPU decoder first — QSV, D3D11VA and DXVA2 on
+Windows, VideoToolbox on macOS, QSV/VAAPI on Linux — always with an explicit
+`hwdownload` step, which is what converts the GPU surface into frames the scaler and
+libx264 can actually consume. That step is not optional: without it ffmpeg fails with
+*"Impossible to convert between the formats supported by the filter"*, which is what
+made v1.1.0–v1.1.10 black.
+
+Every attempt is a trial, never an assumption:
+
+1. the GPU pipe must deliver its first frame within **2.5 seconds**;
+2. if it exits early, cannot open the device, or misses that deadline, it is killed and
+   the *same request* is served by the software pipe — the film plays either way;
+3. a plan proved broken is remembered for the rest of the run, so later seeks do not
+   pay for it again, and the ladder retires itself one plan per attempt until only
+   software is left;
+4. `server.log` records which plan was used: `transcode (hardware qsv -> p010le)` or
+   `transcode (software decode)`, and why a hardware plan was abandoned.
+
+If you want to know what your own machine can do before switching it on, run
+`tools/hwdecode-probe.cmd` — it is installed with the app and also lives in the source
+tree. Double-click it, or drag a film onto it. It runs exactly
+these plans against a real file and writes a report saying which ones produce frames.
 
 FFmpeg output is a pipe, so it has no duration and cannot be scrubbed internally.
 Seeking there restarts the stream at the new offset; the timeline still shows true

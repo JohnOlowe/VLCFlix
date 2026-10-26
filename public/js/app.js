@@ -1871,7 +1871,7 @@ async function renderSettings() {
 
   /* playback engine */
   const modeSeg = el('div', { class: 'seg' });
-  for (const [value, label] of [['vlc', 'Real VLC'], ['ffmpeg', 'FFmpeg (hardware)'], ['browser', 'Built-in player']]) {
+  for (const [value, label] of [['vlc', 'Real VLC'], ['ffmpeg', 'FFmpeg'], ['browser', 'Built-in player']]) {
     modeSeg.append(el('button', {
       type: 'button',
       class: (state.settings.playMode === value) ? 'is-active' : '',
@@ -1892,6 +1892,42 @@ async function renderSettings() {
       },
     }));
   }
+
+  /* hardware decoding — off unless asked for, and only ever a trial */
+  const hwAvailable = (system.hwDecode && system.hwDecode.available) || [];
+  const hwToggle = el('button', {
+    class: `switch${state.settings.hwDecode ? ' is-on' : ''}`,
+    type: 'button',
+    role: 'switch',
+    'aria-checked': state.settings.hwDecode ? 'true' : 'false',
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      const next = !state.settings.hwDecode;
+      try {
+        await saveSettings({ hwDecode: next });
+      } catch {
+        return; // the refusal has been shown in a toast; leave the old choice
+      }
+      button.classList.toggle('is-on', next);
+      button.setAttribute('aria-checked', String(next));
+    },
+  }, el('span', { class: 'switch__knob' }));
+  if (!hwAvailable.length) {
+    hwToggle.disabled = true;
+    hwToggle.title = 'This ffmpeg build lists no GPU decoder that VLCFlix knows how to drive';
+  }
+
+  const hwRow = el('div', { class: 'field' },
+    el('label', { class: 'field__label', text: 'Hardware decoding (experimental)' }),
+    el('div', { class: 'row-actions' }, hwToggle,
+      el('span', { class: 'field__hint', text: hwAvailable.length
+        ? `Off by default. When on, a film that needs transcoding is tried on the GPU first (${hwAvailable.join(', ')}), and falls back to software by itself if no frame arrives within 2.5 seconds.`
+        : 'Off by default. No GPU decoder was found in this ffmpeg build, so transcoding stays in software.' })),
+    el('p', { class: 'field__hint', text:
+      'Software decoding always produces frames the encoder can take. Hardware decoding is easier on the CPU but ' +
+      'depends on the graphics driver, and a decoder that cannot hand its frames back shows a black screen — which is ' +
+      'why it is never used unless you switch it on here.' })
+  );
 
   /* audio latency compensation */
   const latencyToggle = el('button', {
@@ -1975,6 +2011,7 @@ async function renderSettings() {
         el('span', { class: `dot ${system.tools.ffmpeg ? 'ok' : 'warn'}` }),
         el('span', { text: system.tools.ffmpeg ? 'ffmpeg available — artwork and previews will be generated.' : 'ffmpeg not on PATH — cards fall back to generated gradients and no previews.' }))
     ),
+    hwRow,
     latencySection
   );
 

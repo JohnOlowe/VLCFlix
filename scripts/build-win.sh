@@ -70,6 +70,9 @@ say "assembling payload"
 cp -r "$ROOT/server" "$ROOT/public" "$STAGE/resources/app/"
 cp "$ROOT/package.json" "$ROOT/package-lock.json" "$STAGE/resources/app/"
 cp -r "$ROOT/samples" "$STAGE/resources/app/" 2>/dev/null || true
+# Diagnostics ship with the app: hwdecode-probe.cmd writes its report to the
+# Desktop, so it works even from a read-only Program Files directory.
+cp -r "$ROOT/tools" "$STAGE/resources/app/" 2>/dev/null || true
 
 # Production dependencies only. express and fast-xml-parser are pure JavaScript,
 # so the Linux-installed tree is byte-identical to what Windows would install.

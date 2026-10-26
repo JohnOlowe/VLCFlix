@@ -311,7 +311,7 @@ app.get('/api/scan/status', (req, res) => res.json(liveStatus()));
 
 app.post('/api/settings', async (req, res) => {
   const allowed = ['libraryFolders', 'vlcPath', 'vlcHttpPort', 'vlcPassword', 'playMode',
-    'vlcFullscreen', 'autoLatency'];
+    'vlcFullscreen', 'autoLatency', 'hwDecode'];
   const patch = {};
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(req.body, key)) patch[key] = req.body[key];
@@ -335,6 +335,9 @@ app.post('/api/settings', async (req, res) => {
   if ('autoLatency' in patch && typeof patch.autoLatency !== 'boolean') {
     return res.status(400).json({ error: 'autoLatency must be true or false' });
   }
+  if ('hwDecode' in patch && typeof patch.hwDecode !== 'boolean') {
+    return res.status(400).json({ error: 'hwDecode must be true or false' });
+  }
   if ('playMode' in patch && !['vlc', 'ffmpeg', 'browser'].includes(patch.playMode)) {
     return res.status(400).json({ error: "playMode must be 'vlc', 'ffmpeg' or 'browser'" });
   }
@@ -350,6 +353,8 @@ app.get('/api/system', async (req, res) => {
     tools: await library.probeTools(),
     vlc: await vlcStatus(settings),
     samplesDir: SAMPLES_DIR,
+    // What this machine could offer if the viewer turns hardware decoding on.
+    hwDecode: { available: hwPlansForPlatform().map((plan) => plan.accel).filter((a) => availableHwAccels().includes(a)) },
   });
 });
 
@@ -536,7 +541,117 @@ function hasX264() {
   return x264Cache;
 }
 
-function streamViaFfmpeg(req, res, item) {
+/* ------------------------- hardware decoding ----------------------- */
+
+/**
+ * Hardware decode is opt-in (`settings.hwDecode`) and always a trial. Even when
+ * it is on, the GPU pipe must deliver a first frame inside HW_FIRST_FRAME_MS;
+ * otherwise the decoder is marked broken and the same request is served by the
+ * software pipe. Nothing about playback depends on the GPU being right.
+ */
+const HW_FIRST_FRAME_MS = 2500;
+
+/**
+ * ffmpeg does not insert `hwdownload` by itself. A GPU decoder leaves frames in
+ * a surface format (`qsv`, `d3d11`, `dxva2_vld`) that the implicit scaler cannot
+ * consume, which is the "Impossible to convert between the formats supported by
+ * the filter 'Parsed_null_0' and the filter 'auto_scale_0'" failure that made
+ * v1.1.0-v1.1.10 black. Each plan names the download pixel format to use.
+ */
+function hwPlansForPlatform() {
+  return {
+    win32: [
+      { accel: 'qsv', outputFormat: 'qsv', pixelFormats: ['nv12', 'p010le'] },
+      { accel: 'd3d11va', outputFormat: 'd3d11', pixelFormats: ['nv12', 'p010le'] },
+      { accel: 'dxva2', outputFormat: 'dxva2_vld', pixelFormats: ['nv12'] },
+    ],
+    darwin: [
+      { accel: 'videotoolbox', outputFormat: null, pixelFormats: ['nv12', 'p010le'] },
+    ],
+    linux: [
+      { accel: 'qsv', outputFormat: 'qsv', pixelFormats: ['nv12', 'p010le'] },
+      { accel: 'vaapi', outputFormat: null, pixelFormats: ['nv12'] },
+    ],
+  }[process.platform] || [];
+}
+
+/** `ffmpeg -hwaccels`, asked once. It reports what the build knows, not what the machine can open. */
+let hwAccelsCache;
+function availableHwAccels() {
+  if (hwAccelsCache !== undefined) return hwAccelsCache;
+  hwAccelsCache = [];
+  try {
+    const out = execFileSync('ffmpeg', ['-hide_banner', '-hwaccels'],
+      { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+    hwAccelsCache = out.split(/\r?\n/).slice(1).map((line) => line.trim().toLowerCase()).filter(Boolean);
+  } catch { /* no ffmpeg, or a build that answers nothing */ }
+  return hwAccelsCache;
+}
+
+/** Plans already proved broken on this machine, keyed per accel/format/codec. */
+const hwBroken = new Set();
+
+/**
+ * Download order for one decoder: nv12 first for 8-bit films, a 10-bit format
+ * first for 10/12-bit ones — else the first trial is a conversion the hardware
+ * usually refuses, and the viewer waits 2.5 s to learn nothing.
+ */
+function orderDownloads(formats, deep) {
+  const isNv12 = (f) => f === 'nv12';
+  const primary = deep ? formats.filter((f) => !isNv12(f)) : formats.filter(isNv12);
+  return [...primary, ...formats.filter((f) => !primary.includes(f))];
+}
+
+/** Every hardware attempt worth making for this file, best first. */
+function hwCandidates(item) {
+  const listed = availableHwAccels();
+  const deep = /10|12/.test(String(item.pixFmt || ''));
+  const out = [];
+  for (const plan of hwPlansForPlatform()) {
+    if (!listed.includes(plan.accel)) continue;
+    for (const download of orderDownloads(plan.pixelFormats, deep)) {
+      out.push({
+        accel: plan.accel,
+        outputFormat: plan.outputFormat,
+        download,
+        key: `${plan.accel}:${download}:${item.vcodec || '?'}`,
+      });
+    }
+  }
+  return out;
+}
+
+/** The first hardware plan not already proved broken, or null for software. */
+function nextHwPlan(item) {
+  return hwCandidates(item).find((plan) => !hwBroken.has(plan.key)) || null;
+}
+
+/** The ffmpeg command line for one file at one offset, with or without a GPU plan. */
+function buildTranscodeArgs(item, start, plan) {
+  const copyVideo = item.vcodec === 'h264';
+  const copyAudio = copyVideo && item.acodec === 'aac';
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
+  if (start > 0) args.push('-ss', String(start));
+  if (!copyVideo && plan) {
+    args.push('-hwaccel', plan.accel);
+    if (plan.outputFormat) args.push('-hwaccel_output_format', plan.outputFormat);
+  }
+  args.push('-i', item.path, '-sn', '-dn', '-map', '0:v:0', '-map', '0:a:0?');
+  if (copyVideo) {
+    args.push('-c:v', 'copy');
+  } else {
+    // The download is what makes the GPU frames usable by the scaler and x264.
+    if (plan) args.push('-vf', `hwdownload,format=${plan.download}`);
+    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+              '-pix_fmt', 'yuv420p', '-g', '48');
+  }
+  args.push('-c:a', copyAudio ? 'copy' : 'aac');
+  if (!copyAudio) args.push('-b:a', '160k', '-ac', '2');
+  args.push('-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
+  return args;
+}
+
+function streamViaFfmpeg(req, res, item, opts = {}) {
   // A repeated ?t= arrives as an array; the newest one is the seek the viewer
   // actually asked for. Without this the offset parsed to NaN and became 0.
   const rawStart = Array.isArray(req.query.t) ? req.query.t[req.query.t.length - 1] : req.query.t;
@@ -553,51 +668,62 @@ function streamViaFfmpeg(req, res, item) {
     });
   }
 
-  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
-  if (start > 0) args.push('-ss', String(start));
-  // Deliberately no -hwaccel. `-hwaccel qsv` (and the other GPU decoders) hand
-  // the filter chain frames in a GPU pixel format such as `qsv`, which neither
-  // the scaler nor libx264 can consume, and ffmpeg exits with
-  //   "Impossible to convert between the formats supported by the filter
-  //    'Parsed_null_0' and the filter 'auto_scale_0'"
-  // leaving a black screen. A software decode always yields frames the encoder
-  // can take, and transcoding is CPU-bound anyway.
-  args.push('-i', item.path, '-sn', '-dn', '-map', '0:v:0', '-map', '0:a:0?');
-  if (copyVideo) {
-    args.push('-c:v', 'copy');
-  } else {
-    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
-              '-pix_fmt', 'yuv420p', '-g', '48');
-  }
-  args.push('-c:a', copyAudio ? 'copy' : 'aac');
-  if (!copyAudio) args.push('-b:a', '160k', '-ac', '2');
-  args.push('-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
-
-  console.log(`[ffmpeg] ${item.filename}: ${copyVideo ? 'copy video' : 'transcode (software decode)'} at ${start}s`);
+  // Hardware only when asked for, only for files that need transcoding, and
+  // never on the retry that follows a failed GPU attempt.
+  const wantHardware = !copyVideo && !opts.forceSoftware && store.getSettings().hwDecode === true;
+  const plan = wantHardware ? nextHwPlan(item) : null;
+  const args = buildTranscodeArgs(item, start, plan);
+  const label = copyVideo ? 'copy video'
+    : plan ? `transcode (hardware ${plan.accel} -> ${plan.download})`
+    : 'transcode (software decode)';
+  console.log(`[ffmpeg] ${item.filename}: ${label} at ${start}s`);
 
   const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let started = false;   // first byte reached the browser
+  let settled = false;   // this response has been decided one way or the other
+  let lastError = '';
+
   const stop = () => { try { child.kill('SIGKILL'); } catch { /* already gone */ } };
   req.on('close', stop);
   res.on('close', stop);
 
-  let started = false;
+  /** The GPU pipe did not produce anything: remember it and replay in software. */
+  const failover = (why) => {
+    if (settled || started || !plan) return;
+    settled = true;
+    clearTimeout(watchdog);
+    stop();
+    hwBroken.add(plan.key);
+    console.warn(`[ffmpeg] hardware ${plan.accel} (${plan.download}) ${why} — retrying in software`);
+    req.removeListener('close', stop);
+    res.removeListener('close', stop);
+    streamViaFfmpeg(req, res, item, { ...opts, forceSoftware: true });
+  };
+
+  const watchdog = plan ? setTimeout(() => {
+    if (!started) failover(`produced no frame in ${HW_FIRST_FRAME_MS} ms`);
+  }, HW_FIRST_FRAME_MS) : null;
+  if (watchdog && typeof watchdog.unref === 'function') watchdog.unref();
+
   child.stdout.on('data', (chunk) => {
     if (!started) {
       started = true;
+      settled = true;
+      clearTimeout(watchdog);
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store' });
     }
     res.write(chunk);
   });
   child.stdout.on('end', () => {
-    if (started) res.end();
-    else if (!res.headersSent) {
+    if (started) { res.end(); return; }
+    if (plan) return failover(`exited without a frame${lastError ? ` (${lastError})` : ''}`);
+    if (!res.headersSent) {
       res.status(502).json({
         error: `ffmpeg produced no output${lastError ? `: ${lastError}` : ''}`,
         code: 'FFMPEG_EMPTY',
       });
     }
   });
-  let lastError = '';
   child.stderr.on('data', (buf) => {
     const line = buf.toString().trim();
     if (line) {
@@ -606,10 +732,22 @@ function streamViaFfmpeg(req, res, item) {
     }
   });
   child.on('error', (err) => {
+    if (plan && !started) return failover(`could not be started (${err.message})`);
     if (!res.headersSent) {
       res.status(500).json({ error: `Could not run ffmpeg: ${err.message}`, code: 'FFMPEG_MISSING' });
     } else {
       res.end();
+    }
+  });
+  child.on('close', (code) => {
+    if (!started && !settled) {
+      if (plan) return failover(`exited with code ${code}`);
+      if (!res.headersSent) {
+        res.status(502).json({
+          error: `ffmpeg produced no output${lastError ? `: ${lastError}` : ''}`,
+          code: 'FFMPEG_EMPTY',
+        });
+      }
     }
   });
 }
@@ -836,4 +974,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, runScan, scanState, pendingArtwork, artworkOnDisk };
+module.exports = { app, runScan, scanState, pendingArtwork, artworkOnDisk,
+  buildTranscodeArgs, hwCandidates, nextHwPlan, hwBroken, hwPlansForPlatform,
+  availableHwAccels, orderDownloads };

@@ -2271,6 +2271,12 @@ function wireEvents() {
   });
   video.addEventListener('ended', () => { video.dataset.reportedEnd = ''; });
   root.addEventListener('mousemove', () => { schedulePlayerHide(); updatePlayerToggle(); });
+  // Moving the mouse anywhere in the window brings the controls back, not only
+  // over the picture: over a black frame there is no telling where "over the
+  // picture" even is.
+  document.addEventListener('pointermove', () => {
+    if (!$('#player')?.hidden) schedulePlayerHide();
+  }, { passive: true });
 
   /* Tap zones, the way every phone player works:
    *   centre  -> play/pause (immediately while the controls are up)

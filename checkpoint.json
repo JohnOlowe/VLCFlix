@@ -106,10 +106,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.11.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.11.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.12.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.12.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.11 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.12 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -131,7 +131,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.11",
+    "version": "1.1.12",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -226,5 +226,14 @@
     "hwaccel_removed": "the transcode path passed -hwaccel qsv; ffmpeg decoded into the qsv pixel format and the scale/libx264 chain could not take it (\"Impossible to convert between the formats supported by the filter\"), so every transcoded film was black",
     "software_decode": "transcodes now decode in software; proved with a 10-bit HEVC 1920x1080 clip that used to take this path",
     "controls_on_black": "the player chrome no longer auto-hides while the picture has no size, so a failed stream keeps its close button on screen"
+  },
+  "features_v1112": {
+    "permanent_back_button": "#playerClose moved out of .player__chrome (opacity 0 + pointer-events none when hidden) and given its own always-visible style with z-index 8",
+    "reveal_anywhere": "a document-level pointermove reveals the chrome while the player is open, not only movement over the picture"
+  },
+  "regression_answer": {
+    "question": "which update broke playback",
+    "answer": "-hwaccel was introduced in 95d453f = v1.1.0 (\"ffmpeg hardware playback\") and removed in 1.1.11",
+    "why_it_played_before": "the ffmpeg engine itself arrived in 1.1.0; before that playback was VLC or the file directly, neither of which transcoded"
   }
 }

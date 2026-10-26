@@ -1080,6 +1080,9 @@ textarea.input {
 
 .player.is-active .player__chrome { opacity: 1; pointer-events: auto; }
 
+/* The way out is always on screen: the rest of the chrome fades away, this does
+   not. It used to live inside .player__chrome, so on a black screen with no
+   hover the close button was invisible and unclickable. */
 .player__back {
   position: absolute;
   top: 22px;
@@ -1088,13 +1091,17 @@ textarea.input {
   height: 42px;
   border-radius: 50%;
   border: 0;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.55);
   color: #fff;
   display: grid;
   place-items: center;
   cursor: pointer;
+  z-index: 8;
+  opacity: 1;
+  pointer-events: auto;
+  transition: background 160ms ease;
 }
-.player__back:hover { background: rgba(255, 255, 255, 0.26); }
+.player__back:hover { background: rgba(0, 0, 0, 0.8); }
 
 .player__title {
   position: absolute;

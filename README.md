@@ -327,8 +327,10 @@ produces a picture — VLCFlix does not leave you looking at a black rectangle:
 2. a short message says the built-in player was used instead;
 3. if the file will not play that way either, the reason is put on the screen
    (*"the video could not be decoded"*) instead of nothing;
-4. while there is no picture the controls stay on screen — a black player never
-   hides its own close button.
+4. while there is no picture the controls stay on screen, and the **back arrow is
+   never hidden at all** — a black player never hides the way out;
+5. moving the mouse anywhere in the window brings the controls back, not only
+   over the picture.
 
 A pipe that produces no picture within 7 seconds counts as failed, so a silent
 hang is treated the same as an error. `server.log` in `%LOCALAPPDATA%\VLCFlix`

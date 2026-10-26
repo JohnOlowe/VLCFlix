@@ -756,3 +756,28 @@ Two self-inflicted errors this turn, both caught before shipping: the block
 deletion that removed `detectHwAccel` also took `hasX264()` with it, which made
 every ffmpeg stream 500 (the HEVC harness caught it, the unit tests did not), and
 the first `directStreamUrl` dropped the `?` from `?engine=ffmpeg&t=40`.
+
+## 2026-10-26 — v1.1.12: the way out is never hidden
+"The hover still doesn't show those controls." `#playerClose` was a child of
+`.player__chrome`, and that container is `opacity: 0; pointer-events: none`
+unless `.player__chrome` matches `.player.is-active`. So whenever the chrome was
+hidden, the close button was invisible *and* unclickable — on a black screen it
+had to be found by memory, which is exactly what was described.
+
+- the close button now lives outside the auto-hiding container, with its own
+  always-on style, `z-index: 8` and its own background, so it reads over a black
+  frame as well as a bright one
+- a document-level `pointermove` reveals the chrome whenever the player is open,
+  rather than only movement over the picture
+
+Verified: with a playing picture the chrome still fades after a few seconds and
+the close button stays visible and clickable; a mouse move anywhere brings the
+chrome back; on a forced black screen the chrome, notice and close button are all
+present and the button closes the player (screenshot read). Player harness 14/14,
+fallback harness 10/10, HEVC transcode harness 6/6, 64/64 tests.
+
+Answering the question that came with it: the playback regression was **v1.1.0**
+(`95d453f`, "ffmpeg hardware playback"), which introduced `-hwaccel qsv` on the
+transcode path. Before 1.1.0 there was no ffmpeg engine at all — films played
+from VLC or straight from the file, so nothing was ever transcoded and nothing
+was black. 1.1.11 removed the hardware decode.

@@ -162,9 +162,11 @@
     </div>
     <div class="subpanel__hint">G / H subtitles · J / K audio · V next track</div>
   </div>
+  <!-- Outside .player__chrome on purpose: the way out of the player must never
+       fade away with the rest of the controls. -->
+  <button class="player__back" id="playerClose" type="button" aria-label="Close player"><svg><use href="#i-back"/></svg></button>
   <div class="player__chrome" id="playerChrome">
     <div class="player__notice" id="playerNotice" hidden></div>
-    <button class="player__back" id="playerClose" type="button" aria-label="Close player"><svg><use href="#i-back"/></svg></button>
     <div class="player__title" id="playerTitle"></div>
     <div class="player__center" id="playerCenter" role="button" aria-label="Play" title="Play"><svg><use href="#i-play"/></svg></div>
     <div class="player__bottom">

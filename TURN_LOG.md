@@ -94,3 +94,31 @@
 ### State
 - Committed `e2df2fd` (37 files). **Not pushed** — no credential. `origin/main`
   remains at `2d05ee5`.
+
+## 2026-10-26 — Pushed to origin (credential re-provisioned)
+- User supplied a fresh fine-grained PAT in chat. Wrote it to the ignored
+  `.git-credentials` with `umask 077` + `chmod 600`, confirmed via
+  `git check-ignore -v` and `stat`. Configured `credential.helper=store
+  --file=…` and `credential.useHttpPath=true`. The value is not repeated in
+  any tracked file.
+- Probed scope before use, as §8 requires. Results:
+  - `GET /user` -> 200, authenticates as `JohnOlowe` (id 121398818).
+  - `GET /repos/JohnOlowe/VLCFlix/actions/secrets` -> **403**
+  - `GET /repos/JohnOlowe/VLCFlix/actions/permissions` -> **403**
+  - `GET /user/repos` -> 200, lists **15 repositories**, i.e. the token is
+    broader than the single repository it is being used for.
+  - No `X-OAuth-Scopes` header -> fine-grained token, not classic.
+  - Caveat recorded honestly: every one of those 15 repos is **public**, so
+    200 responses do not by themselves prove read scope; public repos are
+    readable unauthenticated. Write scope beyond VLCFlix was **not** tested
+    because the only way to test it is to mutate another repository. Not done.
+- `git fetch origin` (no force, no `--force-with-lease`); branch was `ahead 2`,
+  a fast-forward, so no rebase was needed.
+- `git push origin main` -> `2d05ee5..a53d691  main -> main`.
+- Verified rather than trusted: `git ls-remote origin refs/heads/main` returned
+  `a53d691eb7617a7e8f07a9da1ab48453ac3d2525`, identical to local HEAD. The
+  GitHub contents API independently lists `server/`, `public/`, `tests/`,
+  `samples/`, `docs/`, `README.md` and `start-windows.bat`, and
+  `.git-credentials` is absent from the remote — the credential was not pushed.
+- Advised the user to rotate this token, since it passed through chat and is
+  broader than one repository.

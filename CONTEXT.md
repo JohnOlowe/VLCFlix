@@ -17,11 +17,15 @@ playback engine; VLCFlix owns the entire browsing surface.
 
 ## Current state
 - Local clone at `/home/user/VLCFlix`, branch `main`, tracking `origin/main`.
-- Application is **complete and working** at commit `e2df2fd`.
-- Remote `origin/main` is at `2d05ee5` — **the new commit is NOT pushed.** The
-  previous session's `.git-credentials` did not survive the workspace snapshot and
-  a push dry-run returned `remote: No anonymous write access`. The user chose to
-  supply a fresh PAT; it has not been provided yet.
+- Application is **complete, working and pushed**. Local HEAD = remote
+  `origin/main` = `a53d691`, verified with `git ls-remote` and independently with
+  the GitHub contents API.
+- A fresh fine-grained PAT was supplied by the user and stored in the ignored,
+  mode-600 `.git-credentials`. It is **broader than this one repository**: scope
+  probes showed it sees 15 repos (all public, so that alone proves little), while
+  Actions secrets and Administration endpoints return 403. Write scope beyond
+  VLCFlix was deliberately **not** tested — proving it would mean mutating another
+  repo. The user has been asked to rotate it and narrow it.
 - `data/` and `media/` are gitignored: runtime state, generated artwork, nothing
   that cannot be recreated by a scan.
 - `samples/` **is** committed (8 clips, 2.2 MB) so a fresh clone is usable at once;
@@ -59,8 +63,8 @@ playback engine; VLCFlix owns the entire browsing surface.
   stopped with `stop_process`.
 
 ## Next steps
-1. Push `e2df2fd` once the user supplies a fine-grained PAT (Contents: read/write,
-   this repo only), then verify with `git ls-remote origin refs/heads/main`.
+1. Ask the user to rotate the chat-exposed PAT and narrow it to
+   Contents: read/write on `JohnOlowe/VLCFlix` only.
 2. Ask the user to test `start-windows.bat` against their real VLC install and
    report failures with the exact VLC error text now surfaced by `launch()`.
 3. Likely follow-ups, not yet requested: subtitle handling, multi-part/season
@@ -73,6 +77,9 @@ playback engine; VLCFlix owns the entire browsing surface.
 3. `cd /home/user/VLCFlix && git log --oneline -3 && git status -sb`. `.git/config`
    may not survive a restore — if `git remote -v` is empty, re-add
    `origin https://github.com/JohnOlowe/VLCFlix.git`.
+   **`.git-credentials` does not survive a restore either.** Everything up to
+   `a53d691` is on the remote, so a fresh clone loses nothing; only pushing again
+   needs a new token.
 4. `node_modules` does not survive; run `npm install`.
 5. Reinstall ffmpeg/VLC if the VLC tests or scanning need them (commands above).
 6. Start the app with the **process tool**, not `bash`:

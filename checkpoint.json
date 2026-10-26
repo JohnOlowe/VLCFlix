@@ -5,12 +5,12 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
     "tracking_branch": "origin/main",
-    "local_head": "e2df2fd",
-    "remote_sha": "2d05ee5d5e07a8421443161157356d14ee0e12cc",
-    "pushed": false,
-    "push_blocked_by": "no credential: .git-credentials did not survive the snapshot; push dry-run returned 'No anonymous write access'",
-    "awaiting": "user-supplied fine-grained PAT (Contents: read/write, this repo only)",
-    "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)"
+    "local_head": "a53d691",
+    "remote_sha": "a53d691eb7617a7e8f07a9da1ab48453ac3d2525",
+    "pushed": true,
+    "awaiting": "nothing - user should rotate the chat-exposed PAT",
+    "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
+    "remote_sha_verified_at": "2026-10-26"
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -66,8 +66,29 @@
     ]
   },
   "next_steps": [
-    "Push e2df2fd once the user provides a PAT; verify with git ls-remote origin refs/heads/main.",
-    "Have the user run start-windows.bat against their real VLC and report any error text.",
-    "Confirm with the user which follow-up matters most: subtitles, season grouping, online metadata, or fullscreen-aware dock."
-  ]
+    "Ask the user to rotate the chat-exposed PAT and narrow it to Contents: read/write on VLCFlix only.",
+    "Have the user run start-windows.bat against their real VLC install and report any error text.",
+    "Confirm which follow-up matters most: subtitles, season grouping, online metadata, or fullscreen-aware dock."
+  ],
+  "git_auth": {
+    "credential_file": ".git-credentials",
+    "ignored": true,
+    "mode": "600",
+    "helper": "store --file=/home/user/VLCFlix/.git-credentials",
+    "use_http_path": true,
+    "identity": "JohnOlowe (id 121398818)",
+    "token_type": "fine-grained (no X-OAuth-Scopes header)",
+    "scope_probes": {
+      "read VLCFlix": 200,
+      "actions secrets": 403,
+      "administration": 403,
+      "repos_visible": 15
+    },
+    "scope_caveats": [
+      "all 15 visible repos are public, so 200s do not prove read scope",
+      "write scope beyond VLCFlix was not tested - testing it would mutate another repo",
+      "token is broader than a single repository; recommend narrowing and rotating"
+    ],
+    "token_value_in_state_files": false
+  }
 }

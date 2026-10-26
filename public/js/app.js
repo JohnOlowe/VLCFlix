@@ -170,6 +170,9 @@ async function boot() {
   paintEngine();
   paintFooter();
   route();
+  // Tell the server the page is on screen. Background artwork waits for this,
+  // so drawing never competes with the first paint of the window.
+  api('/api/ui/ready', { method: 'POST' }).catch(() => {});
   // A scan already in progress on load shows in the header; forcing the settings
   // modal open would steal the view the user actually opened the app for.
   if (state.scan?.running) watchScan();

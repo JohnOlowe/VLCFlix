@@ -641,3 +641,42 @@ artwork files; deleting every preview with the catalogue intact redrew exactly t
 with 0 files rewritten; 64/64 unit tests, including a rewritten artwork test whose
 negative control (catalogue-only check) fails as it should; the player harness
 still passes end to end.
+
+## 2026-10-26 — v1.1.9: the window could not paint while artwork rendered
+Windows report: launcher log shows `navigation starting`, then
+`WATCHDOG: no navigation completion after 8000 ms` on **both** attempts, the
+native fallback panel, and only after pressing Retry
+`navigation completed: success=1 http=200`. So the page was reachable but slow to
+commit, twice, and fine on the third try.
+
+Cause: v1.1.8 starts the artwork pass 1.5 s after the server listens — which is
+exactly when WebView2 is booting. ffmpeg rendering competes with the first paint,
+and on a cold start that took longer than the 8 s watchdog. The server was never
+the bottleneck: it answered `/api/catalog` in 4 ms while rendering.
+
+Fixes:
+
+- **The page now says when it has painted.** `POST /api/ui/ready` is sent at the
+  end of `boot()`, and the artwork pass waits for it (20 s ceiling, so a window
+  that never reports still gets its artwork drawn in the background). Measured:
+  page loads in 77 ms with the pass held back, and artwork starts **501 ms**
+  after the page is up instead of racing it.
+- **Watchdog 8 s -> 20 s.** A local page that cannot commit in 20 s with the CPU
+  free is genuinely broken; 8 s produced false failures on a cold runtime.
+- **One stat pass at startup** instead of four (`artworkOnDisk()` replaces the
+  adopt pass plus two `pendingArtwork()` passes plus the pass inside the renderer).
+- **Dead URLs are cleared**: when a media file is gone, the catalogue field that
+  pointed at it is nulled, so the grid falls back to its gradient instead of
+  requesting a 404 — found because a deleted-artwork test logged two 404s.
+
+Two process notes, disclosed rather than buried: the `/api/ui/ready` route was
+first registered after the catch-all 404 handler, so the ping failed and the pass
+fell back to its 20 s deadline (caught by the harness, not by eye). And an
+`accept.js` run reported a console 404 that turned out to be **a stale server from
+an earlier run still holding port 4976**, answering with pre-change code; stray
+servers were killed and the harness now clears its port first. The player checks
+it failed on were re-run against a fresh server and all pass.
+
+Verified: `npm test` 64/64; artwork harness (page gated, chip, toast, no temps,
+no console errors) all pass; player harness 14/14; API stays at 4 ms while ffmpeg
+renders.

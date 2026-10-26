@@ -374,6 +374,11 @@ finished. Artwork files are versioned by the format that produced them, which is
 what triggers a one-off re-render when the format itself changes between
 releases — never on an ordinary restart.
 
+Drawing never competes with the window: the page tells the server when it has
+painted, and the artwork pass starts only then (or after 20 s if the window never
+reports in). Before that gate, a launch with artwork to finish could keep the
+first paint waiting long enough for the launcher to give up on it.
+
 A film that cannot be read (a damaged file, or a drive that is not connected) is
 attempted at most three times and then left alone with the reason recorded, so
 one bad file cannot make every launch look like it is starting over. Press

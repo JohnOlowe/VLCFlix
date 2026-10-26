@@ -524,7 +524,9 @@ static void ShowFallbackPanel(const std::wstring& reason) {
 
 static const int kAttempts = 2;
 static const UINT_PTR TIMER_WATCHDOG = 1;
-static const UINT kWatchdogMs = 8000;
+// A cold start on Windows (runtime DLLs, GPU init, antivirus) can take
+// several seconds before a local page commits. 8 s produced false failures.
+static const UINT kWatchdogMs = 20000;
 
 static void ShowFallbackPanel(const std::wstring& reason);
 static void StartAttempt();

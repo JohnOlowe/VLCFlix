@@ -76,18 +76,16 @@ function liveStatus() {
  * over: only items with no usable file on disk are drawn, and each one is
  * recorded as soon as it lands.
  */
-async function resumeArtwork() {
+async function resumeArtwork(pending) {
   if (artState.running || scanState.running) return { total: 0, drawn: 0 };
+  if (!pending || !pending.length) return { total: 0, drawn: 0 };
   const catalog = store.getCatalog();
-  const items = catalog.items || [];
-  const pending = items.filter((item) => library.needsArtwork(item, MEDIA_DIR) && library.shouldRetryArt(item));
-  if (!pending.length) return { total: 0, drawn: 0 };
 
   Object.assign(artState, { running: true, done: 0, total: pending.length, current: '', startedAt: Date.now(), cancelled: false });
   try {
-    const result = await library.renderMissingArtwork(items, {
+    const result = await library.renderMissingArtwork(pending, {
       mediaDir: MEDIA_DIR,
-      retryFailed: false,
+      retryFailed: true, // the list has already been filtered by shouldRetryArt
       cancel: () => artState.cancelled || scanState.running,
       onProgress: (p) => Object.assign(artState, p),
       onCatalog: () => store.saveCatalog(catalog),
@@ -101,6 +99,12 @@ async function resumeArtwork() {
     artState.running = false;
     artState.finishedAt = Date.now();
   }
+}
+
+/** The startup pass. Kept separate so the wait loop stays readable. */
+function renderPending(pending) {
+  if (!pending || !pending.length) return;
+  resumeArtwork(pending).catch((err) => console.error('[artwork] pass threw:', err));
 }
 
 async function runScan() {
@@ -727,6 +731,15 @@ app.get('/api/subtitles/:id/file', (req, res) => {
   res.send(library.toVtt(raw));
 });
 
+// The page says when it has actually painted. Background artwork waits for it:
+// drawing first competes with WebView2 for the CPU, and on a cold start the
+// window took longer than the launcher's watchdog to appear.
+let uiReady = false;
+app.post('/api/ui/ready', (req, res) => {
+  uiReady = true;
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
@@ -750,32 +763,45 @@ function sweepTempArtwork() {
  * on disk with the entry still empty. Adopt those files instead of drawing them
  * again, so a crash costs nothing but the item that was in flight.
  */
-function adoptExistingArtwork() {
+function artworkOnDisk() {
   const catalog = store.getCatalog();
   const items = catalog.items || [];
   let adopted = 0;
+  let dropped = 0;
+  const missing = [];
   for (const item of items) {
     const files = library.artPaths(MEDIA_DIR, item.id);
+    const state = library.missingArt(item, MEDIA_DIR); // one stat per file
+    // A pass killed between writing a file and saving the catalogue leaves the
+    // file on disk with the entry empty: adopt it instead of drawing it again.
     for (const key of ['poster', 'backdrop', 'preview']) {
-      if (item[key]) continue;
-      try {
-        if (fs.statSync(files[key]).size > 0) { item[key] = path.basename(files[key]); adopted += 1; }
-      } catch { /* nothing there */ }
+      if (!item[key] && !state[key]) { item[key] = path.basename(files[key]); adopted += 1; }
+      // Pointing at a file that is gone makes the page request a 404 and show a
+      // broken image; the gradient fallback is better until it is redrawn.
+      else if (item[key] && state[key]) { item[key] = null; dropped += 1; }
     }
+    if (state.poster || state.backdrop || state.preview) missing.push(item);
   }
-  if (adopted) {
-    console.log(`[startup] adopted ${adopted} artwork file(s) already on disk`);
-    store.saveCatalog(catalog);
-  }
-  return adopted;
+  if (adopted || dropped) store.saveCatalog(catalog);
+  return { catalog, items, missing, adopted };
 }
 
 function pendingArtwork() {
-  const items = store.getCatalog().items || [];
-  // Judge by what is on disk, not by what the catalogue claims: an interrupted
-  // pass leaves entries that look finished, and a deleted media file leaves
-  // entries that will never be drawn.
-  return items.filter((item) => library.needsArtwork(item, MEDIA_DIR) && library.shouldRetryArt(item));
+  return artworkOnDisk().missing.filter((item) => library.shouldRetryArt(item));
+}
+
+function renderWhenUiIsUp(pending) {
+  const deadline = Date.now() + 20000; // never wait forever: the window may fail
+  const wait = () => {
+    if (artState.cancelled || scanState.running) { artState.running = false; return; }
+    if (uiReady || Date.now() >= deadline) {
+      artState.running = false;
+      renderPending(pending);
+      return;
+    }
+    setTimeout(wait, 250);
+  };
+  setTimeout(wait, 250);
 }
 
 if (require.main === module) {
@@ -787,21 +813,21 @@ if (require.main === module) {
       return;
     }
 
-    adoptExistingArtwork();
-    const items = store.getCatalog().items || [];
-    const cached = items.filter((item) => library.needsArtwork(item, MEDIA_DIR)).length;
-    const stale = pendingArtwork();
-    if (!stale.length) {
+    const started = Date.now();
+    sweepTempArtwork();
+    const { items, missing, adopted } = artworkOnDisk();
+    const pending = missing.filter((item) => library.shouldRetryArt(item));
+    console.log(`[startup] artwork check: ${items.length} item(s) in ${Date.now() - started} ms, ${missing.length} missing, ${adopted} adopted`);
+    if (!pending.length) {
       console.log(`[startup] artwork complete for all ${items.length} item(s) — nothing to draw`);
       return;
     }
-    console.log(`[startup] artwork: ${items.length - cached} of ${items.length} already drawn, resuming ${stale.length} — no rescan needed`);
-    // Announce the pass now so the window paints a progress chip when it opens,
-    // and let the window paint before ffmpeg starts competing for the CPU.
-    Object.assign(artState, { running: true, done: 0, total: stale.length, current: '', startedAt: Date.now() });
-    sweepTempArtwork();
-    setTimeout(() => { artState.running = false; resumeArtwork(); }, 1500);
+    console.log(`[startup] artwork: ${items.length - missing.length} of ${items.length} already drawn, resuming ${pending.length} — no rescan needed`);
+    // Announced now so the window paints a progress chip when it opens; the
+    // drawing itself waits until the page is on screen.
+    Object.assign(artState, { running: true, done: 0, total: pending.length, current: '', startedAt: Date.now() });
+    renderWhenUiIsUp(pending);
   });
 }
 
-module.exports = { app, runScan, scanState, pendingArtwork };
+module.exports = { app, runScan, scanState, pendingArtwork, artworkOnDisk };

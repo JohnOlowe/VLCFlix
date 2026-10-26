@@ -781,3 +781,36 @@ Answering the question that came with it: the playback regression was **v1.1.0**
 transcode path. Before 1.1.0 there was no ffmpeg engine at all — films played
 from VLC or straight from the file, so nothing was ever transcoded and nothing
 was black. 1.1.11 removed the hardware decode.
+
+## 2026-10-26 — v1.1.13: the three player bugs from the middle-button work
+
+Three separate faults, all in code written after v1.1.5 — the comparison against
+`3d2e10b` (v1.1.5) confirmed the seek code is byte-for-byte what 1.1.5 shipped, so
+the regression was never in seeking itself:
+
+1. **No controls while the picture is being manipulated.** `.player__delay` is a
+   full-screen canvas at `z-index: 2` that holds frames back for audio sync;
+   `.player__chrome` had no `z-index` at all, so the controls were painted *under*
+   an opaque canvas and could not appear until the delay was switched off.
+   `.player__chrome` is now `z-index: 3`.
+2. **Seek always restarted the film.** A resumed session opens
+   `/api/stream/<id>?engine=ffmpeg&t=14`; `restartStream()` appended its own
+   offset, producing `…&t=14&t=9`. Express hands a repeated key to the route as an
+   array, `Number(['14','9'])` is `NaN`, and the offset became 0 — the log said
+   `copy video at 0s` on every seek. `streamUrlAt()` now rebuilds the query with
+   `searchParams.set('t', …)`, so the offset is replaced; the server also takes the
+   last value if a duplicate ever arrives. Fresh sessions always seeked correctly,
+   which is why this looked like "only some films".
+3. **Clicking near the middle button paused.** The tap handler toggled for the
+   whole middle third. Now only `event.target.closest('.player__center')` toggles,
+   and the icon alone is a pointer target (`pointer-events: auto`) while the
+   controls are up; a click elsewhere in the middle just keeps the controls on
+   screen. With the controls hidden the double-tap gesture still toggles.
+
+Verified with a new harness against a *resumed* film: a 60 % seek produced
+`?engine=ffmpeg&t=9` and the server answered `copy video at 9s`; a click 110 px
+beside the button left the film playing, a click on the button paused it; with the
+delay canvas live the chrome computed `z-index: 3` over the canvas's `2`, the close
+button hit-tested as the top element, and the screenshot shows the scrub bar and the
+"Audio −300 ms" pill drawn over the picture. Regressions all green: player 14/14,
+fallback 10/10, HEVC 6/6, chrome 6/6, 64/64 unit tests.

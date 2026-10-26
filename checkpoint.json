@@ -106,10 +106,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.12.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.12.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.13.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.13.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.12 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.13 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -131,7 +131,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.12",
+    "version": "1.1.13",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -235,5 +235,11 @@
     "question": "which update broke playback",
     "answer": "-hwaccel was introduced in 95d453f = v1.1.0 (\"ffmpeg hardware playback\") and removed in 1.1.11",
     "why_it_played_before": "the ffmpeg engine itself arrived in 1.1.0; before that playback was VLC or the file directly, neither of which transcoded"
+  },
+  "features_v1113": {
+    "chrome_above_delay_canvas": ".player__delay is a full-screen z-index:2 canvas holding frames back for audio sync; .player__chrome had no z-index, so the controls rendered underneath it. Chrome is now z-index:3 (verified: chrome 3 over canvas 2, close button hit-tests on top, screenshot read)",
+    "seek_replaces_offset": "resumed streams carry ?t=<resume>; restartStream() appended a second t, so Express delivered ['14','9'], Number() => NaN => 0, and every seek restarted from 0s. streamUrlAt() rebuilds the query with searchParams.set and the server takes the last value defensively",
+    "only_the_icon_toggles": "the middle third toggled playback; now only event.target.closest('.player__center') does, with the 84px svg alone given pointer-events:auto while the chrome is up; a click beside it just reveals the chrome. A hidden icon is never an invisible target (gated on .player.is-active), and the double-tap-while-hidden path still toggles",
+    "v115_comparison": "git show 3d2e10b:public/js/app.js shows v1.1.5 seek/scrub code identical to the current code, so no seek regression was introduced after 1.1.5; the resume URL added later is what broke it"
   }
 }

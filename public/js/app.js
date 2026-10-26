@@ -894,14 +894,30 @@ function handlePlaybackFailure(reason) {
   showPlayerNotice(`This film will not play here: ${reason}. The file itself may be damaged, or its format may need codecs this player does not have.`);
 }
 
+/**
+ * The stream URL for a given offset. It *replaces* an existing `t` rather than
+ * appending another: a resumed session already carries `?t=<resume point>`, and
+ * `...&t=14&t=9` reaches the server as an array, which parsed to 0 — every seek
+ * in a resumed film restarted it from the beginning.
+ */
+function streamUrlAt(seconds) {
+  const base = player.streamBase || '';
+  const at = Math.max(0, Math.floor(seconds));
+  try {
+    const parsed = new URL(base, location.origin);
+    parsed.searchParams.set('t', String(at));
+    return parsed.pathname + (parsed.search || '');
+  } catch {
+    return `${base}${base.includes('?') ? '&' : '?'}t=${at}`;
+  }
+}
+
 function restartStream(seconds) {
   const video = player.video;
   if (!video || !player.streamBase) return;
-  const at = Math.max(0, Math.floor(seconds));
-  player.offset = at;
   const wasPlaying = !video.paused;
-  const url = `${player.streamBase}${player.streamBase.includes('?') ? '&' : '?'}t=${at}`;
-  video.src = url;
+  player.offset = Math.max(0, Math.floor(seconds));
+  video.src = streamUrlAt(seconds);
   if (wasPlaying) video.play().catch(() => {});
 }
 
@@ -2314,14 +2330,17 @@ function wireEvents() {
     const reset = () => { lastTap = { at: 0, zone: null }; };
 
     if (zone === 'centre') {
-      // With the controls up, every centre click is a toggle. Recognising a
-      // "double" here would swallow a deliberate second click, so it is not
-      // attempted: two quick clicks pause and then resume, as they should.
       if (chromeVisible()) {
-        reset();
-        clearTimeout(tapTimer);
-        tapTimer = null;
-        toggle();
+        // The pause button is the icon itself, not the whole middle third: a
+        // click beside it must not pause the film.
+        if (event.target.closest('.player__center')) {
+          reset();
+          clearTimeout(tapTimer);
+          tapTimer = null;
+          toggle();
+        } else {
+          revealChrome(); // clicking the picture only keeps the controls up
+        }
         return;
       }
       // Controls hidden (a touchscreen, where no mousemove reveals them first):

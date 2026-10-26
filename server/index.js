@@ -537,7 +537,10 @@ function hasX264() {
 }
 
 function streamViaFfmpeg(req, res, item) {
-  const start = Math.max(0, Math.floor(Number(req.query.t) || 0));
+  // A repeated ?t= arrives as an array; the newest one is the seek the viewer
+  // actually asked for. Without this the offset parsed to NaN and became 0.
+  const rawStart = Array.isArray(req.query.t) ? req.query.t[req.query.t.length - 1] : req.query.t;
+  const start = Math.max(0, Math.floor(Number(rawStart) || 0));
   const copyVideo = item.vcodec === 'h264';
   const copyAudio = copyVideo && item.acodec === 'aac';
 

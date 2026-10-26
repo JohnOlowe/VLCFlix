@@ -1072,6 +1072,10 @@ textarea.input {
 .player__chrome {
   position: absolute;
   inset: 0;
+  /* Above .player__delay (z-index 2): when the picture is being held back for
+     audio sync, that canvas covers the whole player, and without this the
+     controls were painted underneath it and never appeared. */
+  z-index: 3;
   opacity: 0;
   transition: opacity 260ms ease;
   pointer-events: none;
@@ -1134,6 +1138,12 @@ textarea.input {
 }
 
 .player.is-paused .player__center svg { opacity: 0.92; transform: none; }
+
+/* The icon is the pause button, and the only one: its own 84 px box takes the
+   click, so anywhere near it (or anywhere else on the picture) does not.
+   Only while the controls are up, so a hidden icon is never an invisible
+   target — with the controls down, taps are handled by zone instead. */
+.player.is-active .player__center svg { pointer-events: auto; cursor: pointer; }
 /* While playing, the same icon is the pause affordance, but only while the
    controls are on screen -- it should not sit on the picture during playback. */
 .player.is-active:not(.is-paused) .player__center svg { opacity: 0.5; transform: none; }

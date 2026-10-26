@@ -292,12 +292,17 @@ says it means:
 
 | Where | One click | Two quick clicks |
 |---|---|---|
-| middle third | play / pause | play / pause (with the controls hidden, the first click only brings them back) |
+| the play / pause button itself | play / pause | play / pause |
+| middle third, beside the button | keeps the controls up — never pauses | with the controls hidden, the first tap brings them back and the second toggles |
 | left third | show or hide the controls | rewind 10 s |
 | right third | show or hide the controls | skip forward 10 s |
 
-Only the middle toggles playback: a stray click near the edge of the picture can no
-longer pause the film. A skip is confirmed on screen with a `+10 s` / `−10 s` badge
+Only the button toggles playback: a stray click anywhere else on the picture —
+including right next to the button — leaves the film running. (In v1.1.7–v1.1.12
+the whole middle third toggled; the target is now the 84 px icon itself.)
+
+Seeking **replaces** the stream offset instead of appending a second one, so a
+film you resumed mid-way seeks to where you ask rather than restarting from zero. A skip is confirmed on screen with a `+10 s` / `−10 s` badge
 over the side it applies to, so the feedback never hides the centre icon.
 
 Moving the mouse brings the controls back at any time, from wherever the pointer is.
@@ -330,7 +335,9 @@ produces a picture — VLCFlix does not leave you looking at a black rectangle:
 4. while there is no picture the controls stay on screen, and the **back arrow is
    never hidden at all** — a black player never hides the way out;
 5. moving the mouse anywhere in the window brings the controls back, not only
-   over the picture.
+   over the picture;
+6. the controls paint **above** the latency canvas, so they stay usable while the
+   picture is being held back for audio sync.
 
 A pipe that produces no picture within 7 seconds counts as failed, so a silent
 hang is treated the same as an error. `server.log` in `%LOCALAPPDATA%\VLCFlix`

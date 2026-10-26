@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+
+<root>
+
+<aspectratio>default</aspectratio>
+<currentplid>3</currentplid>
+<state>playing</state>
+<volume>0</volume>
+<repeat>false</repeat>
+<length>16</length>
+<equalizer></equalizer>
+<audiodelay>0</audiodelay>
+<time>2</time>
+<fullscreen>false</fullscreen>
+<position>0.15001837909222</position>
+<subtitledelay>0</subtitledelay>
+<audiofilters>
+  <filter_0></filter_0></audiofilters>
+<rate>1</rate>
+<loop>false</loop>
+<apiversion>3</apiversion>
+<random>false</random>
+<videoeffects>
+  <contrast>1</contrast>
+  <hue>0</hue>
+  <saturation>1</saturation>
+  <brightness>1</brightness>
+  <gamma>1</gamma></videoeffects>
+<version>3.0.24 Vetinari</version>
+<seek_sec>10</seek_sec><information>
+    <category name="meta">
+    <info name='filename'>ghostlight.mp4</info><info name='encoded_by'>Lavf61.7.103</info>    </category>
+  <category name='Stream 0'><info name='Codec'>H264 - MPEG-4 AVC (part 10) (avc1)</info><info name='Buffer dimensions'>1280x738</info><info name='Decoded format'>Planar 4:2:0 YUV (I420)</info><info name='Chroma location'>Left</info><info name='Orientation'>Top left</info><info name='Frame rate'>30</info><info name='Type'>Video</info><info name='Video resolution'>1280x720</info></category>  </information>
+  <stats>
+  <averagedemuxbitrate>0</averagedemuxbitrate>
+<decodedvideo>198</decodedvideo>
+<readbytes>67397</readbytes>
+<averageinputbitrate>0</averageinputbitrate>
+<lostpictures>0</lostpictures>
+<demuxreadpackets>0</demuxreadpackets>
+<readpackets>34</readpackets>
+<displayedpictures>72</displayedpictures>
+<demuxbitrate>0.016775580123067</demuxbitrate>
+<lostabuffers>0</lostabuffers>
+<playedabuffers>0</playedabuffers>
+<decodedaudio>0</decodedaudio>
+<sentbytes>0</sentbytes>
+<inputbitrate>0.017527895048261</inputbitrate>
+<demuxdiscontinuity>1</demuxdiscontinuity>
+<sentpackets>0</sentpackets>
+<sendbitrate>0</sendbitrate>
+<demuxcorrupted>0</demuxcorrupted>
+<demuxreadbytes>63412</demuxreadbytes>
+  </stats>
+</root>

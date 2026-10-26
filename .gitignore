@@ -17,3 +17,10 @@ build/
 out/
 target/
 __pycache__/
+
+# Runtime state and generated artwork (recreated by the scanner)
+data/
+media/
+
+# The demo clips in samples/ ARE committed (~2 MB) so a fresh clone has
+# something to play. They are regenerable with `npm run demo`.

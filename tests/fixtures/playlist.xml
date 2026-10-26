@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+
+
+<node id="0" ro="rw" name="">
+<node id="1" ro="ro" name="Playlist">
+<leaf duration="16" id="3" ro="rw" name="ghostlight.mp4" uri="file:///home/user/VLCFlix/samples/ghostlight.mp4" current="current"/></node>
+<node id="2" ro="ro" name="Media Library"></node></node>

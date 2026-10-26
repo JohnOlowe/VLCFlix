@@ -1,0 +1,19 @@
+{
+  "name": "vlcflix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Netflix-style front-end that scans your local library and drives the real VLC media player.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "demo": "node scripts/make-demo-media.js",
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "fast-xml-parser": "^4.5.3"
+  }
+}

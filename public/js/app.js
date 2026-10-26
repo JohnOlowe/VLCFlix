@@ -827,6 +827,70 @@ function playerTotal() {
     : known;
 }
 
+/**
+ * The same film without the ffmpeg engine: the file itself, which the built-in
+ * player decodes. Used when a piped stream fails, so a transcode problem shows
+ * the film instead of a black rectangle.
+ */
+function directStreamUrl(url) {
+  if (!url) return url;
+  try {
+    const parsed = new URL(url, location.origin);
+    parsed.searchParams.delete('engine');
+    return parsed.pathname + (parsed.search || '');
+  } catch {
+    return url;
+  }
+}
+
+const MEDIA_ERRORS = {
+  1: 'the download was aborted',
+  2: 'the connection to the stream failed',
+  3: 'the video could not be decoded',
+  4: 'the stream could not be played',
+};
+
+function showPlayerNotice(text) {
+  const notice = $('#playerNotice');
+  if (!notice) return;
+  notice.textContent = text;
+  notice.hidden = false;
+}
+
+function clearPlayerNotice() {
+  const notice = $('#playerNotice');
+  if (notice) notice.hidden = true;
+}
+
+/**
+ * What happens when the picture never arrives.
+ *
+ * A failed ffmpeg stream used to leave a black screen with nothing said: the
+ * player chrome simply hid itself a few seconds later. Now the film is retried
+ * directly from the file, and if that fails too the reason is put on screen.
+ */
+function handlePlaybackFailure(reason) {
+  const video = player.video;
+  if (!video || !video.getAttribute('src')) return;
+  clearTimeout(player.stallTimer);
+  if (player.engine === 'ffmpeg' && player.streamBase) {
+    const at = playerPosition();
+    const direct = directStreamUrl(player.streamBase);
+    console.warn(`[player] ffmpeg stream failed (${reason}); retrying directly from ${direct}`);
+    player.engine = 'direct';
+    player.streamBase = direct;
+    player.offset = 0;
+    video.addEventListener('loadedmetadata', () => {
+      if (at > 2) video.currentTime = at;
+      video.play().catch(() => {});
+    }, { once: true });
+    video.src = direct;
+    toast('FFmpeg could not play this film — using the built-in player');
+    return;
+  }
+  showPlayerNotice(`This film will not play here: ${reason}. The file itself may be damaged, or its format may need codecs this player does not have.`);
+}
+
 function restartStream(seconds) {
   const video = player.video;
   if (!video || !player.streamBase) return;
@@ -872,6 +936,17 @@ function openPlayer(item, session) {
     video.play().catch(() => toast('Press play to start (autoplay was blocked)'));
   };
   video.addEventListener('loadedmetadata', onLoaded, { once: true });
+
+  // A pipe that never produces a picture is indistinguishable from a slow one
+  // to the video element, so give it a deadline.
+  clearTimeout(player.stallTimer);
+  clearPlayerNotice();
+  if (player.engine === 'ffmpeg') {
+    player.stallTimer = setTimeout(() => {
+      if (!player.video || player.video.readyState >= 2 || player.video.error) return;
+      handlePlaybackFailure('the stream produced no picture');
+    }, 7000);
+  }
 
   root.classList.add('is-active');
   schedulePlayerHide();
@@ -2173,6 +2248,11 @@ function wireEvents() {
     else video.pause();
   };
   video.addEventListener('play', () => { updatePlayerToggle(); schedulePlayerHide(); });
+  video.addEventListener('playing', () => { clearTimeout(player.stallTimer); clearPlayerNotice(); });
+  video.addEventListener('error', () => {
+    if (!video.error) return; // a src change fires an empty error too
+    handlePlaybackFailure(MEDIA_ERRORS[video.error.code] || 'the video could not be played');
+  });
   video.addEventListener('pause', updatePlayerToggle);
   video.addEventListener('timeupdate', () => {
     updatePlayerToggle();

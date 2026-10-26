@@ -308,6 +308,22 @@ Bitrate, size and resolution are unchanged; the subtitle is read, not copied.
 
 ---
 
+## When a stream fails
+
+The **FFMPEG** engine pipes the film through ffmpeg. If that pipe fails — an
+ffmpeg build without `libx264`, a codec it will not transcode, a stream that never
+produces a picture — VLCFlix does not leave you looking at a black rectangle:
+
+1. the player retries the film **directly from the file**, which the built-in
+   player decodes, and keeps your position;
+2. a short message says the built-in player was used instead;
+3. if the file will not play that way either, the reason is put on the screen
+   (*"the video could not be decoded"*) instead of nothing.
+
+A pipe that produces no picture within 7 seconds counts as failed, so a silent
+hang is treated the same as an error. `server.log` in `%LOCALAPPDATA%\VLCFlix`
+records ffmpeg's own words for the failure.
+
 ## What happens on a scan
 
 Scanning runs in **two phases**, because reading a file and drawing it cost wildly

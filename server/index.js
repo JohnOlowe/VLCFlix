@@ -556,11 +556,37 @@ function detectHwAccel() {
  * relevant when pixels actually have to be decoded. Seeking restarts the process
  * at the requested offset, which is why `t` exists.
  */
+/** Every ffmpeg build can decode; not every one can encode. Cached after the
+ *  first question, because it spawns a process. */
+let x264Cache;
+function hasX264() {
+  if (x264Cache !== undefined) return x264Cache;
+  x264Cache = false;
+  try {
+    const out = execFileSync('ffmpeg', ['-hide_banner', '-encoders'],
+      { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+    x264Cache = /\blibx264\b/.test(out);
+  } catch {
+    x264Cache = false;
+  }
+  if (!x264Cache) console.warn('[ffmpeg] this build has no libx264 encoder: files that need transcoding will use the built-in player');
+  return x264Cache;
+}
+
 function streamViaFfmpeg(req, res, item) {
   const start = Math.max(0, Math.floor(Number(req.query.t) || 0));
   const accel = detectHwAccel();
   const copyVideo = item.vcodec === 'h264';
   const copyAudio = copyVideo && item.acodec === 'aac';
+
+  if (!copyVideo && !hasX264()) {
+    // Without an encoder the pipe would die silently and the player would show
+    // a black screen. Say so, and let the client use the file directly.
+    return res.status(501).json({
+      error: 'This build of ffmpeg cannot transcode video (no libx264)',
+      code: 'NO_X264',
+    });
+  }
 
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   if (start > 0) args.push('-ss', String(start));
@@ -593,11 +619,20 @@ function streamViaFfmpeg(req, res, item) {
   });
   child.stdout.on('end', () => {
     if (started) res.end();
-    else if (!res.headersSent) res.status(502).json({ error: 'ffmpeg produced no output', code: 'FFMPEG_EMPTY' });
+    else if (!res.headersSent) {
+      res.status(502).json({
+        error: `ffmpeg produced no output${lastError ? `: ${lastError}` : ''}`,
+        code: 'FFMPEG_EMPTY',
+      });
+    }
   });
+  let lastError = '';
   child.stderr.on('data', (buf) => {
     const line = buf.toString().trim();
-    if (line) console.warn('[ffmpeg]', line.split('\n')[0]);
+    if (line) {
+      lastError = line.split('\n')[0];
+      console.warn('[ffmpeg]', lastError);
+    }
   });
   child.on('error', (err) => {
     if (!res.headersSent) {

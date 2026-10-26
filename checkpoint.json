@@ -106,10 +106,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.9.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.9.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.10.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.10.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.9 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.10 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -131,7 +131,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.9",
+    "version": "1.1.10",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -211,9 +211,15 @@
     "stale_urls_cleared": "catalogue fields pointing at files that are gone are cleared, so the grid falls back to its gradient instead of requesting a 404"
   },
   "open_question_playback": {
-    "reported": "user said \"the playback is not working\" alongside a launcher log",
-    "log_shows": "first two WebView2 attempts timed out at the 8 s watchdog; page loaded only after Retry; window then received WM_CLOSE",
-    "not_yet_known": "whether playback fails with the app open (no video, no sound, error toast, VLC never launches) or whether \"playback\" meant the app not starting",
-    "asked_user": "yes - see the closing question of the turn"
+    "reported": "black screen with the FFMPEG engine, chrome visible for a few seconds then everything black",
+    "cause": "unknown on their machine - the same ffmpeg path plays correctly here (1280x720, readyState 4)",
+    "shipped": "automatic fallback to direct playback plus a visible reason; server.log now has ffmpeg's error text",
+    "next": "user should report whether the film now plays (fallback) or shows the notice, and paste the [ffmpeg] line from server.log"
+  },
+  "features_v1110": {
+    "silent_black_fixed": "no error handler existed on #playerVideo, so any stream failure was a black screen with nothing said",
+    "fallback": "a failed ffmpeg stream (error event, or no picture after 7 s) is retried directly from the file at the same position, with a toast",
+    "notice": "if nothing plays, the reason is shown in the player instead of black",
+    "server_probe": "ffmpeg -encoders checked once; a build without libx264 answers 501 with code NO_X264 instead of dying silently, and the 502 now carries ffmpeg's own last error line"
   }
 }

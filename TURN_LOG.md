@@ -680,3 +680,38 @@ it failed on were re-run against a fresh server and all pass.
 Verified: `npm test` 64/64; artwork harness (page gated, chip, toast, no temps,
 no console errors) all pass; player harness 14/14; API stays at 4 ms while ffmpeg
 renders.
+
+## 2026-10-26 — v1.1.10: a failed stream was a silent black screen
+Reported: with the **FFMPEG** engine the player chrome shows for a few seconds,
+then everything goes black and nothing else happens. The launcher log for the same
+session shows the window itself now loading (after the 1.1.9 fix).
+
+The player had **no error handler at all** on `#playerVideo`. Whatever went wrong
+in the ffmpeg pipe — a build without `libx264`, a codec it will not transcode, a
+stream that sends nothing — the element stayed black and the chrome auto-hid. That
+is the whole reported behaviour.
+
+The ffmpeg path itself plays correctly here: 1280x720, `readyState 4`, position
+advancing, no console errors. So the *cause* on that machine is still unknown,
+but it no longer matters to the viewer:
+
+- a media `error` event, or **no picture within 7 s**, is treated as a failed
+  stream and the film is retried **directly from the file** at the same position,
+  with a toast explaining the switch;
+- if the file will not play that way either, the reason appears in the player
+  ("the video could not be decoded") instead of a black rectangle;
+- the server checks `ffmpeg -encoders` once and answers **501 / NO_X264** when a
+  transcode is needed but the build cannot encode, rather than spawning a pipe
+  that dies;
+- the 502 for an empty pipe now carries ffmpeg's own last error line, and
+  `server.log` records it.
+
+Verified with three forced failures: a 500 on the ffmpeg URL (falls back and
+plays, toast shown), a 200 that never sends a byte (gives up at 7 s, falls back
+and plays), and every stream failing (reason shown on screen — screenshot read).
+Normal ffmpeg playback still works, 64/64 tests, player harness 14/14.
+
+Housekeeping: the workspace was 206 MB against a 128 MB snapshot budget. Six old
+installer/zip pairs were deleted, leaving only 1.1.9 (55 MB counted). Two stale
+servers left by earlier harness runs were also found and killed — one of them had
+been answering `accept.js` on port 4976 with pre-change code.

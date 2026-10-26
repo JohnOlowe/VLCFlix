@@ -285,6 +285,9 @@ flowing through the player (so it reports `measuring…` before playback starts)
 this applies to the in-app engines only — Real VLC manages its own output and has
 its own `Ctrl+T` track synchronisation dialog.
 
+Clicking anywhere on the picture toggles play/pause — the large centre icon shows
+which action a click will take.
+
 Subtitle and sync settings persist across sessions.
 
 Bitrate, size and resolution are unchanged; the subtitle is read, not copied.

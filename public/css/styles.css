@@ -1110,7 +1110,12 @@ textarea.input {
   inset: 0;
   display: grid;
   place-items: center;
-  pointer-events: none;
+  /* This overlay carries the play/pause click for the whole picture area. It was
+     pointer-events: none, so the click it is bound to could never arrive and the
+     large icon did nothing. The bottom controls sit after it in the DOM and keep
+     their own clicks. */
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .player__center svg {
@@ -1123,6 +1128,9 @@ textarea.input {
 }
 
 .player.is-paused .player__center svg { opacity: 0.92; transform: none; }
+/* While playing, the same icon is the pause affordance, but only while the
+   controls are on screen -- it should not sit on the picture during playback. */
+.player.is-active:not(.is-paused) .player__center svg { opacity: 0.5; transform: none; }
 
 .player__bottom { position: absolute; left: 26px; right: 26px; bottom: 20px; }
 

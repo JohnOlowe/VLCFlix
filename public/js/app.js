@@ -1548,6 +1548,13 @@ function updatePlayerToggle() {
   const paused = video.paused;
   root.classList.toggle('is-paused', paused);
   $('#playerToggle').replaceChildren(SVG(paused ? 'i-play' : 'i-pause'));
+  // The large centre icon must describe what clicking it will do.
+  const centre = $('#playerCenter');
+  if (centre) {
+    centre.replaceChildren(SVG(paused ? 'i-play' : 'i-pause'));
+    centre.setAttribute('aria-label', paused ? 'Play' : 'Pause');
+    centre.setAttribute('title', paused ? 'Play' : 'Pause');
+  }
   const position = playerPosition();
   const total = playerTotal();
   $('#playerTime').textContent = `${formatTime(position)} / ${formatTime(total)}`;

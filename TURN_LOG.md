@@ -544,3 +544,21 @@ Test note: the first version of the cache-busting test passed even with the fix
 reverted -- it looped over `catalog.items`, which was empty, so the assertion never
 ran. It now seeds its own catalogue and fails correctly when the version is removed.
 64 tests (was 62).
+
+## 2026-10-26 — v1.1.6: the large centre play/pause icon did nothing
+Two defects in the same control:
+
+1. `.player__center { pointer-events: none; }`. The overlay is the element with the
+   click listener, so with pointer events disabled the click never arrived. The
+   handler was correct and simply unreachable.
+2. `updatePlayerToggle()` refreshed the small bottom button and the clock but never
+   the centre glyph, which stayed hardcoded to `#i-play` whatever the state.
+
+Now: the overlay accepts clicks (cursor changes), its glyph and aria-label follow
+play state, and it also shows while playing so it is a visible pause affordance —
+but only while the chrome is on screen, not floating over the film.
+
+Checked that making a full-screen overlay interactive did not eat other clicks:
+picture click pauses/resumes and flips the glyph both ways, the bottom toggle still
+works, scrubbing to 70% still seeks (t=11.89s), the CC panel still opens and its
+buttons still work, zero console errors. Screenshot read.

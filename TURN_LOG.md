@@ -312,3 +312,43 @@
   The render itself still cannot be exercised here.
 - Lesson recorded: whenever a WebView2 completed handler hands over an interface, it is
   borrowed unless AddRef'd — including the environment.
+
+## 2026-10-26 — v1.1.0: scan speed, subtitles, ffmpeg engine
+User confirmed the 1.0.3 AddRef fix works. Three requests: make scanning feel
+instant, add an ffmpeg playback engine with hardware decode, and pick up sidecar
+subtitles.
+
+### Scan
+- Was: one pass, one file at a time, ffprobe + 3 ffmpeg jobs + 2 luma measurements,
+  and the catalog was only published after the last thumbnail.
+- Now: phase 1 reads metadata only (ffprobe, 6-way concurrency) and publishes the
+  catalog; phase 2 renders artwork 2-way in the background, republishing at most
+  every 1.2 s. The UI says "Library ready — drawing artwork 40/113" and reloads the
+  grid as art lands.
+- Measured here (8 clips): catalog usable in **685 ms**, artwork done +8.3 s in the
+  background. The old code made the user wait for the whole 9 s.
+- Known trade-off: artwork uses 2 ffmpeg workers so a low-end machine is not
+  saturated while the user is browsing.
+
+### Subtitles
+- `findSubtitles` matches Movie.srt / Movie.en.srt / Movie.forced.srt (+ .vtt),
+  labels known languages, sorts the bare sidecar first.
+- `toVtt` converts SRT to WebVTT because `<track>` silently ignores SRT.
+- Regression caught during development: the cue-number regex used `\s*`, which
+  matched across the blank line between cues and merged them. Fixed to `[ \t]*`;
+  the negative control (restoring the buggy regex) fails exactly one test.
+
+### FFmpeg engine
+- Third `playMode`. `?engine=ffmpeg&t=N` spawns ffmpeg, streams fragmented MP4.
+- H.264 is copied, not re-encoded; anything else is transcoded with `-hwaccel`
+  (qsv/d3d11va/dxva2 on Windows, videotoolbox on macOS, software otherwise).
+- Seek restarts the stream at the new offset; the UI adds the offset back so the
+  clock shows true positions. VAAPI deliberately not auto-selected: it needs an
+  explicit device and format negotiation.
+- Verified with ffprobe on the served bytes: mpeg4-in-MKV -> video:h264 audio:aac
+  in 198 ms; H.264 MP4 -> stream copied unchanged.
+
+### Environment note
+ffmpeg/ffprobe are NOT installed by default in this sandbox (packages do not
+persist between turns). With them missing, `tools.canRender` is false and no
+artwork is produced — that is correct behaviour, not a bug: install ffmpeg.

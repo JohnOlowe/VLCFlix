@@ -128,7 +128,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.0.3",
+    "version": "1.1.0",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -152,5 +152,11 @@
       "controller->AddRef() before storing it; Released in TearDownWebView()",
       "LogWebViewState only trusts out-params whose call returned S_OK"
     ]
-  }
+  },
+  "features_v110": {
+    "scan": "two-phase: fast metadata pass publishes the catalog (measured 685 ms for 8 clips), artwork renders in the background with 2-way concurrency and republishes progressively",
+    "subtitles": "sidecar .srt/.vtt beside the video, Movie.srt / Movie.en.srt / Movie.forced.srt; served as WebVTT via /api/subtitles/:id/:index; CC button in the player",
+    "ffmpeg_engine": "third playMode 'ffmpeg': /api/stream/:id?engine=ffmpeg&t=N, hwaccel qsv/d3d11va/dxva2 on Windows, copies H.264 instead of re-encoding, restarts the stream to seek"
+  },
+  "tests": "37 passing (23 original + 14 subtitle conversion/discovery)"
 }

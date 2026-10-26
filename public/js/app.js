@@ -194,7 +194,11 @@ function paintEngine() {
   const label = $('#engineLabel');
   const mode = state.settings?.playMode || 'vlc';
   dot.className = 'engine__dot';
-  if (mode === 'browser') {
+  if (mode === 'ffmpeg') {
+    label.textContent = 'FFMPEG';
+    dot.classList.add('is-live');
+    $('#engineBtn').title = 'Playback goes through ffmpeg (hardware decode when available)';
+  } else if (mode === 'browser') {
     label.textContent = 'BROWSER';
     dot.classList.add('is-warn');
     $('#engineBtn').title = 'Playback uses the built-in player';
@@ -780,7 +784,47 @@ const player = {
   reportTimer: null,
   current: null,
   wasPlaying: false,
+  engine: 'direct', // 'direct' streams the file; 'ffmpeg' pipes a transcoded stream
+  streamBase: null,
+  offset: 0,        // where the current ffmpeg stream started, in the file
 };
+
+/**
+ * ffmpeg streams are pipes: there is no duration and nothing to scrub inside them.
+ * Position is therefore (stream offset + elapsed) and a seek restarts the stream at
+ * the new offset. Direct streams keep the browser's own timeline.
+ */
+function playerPosition() {
+  const video = player.video;
+  const elapsed = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  return player.engine === 'ffmpeg' ? (player.offset || 0) + elapsed : elapsed;
+}
+
+function playerTotal() {
+  const known = Number(player.current?.duration) || 0;
+  if (player.engine === 'ffmpeg') return known;
+  return player.video && Number.isFinite(player.video.duration) && player.video.duration > 0
+    ? player.video.duration
+    : known;
+}
+
+function restartStream(seconds) {
+  const video = player.video;
+  if (!video || !player.streamBase) return;
+  const at = Math.max(0, Math.floor(seconds));
+  player.offset = at;
+  const wasPlaying = !video.paused;
+  const url = `${player.streamBase}${player.streamBase.includes('?') ? '&' : '?'}t=${at}`;
+  video.src = url;
+  if (wasPlaying) video.play().catch(() => {});
+}
+
+function seekToSeconds(seconds) {
+  const total = playerTotal();
+  const clamped = Math.max(0, Math.min(seconds, total > 0 ? total - 1 : seconds));
+  if (player.engine === 'ffmpeg') restartStream(clamped);
+  else if (player.video && Number.isFinite(player.video.duration)) player.video.currentTime = clamped;
+}
 
 function openPlayer(item, session) {
   player.current = item;
@@ -791,10 +835,15 @@ function openPlayer(item, session) {
   document.body.classList.add('is-locked');
   $('#playerTitle').textContent = item.title;
 
+  player.engine = session.engine === 'ffmpeg' ? 'ffmpeg' : 'direct';
+  player.streamBase = session.streamUrl || null;
+  player.offset = 0;
+
   video.src = session.streamUrl;
   video.muted = false;
   video.volume = 1;
   $('#playerVol').value = '1';
+  attachSubtitles(item);
 
   const resumeAt = Number(session.seekTo) || 0;
   const onLoaded = () => {
@@ -819,13 +868,74 @@ function openPlayer(item, session) {
   updatePlayerToggle();
 }
 
+/** Sidecar subtitles, served as WebVTT by the server. */
+function attachSubtitles(item) {
+  const video = player.video;
+  if (!video) return;
+  for (const existing of Array.from(video.querySelectorAll('track'))) existing.remove();
+  player.tracks = item.subtitles || [];
+
+  player.tracks.forEach((track, index) => {
+    const node = document.createElement('track');
+    node.kind = 'subtitles';
+    node.label = track.label || `Track ${index + 1}`;
+    if (track.lang) node.srclang = track.lang;
+    node.src = track.url;
+    if (track.default) node.default = true;
+    video.append(node);
+  });
+
+  const cc = $('#playerCC');
+  if (cc) {
+    cc.hidden = player.tracks.length === 0;
+    cc.classList.remove('is-on');
+    cc.title = player.tracks.length
+      ? `${player.tracks.length} subtitle track${player.tracks.length === 1 ? '' : 's'}`
+      : 'No subtitles';
+  }
+  // textTracks appear asynchronously once <track> elements are attached.
+  if (player.tracks.length) {
+    setTimeout(() => setSubtitleTrack(0), 60);
+  }
+}
+
+function setSubtitleTrack(index) {
+  const video = player.video;
+  if (!video) return;
+  const tracks = video.textTracks || [];
+  for (let i = 0; i < tracks.length; i += 1) {
+    tracks[i].mode = i === index ? 'showing' : 'disabled';
+  }
+  const cc = $('#playerCC');
+  if (cc) {
+    cc.classList.toggle('is-on', index >= 0);
+    cc.setAttribute('aria-pressed', index >= 0 ? 'true' : 'false');
+  }
+}
+
+/** Cycle: every available track, then off. */
+function cycleSubtitles() {
+  const video = player.video;
+  if (!video || !(video.textTracks || []).length) return;
+  const tracks = video.textTracks;
+  let current = -1;
+  for (let i = 0; i < tracks.length; i += 1) {
+    if (tracks[i].mode === 'showing') { current = i; break; }
+  }
+  const next = current + 1 >= tracks.length ? -1 : current + 1;
+  setSubtitleTrack(next);
+  if (next >= 0) toast(`Subtitles: ${player.tracks[next]?.label || next + 1}`);
+  else toast('Subtitles off');
+}
+
 function reportProgress() {
   if (!player.current || !player.video) return;
-  const { currentTime, duration } = player.video;
+  const duration = playerTotal();
+  const position = playerPosition();
   if (!Number.isFinite(duration) || duration <= 0) return;
   api('/api/progress', {
     method: 'POST',
-    body: { id: player.current.id, position: currentTime, duration },
+    body: { id: player.current.id, position, duration },
   }).catch(() => {});
 }
 
@@ -856,8 +966,10 @@ function updatePlayerToggle() {
   const paused = video.paused;
   root.classList.toggle('is-paused', paused);
   $('#playerToggle').replaceChildren(SVG(paused ? 'i-play' : 'i-pause'));
-  $('#playerTime').textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-  const ratio = Number.isFinite(video.duration) && video.duration > 0 ? video.currentTime / video.duration : 0;
+  const position = playerPosition();
+  const total = playerTotal();
+  $('#playerTime').textContent = `${formatTime(position)} / ${formatTime(total)}`;
+  const ratio = total > 0 ? Math.min(1, position / total) : 0;
   const scrub = $('#playerScrub');
   scrub.value = String(Math.round(ratio * 1000));
   scrub.style.setProperty('--fill', `${ratio * 100}%`);
@@ -1066,7 +1178,7 @@ async function renderSettings() {
 
   /* playback engine */
   const modeSeg = el('div', { class: 'seg' });
-  for (const [value, label] of [['vlc', 'Real VLC'], ['browser', 'Built-in player']]) {
+  for (const [value, label] of [['vlc', 'Real VLC'], ['ffmpeg', 'FFmpeg (hardware)'], ['browser', 'Built-in player']]) {
     modeSeg.append(el('button', {
       type: 'button',
       class: (state.settings.playMode === value) ? 'is-active' : '',
@@ -1185,6 +1297,10 @@ async function saveSettings(patch) {
 
 function pollScan() {
   clearInterval(state.scanPoll);
+  let lastArt = -1;
+  let refreshedItems = false;
+  let lastRefresh = 0;
+
   state.scanPoll = setInterval(async () => {
     try {
       const scan = await api('/api/scan/status');
@@ -1192,11 +1308,28 @@ function pollScan() {
       const status = $('#scanStatus');
       const fill = $('#scanFill');
       if (!status) { clearInterval(state.scanPoll); return; }
+
       if (scan.running) {
         const pct = scan.total ? Math.round((scan.done / scan.total) * 100) : 0;
-        status.textContent = scan.total
-          ? `Scanning ${scan.done}/${scan.total} — ${scan.current}`
-          : 'Scanning…';
+        if (scan.phase === 'art') {
+          // Phase 1 is done: the library is already usable, thumbnails are still
+          // being drawn. Say so plainly instead of showing a stalled progress bar.
+          status.textContent = scan.total
+            ? `Library ready — drawing artwork ${scan.done}/${scan.total}`
+            : 'Library ready — drawing artwork…';
+          const now = Date.now();
+          const grew = scan.done !== lastArt;
+          if ((!refreshedItems || grew) && now - lastRefresh > 1500) {
+            refreshedItems = true;
+            lastArt = scan.done;
+            lastRefresh = now;
+            refreshCatalog().catch(() => {});
+          }
+        } else {
+          status.textContent = scan.total
+            ? `Reading ${scan.done}/${scan.total} — ${scan.current}`
+            : 'Reading library…';
+        }
         if (fill) fill.style.width = `${pct}%`;
       } else {
         clearInterval(state.scanPoll);
@@ -1206,7 +1339,7 @@ function pollScan() {
           status.textContent = `Scan failed: ${scan.error}`;
           toast(`Scan failed: ${scan.error}`, { error: true });
         } else {
-          status.textContent = `Scan complete — ${scan.done} files read.`;
+          status.textContent = `Scan complete — ${state.items.length} titles.`;
           await refreshCatalog();
           paintFoldersAfterScan();
           toast(`Library scanned: ${state.items.length} title${state.items.length === 1 ? '' : 's'}`);
@@ -1360,12 +1493,13 @@ function wireEvents() {
   $('#playerToggle').addEventListener('click', toggle);
   $('#playerClose').addEventListener('click', () => closePlayer());
   $('#playerCenter').addEventListener('click', toggle);
-  $('#playerBack10').addEventListener('click', () => { video.currentTime = Math.max(0, video.currentTime - 10); });
-  $('#playerFwd10').addEventListener('click', () => { video.currentTime = Math.min(video.duration || 0, video.currentTime + 10); });
+  $('#playerBack10').addEventListener('click', () => seekToSeconds(playerPosition() - 10));
+  $('#playerFwd10').addEventListener('click', () => seekToSeconds(playerPosition() + 10));
   $('#playerScrub').addEventListener('input', (event) => {
     const ratio = Number(event.target.value) / 1000;
-    if (Number.isFinite(video.duration)) video.currentTime = ratio * video.duration;
+    seekToSeconds(ratio * playerTotal());
   });
+  $('#playerCC').addEventListener('click', cycleSubtitles);
   $('#playerMute').addEventListener('click', () => {
     video.muted = !video.muted;
     $('#playerMute').replaceChildren(SVG(video.muted ? 'i-muted' : 'i-volume'));

@@ -2,6 +2,7 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const { spawn, execFileSync } = require('node:child_process');
 const express = require('express');
 
 const store = require('./store');
@@ -29,6 +30,7 @@ app.use('/media', express.static(MEDIA_DIR, { maxAge: '1h', immutable: true }));
 
 const scanState = {
   running: false,
+  phase: null, // 'read' (fast metadata) then 'art' (thumbnails, in the background)
   done: 0,
   total: 0,
   current: '',
@@ -41,7 +43,7 @@ async function runScan() {
   if (scanState.running) return;
   const settings = store.getSettings();
   Object.assign(scanState, {
-    running: true, done: 0, total: 0, current: '',
+    running: true, phase: null, done: 0, total: 0, current: '',
     startedAt: Date.now(), finishedAt: null, error: null,
   });
   try {
@@ -49,6 +51,9 @@ async function runScan() {
       previous: store.getCatalog(),
       mediaDir: MEDIA_DIR,
       onProgress: (p) => Object.assign(scanState, p),
+      // Persist whenever the catalog improves, so a reload mid-scan shows
+      // everything that has been found so far instead of nothing.
+      onCatalog: (next) => store.saveCatalog(next),
     });
     store.saveCatalog(catalog);
   } catch (err) {
@@ -68,6 +73,12 @@ const itemUrl = (item) => ({
   posterUrl: item.poster ? `/media/${item.poster}` : null,
   backdropUrl: item.backdrop ? `/media/${item.backdrop}` : null,
   previewUrl: item.preview ? `/media/${item.preview}` : null,
+  subtitles: (item.subtitles || []).map((track, index) => ({
+    url: `/api/subtitles/${item.id}/${index}`,
+    label: track.label,
+    lang: track.lang || '',
+    default: index === 0,
+  })),
 });
 
 function publicSettings(settings) {
@@ -265,6 +276,20 @@ app.post('/api/player/play', async (req, res) => {
   const settings = store.getSettings();
   const chosen = mode || settings.playMode;
 
+  if (chosen === 'ffmpeg') {
+    nowPlaying.state = { id, mode: 'browser', startedAt: Date.now() };
+    // seekTo stays 0: ffmpeg is handed the start offset, and a seek restarts the
+    // stream at a new offset rather than scrubbing an unseekable pipe.
+    return res.json({
+      mode: 'browser',
+      engine: 'ffmpeg',
+      streamUrl: `/api/stream/${id}?engine=ffmpeg${startAt ? `&t=${Math.round(startAt)}` : ''}`,
+      title: item.title,
+      seekTo: 0,
+      accelerated: detectHwAccel() || 'software',
+    });
+  }
+
   if (chosen !== 'vlc') {
     nowPlaying.state = { id, mode: 'browser', startedAt: Date.now() };
     return res.json({
@@ -397,10 +422,101 @@ app.post('/api/mylist', (req, res) => {
 
 /* ------------------------------- streaming ------------------------- */
 
+/* --------------------------- ffmpeg engine ------------------------- */
+
+/**
+ * Which hardware decoder ffmpeg can use on this machine, resolved once.
+ *
+ * Only accelerators that work by simply passing `-hwaccel <name>` are listed
+ * (QSV / D3D11VA / DXVA2 on Windows, VideoToolbox on macOS). VAAPI on Linux needs
+ * an explicit device and format negotiation, so it is deliberately not guessed.
+ * An empty string means software, and every failure falls back to it.
+ */
+let hwAccelCache;
+function detectHwAccel() {
+  if (hwAccelCache !== undefined) return hwAccelCache;
+  hwAccelCache = '';
+  try {
+    const out = execFileSync('ffmpeg', ['-hide_banner', '-hwaccels'], {
+      encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const available = out.split(/\r?\n/).slice(1).map((line) => line.trim().toLowerCase()).filter(Boolean);
+    const wanted = process.platform === 'win32'
+      ? ['qsv', 'd3d11va', 'dxva2']
+      : process.platform === 'darwin' ? ['videotoolbox'] : [];
+    hwAccelCache = wanted.find((name) => available.includes(name)) || '';
+  } catch {
+    hwAccelCache = '';
+  }
+  return hwAccelCache;
+}
+
+/**
+ * Transcode/remux to fragmented MP4 so the built-in player can show containers it
+ * cannot read natively (MKV, AVI, HEVC, AC3 ...).
+ *
+ * H.264 is copied rather than re-encoded: decoding and re-encoding a file the
+ * browser can already decode is pure waste, and hardware acceleration is only
+ * relevant when pixels actually have to be decoded. Seeking restarts the process
+ * at the requested offset, which is why `t` exists.
+ */
+function streamViaFfmpeg(req, res, item) {
+  const start = Math.max(0, Math.floor(Number(req.query.t) || 0));
+  const accel = detectHwAccel();
+  const copyVideo = item.vcodec === 'h264';
+  const copyAudio = copyVideo && item.acodec === 'aac';
+
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
+  if (start > 0) args.push('-ss', String(start));
+  if (!copyVideo && accel) args.push('-hwaccel', accel);
+  args.push('-i', item.path, '-sn', '-dn', '-map', '0:v:0', '-map', '0:a:0?');
+  if (copyVideo) {
+    args.push('-c:v', 'copy');
+  } else {
+    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+              '-pix_fmt', 'yuv420p', '-g', '48');
+  }
+  args.push('-c:a', copyAudio ? 'copy' : 'aac');
+  if (!copyAudio) args.push('-b:a', '160k', '-ac', '2');
+  args.push('-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
+
+  console.log(`[ffmpeg] ${item.filename}: ${copyVideo ? 'copy video' : `transcode (${accel || 'software'})`} at ${start}s`);
+
+  const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const stop = () => { try { child.kill('SIGKILL'); } catch { /* already gone */ } };
+  req.on('close', stop);
+  res.on('close', stop);
+
+  let started = false;
+  child.stdout.on('data', (chunk) => {
+    if (!started) {
+      started = true;
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store' });
+    }
+    res.write(chunk);
+  });
+  child.stdout.on('end', () => {
+    if (started) res.end();
+    else if (!res.headersSent) res.status(502).json({ error: 'ffmpeg produced no output', code: 'FFMPEG_EMPTY' });
+  });
+  child.stderr.on('data', (buf) => {
+    const line = buf.toString().trim();
+    if (line) console.warn('[ffmpeg]', line.split('\n')[0]);
+  });
+  child.on('error', (err) => {
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Could not run ffmpeg: ${err.message}`, code: 'FFMPEG_MISSING' });
+    } else {
+      res.end();
+    }
+  });
+}
+
 /** Range-aware local video streaming for the built-in player. */
 app.get('/api/stream/:id', (req, res) => {
   const item = findItem(req.params.id);
   if (!item) return res.status(404).end();
+  if (req.query.engine === 'ffmpeg') return streamViaFfmpeg(req, res, item);
 
   let stat;
   try {
@@ -439,6 +555,25 @@ app.get('/api/stream/:id', (req, res) => {
 });
 
 /* ------------------------------- misc ------------------------------ */
+
+/** Sidecar subtitles, converted to WebVTT because <track> cannot read SRT. */
+app.get('/api/subtitles/:id/:index', (req, res) => {
+  const item = findItem(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Unknown item' });
+  const track = (item.subtitles || [])[Number(req.params.index)];
+  if (!track) return res.status(404).json({ error: 'Unknown subtitle track' });
+
+  const file = path.join(path.dirname(item.path), track.name);
+  let raw;
+  try {
+    raw = fs.readFileSync(file);
+  } catch {
+    return res.status(410).json({ error: 'Subtitle file is no longer on disk' });
+  }
+  res.set('Content-Type', 'text/vtt; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.send(library.toVtt(raw));
+});
 
 app.get('/api/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 

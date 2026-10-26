@@ -215,6 +215,22 @@ body:not([data-view='home']) .nav {
 
 .icon-btn:hover { background: rgba(255, 255, 255, 0.12); }
 .icon-btn--sm { padding: 5px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
+
+/* Subtitle toggle: outlined when off, solid when a track is showing. */
+.icon-btn--cc {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  line-height: 1;
+}
+.icon-btn--cc.is-on {
+  background: var(--brand-red);
+  border-color: var(--brand-red);
+  color: #fff;
+}
 .icon-btn svg { width: 21px; height: 21px; }
 
 /* -------------------------------- hero --------------------------------- */

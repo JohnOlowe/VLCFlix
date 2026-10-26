@@ -105,23 +105,46 @@ async function probeTools() {
 }
 
 async function probeVideo(file) {
+  const empty = { duration: 0, width: 0, height: 0, vcodec: null, acodec: null, pixFmt: null };
   try {
     const { stdout } = await run(
       'ffprobe',
-      ['-v', 'error', '-show_entries', 'format=duration:stream=width,height',
-       '-select_streams', 'v:0', '-of', 'json', file],
+      ['-v', 'error', '-show_entries',
+       'format=duration:stream=codec_type,codec_name,width,height,pix_fmt',
+       '-of', 'json', file],
       { timeout: 20000, maxBuffer: 1 << 20 }
     );
     const data = JSON.parse(stdout || '{}');
-    const stream = (data.streams || [])[0] || {};
+    const streams = data.streams || [];
+    const video = streams.find((st) => st.codec_type === 'video') || {};
+    const audio = streams.find((st) => st.codec_type === 'audio') || {};
     return {
       duration: Number.parseFloat(data.format?.duration) || 0,
-      width: Number(stream.width) || 0,
-      height: Number(stream.height) || 0,
+      width: Number(video.width) || 0,
+      height: Number(video.height) || 0,
+      vcodec: video.codec_name || null,
+      acodec: audio.codec_name || null,
+      pixFmt: video.pix_fmt || null,
     };
   } catch {
-    return { duration: 0, width: 0, height: 0 };
+    return empty;
   }
+}
+
+/** Bounded parallelism: N workers pulling from one queue, order preserved. */
+async function runPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
 }
 
 /**
@@ -212,6 +235,70 @@ async function renderArt(file, duration, outDir, id) {
   return produced;
 }
 
+const SUB_EXT = new Set(['.srt', '.vtt']);
+
+const LANG_NAMES = {
+  en: 'English', eng: 'English', fr: 'French', fre: 'French', fra: 'French',
+  es: 'Spanish', spa: 'Spanish', de: 'German', ger: 'German', deu: 'German',
+  it: 'Italian', ita: 'Italian', pt: 'Portuguese', por: 'Portuguese',
+  ru: 'Russian', rus: 'Russian', ar: 'Arabic', ara: 'Arabic',
+  zh: 'Chinese', chi: 'Chinese', zho: 'Chinese', ja: 'Japanese', jpn: 'Japanese',
+  ko: 'Korean', kor: 'Korean', hi: 'Hindi', hin: 'Hindi', nl: 'Dutch', pl: 'Polish',
+  tr: 'Turkish', sv: 'Swedish', no: 'Norwegian', da: 'Danish', fi: 'Finnish',
+  yo: 'Yoruba', yor: 'Yoruba', ig: 'Igbo', ibo: 'Igbo', ha: 'Hausa', hau: 'Hausa',
+};
+
+/**
+ * Sidecar subtitles sitting next to the video: Movie.srt, Movie.en.srt,
+ * Movie.forced.srt. This is the naming every player expects, so VLC finds them
+ * on its own and the built-in player gets them from the same convention.
+ */
+function findSubtitles(file, entries) {
+  const base = path.basename(file, path.extname(file));
+  const tracks = [];
+
+  for (const name of entries) {
+    const ext = path.extname(name).toLowerCase();
+    if (!SUB_EXT.has(ext)) continue;
+    const stem = path.basename(name, path.extname(name));
+    if (stem !== base && !stem.startsWith(base + '.')) continue;
+
+    const suffix = stem === base ? '' : stem.slice(base.length + 1);
+    const key = suffix.toLowerCase();
+    const lang = /^[a-z]{2,3}$/.test(key) || /^[a-z]{2,3}[-_][a-z]{2,4}$/i.test(key)
+      ? key.split(/[-_]/)[0]
+      : null;
+    const label = !suffix
+      ? 'Default'
+      : LANG_NAMES[key] || LANG_NAMES[lang] || suffix.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+    tracks.push({ name, label, lang, ext: ext.slice(1) });
+  }
+
+  // Plain Movie.srt is what people expect to be on by default, so it sorts first.
+  tracks.sort((a, b) => (a.label === 'Default' ? -1 : b.label === 'Default' ? 1 : a.label.localeCompare(b.label)));
+  return tracks;
+}
+
+/** SRT is not a web format; WebVTT is the same idea with a stricter header. */
+function toVtt(input) {
+  const text = Buffer.isBuffer(input) ? input.toString('utf8') : String(input);
+  let body = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  if (/^WEBVTT/.test(body)) return body;
+
+  body = body
+    // 00:00:20,000 -> 00:00:20.000 (only inside timestamp lines)
+    .replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, '$1.$2')
+    // SRT cue numbers are not needed and become stray identifiers
+    .replace(/^[ \t]*\d+[ \t]*\n(?=[ \t]*\d\d:\d\d:\d\d\.\d\d\d[ \t]*-->)/gm, '')
+    // X1:/Y1:/X2:/Y2: position hints are SRT-only
+    .replace(/^(.+-->\s*\d\d:\d\d:\d\d\.\d\d\d)[ \t]+X1:.*$/gm, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return `WEBVTT\n\n${body}\n`;
+}
+
 function readSidecar(file) {
   const candidate = file.replace(/\.[^.]+$/, '.json');
   if (candidate === file) return null;
@@ -246,13 +333,26 @@ async function walk(folder, found = [], depth = 0) {
 
 /**
  * Scan folders and build the catalog.
+ *
+ * Deliberately two phases, because reading a file and drawing it are wildly
+ * different costs. Phase 1 asks ffprobe for duration and dimensions and touches
+ * no pixels: that is fast enough to publish a usable catalog in seconds. Phase 2
+ * renders artwork in the background and republishes the catalog as it goes, so the
+ * user is browsing while their thumbnails are still being made.
+ *
  * @param {string[]} folders
  * @param {object} opts
- * @param {object} opts.previous  previous catalog, used to skip unchanged files
- * @param {string} opts.mediaDir  where generated artwork is written
- * @param {(p: {done:number,total:number,current:string}) => void} [opts.onProgress]
+ * @param {object} opts.previous      previous catalog, used to skip unchanged files
+ * @param {string} opts.mediaDir      where generated artwork is written
+ * @param {(p: {phase:string,done:number,total:number,current:string}) => void} [opts.onProgress]
+ * @param {(catalog: object) => void} [opts.onCatalog]  called whenever the catalog improves
  */
-async function scan(folders, { previous = null, mediaDir, onProgress = () => {} } = {}) {
+async function scan(folders, {
+  previous = null,
+  mediaDir,
+  onProgress = () => {},
+  onCatalog = () => {},
+} = {}) {
   const tools = await probeTools();
   await fsp.mkdir(mediaDir, { recursive: true });
 
@@ -268,40 +368,50 @@ async function scan(folders, { previous = null, mediaDir, onProgress = () => {} 
     await walk(folder, files);
   }
 
-  const items = [];
-  let done = 0;
-
+  // One directory listing per folder, so sidecar subtitles cost nothing per file.
+  const entriesByDir = new Map();
   for (const file of files) {
-    const id = sha1(path.resolve(file));
+    const dir = path.dirname(file);
+    if (entriesByDir.has(dir)) continue;
+    try {
+      entriesByDir.set(dir, await fsp.readdir(dir));
+    } catch {
+      entriesByDir.set(dir, []);
+    }
+  }
+
+  /* ---------------- phase 1: read (fast, no pixels) ---------------- */
+
+  let read = 0;
+  const items = await runPool(files, 6, async (file) => {
     let stat;
     try {
       stat = await fsp.stat(file);
     } catch {
-      continue;
+      return null;
     }
 
-    onProgress({ done, total: files.length, current: path.basename(file) });
-    done += 1;
-
+    const id = sha1(path.resolve(file));
     const cached = previousById.get(id);
     const unchanged = cached && cached.size === stat.size && cached.mtimeMs === Math.round(stat.mtimeMs);
+    const subtitles = findSubtitles(file, entriesByDir.get(path.dirname(file)) || []);
+
+    read += 1;
+    onProgress({ phase: 'read', done: read, total: files.length, current: path.basename(file) });
+
     if (unchanged) {
-      items.push(cached);
-      continue;
+      return { ...cached, subtitles };
     }
 
     const parsed = parseName(path.basename(file));
     const sidecar = readSidecar(file) || {};
     const info = tools.ffprobe ? await probeVideo(file) : { duration: 0, width: 0, height: 0 };
-    const art = tools.canRender && info.duration > 0
-      ? await renderArt(file, info.duration, mediaDir, id)
-      : {};
 
     if (tools.canRender && info.duration === 0) {
       errors.push({ folder: path.dirname(file), message: `Unreadable video: ${path.basename(file)}` });
     }
 
-    items.push({
+    return {
       id,
       title: sidecar.title || parsed.title,
       year: sidecar.year ?? parsed.year ?? null,
@@ -317,26 +427,63 @@ async function scan(folders, { previous = null, mediaDir, onProgress = () => {} 
       duration: info.duration,
       width: info.width,
       height: info.height,
-      poster: art.poster || null,
-      backdrop: art.backdrop || null,
-      preview: art.preview || null,
-    });
-  }
+      vcodec: info.vcodec || null,
+      acodec: info.acodec || null,
+      subtitles,
+      // Rendered in phase 2; carried over when the file has not changed.
+      poster: cached?.poster || null,
+      backdrop: cached?.backdrop || null,
+      preview: cached?.preview || null,
+    };
+  });
 
-  onProgress({ done: files.length, total: files.length, current: '' });
-  items.sort((a, b) => b.addedAt - a.addedAt);
-
-  return {
+  const catalog = {
     scannedAt: Date.now(),
     folders,
     tools,
     errors,
-    items,
+    items: items.filter(Boolean).sort((a, b) => b.addedAt - a.addedAt),
   };
+
+  // Publish now: everything the grid needs to be usable is already here.
+  onProgress({ phase: 'art', done: 0, total: catalog.items.length, current: '' });
+  onCatalog(catalog);
+
+  /* ---------------- phase 2: draw (background) ---------------- */
+
+  const pending = catalog.items.filter((item) => !item.poster || !item.backdrop);
+  let drawn = 0;
+  let lastPublish = Date.now();
+
+  if (pending.length && tools.canRender) {
+    await runPool(pending, 2, async (item) => {
+      if (!item.duration) return;
+      try {
+        const art = await renderArt(item.path, item.duration, mediaDir, item.id);
+        item.poster = art.poster || item.poster;
+        item.backdrop = art.backdrop || item.backdrop;
+        item.preview = art.preview || item.preview;
+      } catch (err) {
+        console.warn(`[library] artwork failed for ${item.filename}: ${err.message}`);
+      }
+      drawn += 1;
+      onProgress({ phase: 'art', done: drawn, total: pending.length, current: item.filename });
+      // Republish at a sane rate; one write per frame would thrash the disk.
+      if (Date.now() - lastPublish > 1200 || drawn === pending.length) {
+        lastPublish = Date.now();
+        onCatalog(catalog);
+      }
+    });
+  }
+
+  onProgress({ phase: 'art', done: drawn, total: pending.length, current: '' });
+  onCatalog(catalog);
+
+  return catalog;
 }
 
 function mimeFor(file) {
   return MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
 }
 
-module.exports = { scan, parseName, mimeFor, probeTools, VIDEO_EXT };
+module.exports = { scan, parseName, mimeFor, probeTools, toVtt, findSubtitles, VIDEO_EXT };

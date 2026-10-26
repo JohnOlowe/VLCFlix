@@ -184,33 +184,81 @@ Every `vlc.exe` call goes through the server. The browser never talks to VLC
 directly, which is why the app works when the server runs on a different machine
 from the browser.
 
-### The built-in player
+### Playback engines
 
-VLC is the intended engine, but it is not the only one. **Settings → Playback →
-Built-in player** plays media inside the page using a range-aware local stream
-(`GET /api/stream/:id`, HTTP 206). It cannot decode every codec VLC can — notably
-MKV/HEVC — but it guarantees a working player on a machine without VLC.
+Three engines, chosen in **Settings → Playback**:
+
+| Engine | What it does |
+|---|---|
+| **Real VLC** | Drives your installed `vlc.exe` through its HTTP interface. Most compatible; opens VLC's own window. |
+| **FFmpeg (hardware)** | Pipes the film through `ffmpeg` into the in-app player. Uses a hardware decoder when the machine offers one. |
+| **Built-in player** | Serves the file byte-for-byte over a range-aware stream (HTTP 206). Zero CPU. |
+
+**FFmpeg (hardware)** is for containers and codecs the browser cannot open itself
+(MKV, AVI, HEVC, AC3…) and for machines where software decoding stutters. ffmpeg
+detects an accelerator once at startup — QSV, D3D11VA or DXVA2 on Windows,
+VideoToolbox on macOS — and hands the decoded frames back for encoding. If the file
+is already H.264 the video is **copied, not re-encoded**, because decoding and
+re-encoding something the player can already decode is pure waste.
+
+FFmpeg output is a pipe, so it has no duration and cannot be scrubbed internally.
+Seeking there restarts the stream at the new offset; the timeline still shows true
+positions because the offset is added back in the UI.
 
 If VLC is missing or refuses to start, VLCFlix falls back to the built-in player
 and tells you why, rather than leaving a dead button.
+
+### Subtitles
+
+Drop a subtitle next to the video with the same name and it is picked up
+automatically — the convention every player uses:
+
+```
+The Silent Coast.mkv
+The Silent Coast.srt          -> "Default", switched on
+The Silent Coast.en.srt       -> "English"
+The Silent Coast.fr.srt       -> "French"
+The Silent Coast.forced.srt   -> "Forced"
+```
+
+`.vtt` sidecars work the same way. The built-in player cannot read SRT, so the
+server converts it to WebVTT on the fly; a **CC** button appears in the player and
+cycles through the tracks. VLC finds the same files by itself, so nothing is needed
+for the VLC engine.
+
+Bitrate, size and resolution are unchanged; the subtitle is read, not copied.
 
 ---
 
 ## What happens on a scan
 
-`POST /api/library/scan` walks every configured folder and, for each video:
+Scanning runs in **two phases**, because reading a file and drawing it cost wildly
+different amounts of time. On a measured run over eight clips: the library was
+browsable after **685 ms**, and artwork finished **8.3 s later in the background**.
 
-1. **Reads metadata** with `ffprobe` (duration, resolution).
-2. **Generates three assets** with `ffmpeg`:
+1. **Phase 1 — read (fast).** Every file is stat'd and probed with `ffprobe` for
+   duration, resolution and codecs. Six files are read at a time and no pixels are
+   touched, so the grid fills in within a second or two even on a large library.
+   The catalog is published here, so you can start browsing immediately.
+2. **Phase 2 — draw (background).** Posters and backdrops are rendered two at a
+   time and the catalog is republished as they land. The settings panel reads
+   *"Library ready — drawing artwork 40/113"*, and cards fill in while you scroll.
+
+Previously both phases ran in one pass, one file at a time, so nothing appeared
+until the last thumbnail was written — the difference between waiting two minutes
+and waiting two seconds. For each video, phase 2:
+
+- **Generates three assets** with `ffmpeg`:
    - `poster.jpg` — 400×600 crop, for grid views
    - `backdrop.jpg` — 1280×720 crop, for the hero and cards
    - `preview.mp4` — an 8-second muted clip for hover previews
-3. **Grades each still** (contrast, saturation, vignette) and then **measures its
-   mean luma** using ffmpeg's `signalstats`, correcting exposure with a gamma curve
-   if the frame is too dark or too flat for white text to sit on. A dark opening
-   scene would otherwise produce an unreadable card.
-4. **Parses a title and year** out of the filename, stripping release tags
-   (`1080p`, `x265`, `WEB-DL`, …).
+- **Grades each still** (contrast, saturation, vignette) and then **measures its
+  mean luma** using ffmpeg's `signalstats`, correcting exposure with a gamma curve
+  if the frame is too dark or too flat for white text to sit on. A dark opening
+  scene would otherwise produce an unreadable card.
+
+Titles and years are parsed out of filenames in phase 1, stripping release tags
+(`1080p`, `x265`, `WEB-DL`, …), as are sidecar subtitles.
 
 Unchanged files are skipped on later scans via an id/size/mtime check, so
 re-scanning a large library is cheap.
@@ -246,6 +294,7 @@ Stored in `data/settings.json`, editable from the Settings sheet:
 | Key | Meaning |
 |---|---|
 | `libraryFolders` | absolute paths scanned for videos |
+| `playMode` | `vlc`, `ffmpeg` or `browser` |
 | `vlcPath` | VLC executable; empty = auto-detect |
 | `vlcHttpPort` | port for VLC's control interface (default 8080) |
 | `vlcPassword` | required, because VLC refuses to open the interface without one |
@@ -265,7 +314,8 @@ Auto-detection covers `C:\Program Files\VideoLAN\VLC\vlc.exe`,
 | GET | `/api/bootstrap` | everything the UI needs on load |
 | GET | `/api/catalog` | items with progress and list state |
 | POST | `/api/library/scan` | start a scan (202) |
-| GET | `/api/scan/status` | scan progress, polled by the UI |
+| GET | `/api/scan/status` | scan progress and phase, polled by the UI |
+| GET | `/api/subtitles/:id/:index` | sidecar subtitle as WebVTT |
 | POST | `/api/settings` | validated partial update |
 | GET | `/api/system` | platform, ffmpeg availability, VLC detection |
 | POST | `/api/player/play` | play an item in VLC or the browser |
@@ -273,7 +323,7 @@ Auto-detection covers `C:\Program Files\VideoLAN\VLC\vlc.exe`,
 | POST | `/api/player/command` | pause, resume, toggle, stop, seek, seekBy, volume |
 | POST | `/api/progress` | save a resume point |
 | POST | `/api/mylist` | toggle an item in My List |
-| GET | `/api/stream/:id` | range-aware local stream |
+| GET | `/api/stream/:id` | range-aware local stream (206); `?engine=ffmpeg&t=SECONDS` transcodes through ffmpeg |
 
 ---
 

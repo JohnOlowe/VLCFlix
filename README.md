@@ -239,17 +239,53 @@ with the track list and four controls:
 | Subtitle delay | **G** earlier · **H** later | 50 ms per press, like VLC; ±60 s range |
 | Subtitle size | panel − / + | 50%–250% |
 | Subtitle height | panel ↑ / ↓ | distance from the bottom of the picture |
-| Audio delay | **J** earlier · **K** later | see the limitation below |
+| Audio delay | **J** earlier · **K** later | works in both directions — see below |
 | Next track | **V** | cycles through Off and every file |
 
 **Direction, since VLC's own docs disagree:** G shows subtitles earlier, H later;
 J plays sound earlier, K later. Every press reports what it did — *"Subtitles
 +300 ms (later)"* — so the direction never has to be remembered.
 
-**One honest limitation:** a browser can delay sound but cannot make it play
-earlier than the file's own timeline. **J below 0 ms does nothing** and says so;
-negative audio delay needs the **Real VLC** engine, where it is a real player-side
-offset. Subtitle and size/height settings persist across sessions.
+### Audio sync in both directions
+
+A browser can delay sound, but it can never play it *earlier* than the file's own
+timeline. That is not a limitation of VLCFlix but of `<video>`.
+
+The way out: **sound 200 ms earlier than the picture** and **picture 200 ms later
+than the sound** are the same outcome, and delaying the picture is always possible.
+So negative audio offsets are served by holding the picture back, which the player
+does by buffering decoded frames and drawing them a little late.
+
+| You press | What happens |
+|---|---|
+| **K** (sound later) | Web Audio delay node |
+| **J** (sound earlier) | picture is held back instead |
+| either, at the limit | the other mechanism takes over automatically |
+
+### Automatic latency compensation (Bluetooth)
+
+Bluetooth earbuds deliver sound late — typically 100–300 ms — and the amount drifts
+as the link is renegotiated. Turn on **Settings → Playback → Audio latency
+compensation** (or the **AUTO** button in the player's CC panel) and VLCFlix:
+
+1. reads the device's reported output latency from the Web Audio `AudioContext`,
+2. re-measures every 2.5 s while playing, so a link that changes mid-film is followed,
+3. smooths the correction — small drifts are approached gradually so the picture
+   does not lurch, while a large change (a different device) is applied at once,
+4. holds the picture back by exactly that amount.
+
+**It is independent of your manual offset.** The automatic correction always lives
+on the picture side, so the manual control stays at 0 ms and remains yours to use;
+press **J** and your offset is added on top of the device correction rather than
+fighting it. Turning the manual control back to zero leaves the Bluetooth correction
+intact.
+
+Two caveats worth stating: the measurement only exists while sound is actually
+flowing through the player (so it reports `measuring…` before playback starts), and
+this applies to the in-app engines only — Real VLC manages its own output and has
+its own `Ctrl+T` track synchronisation dialog.
+
+Subtitle and sync settings persist across sessions.
 
 Bitrate, size and resolution are unchanged; the subtitle is read, not copied.
 

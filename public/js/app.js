@@ -1053,7 +1053,13 @@ function stopSubtitleLoop() {
   if (layer) layer.replaceChildren();
 }
 
-/* ---- audio delay: the browser can only ever delay sound, never advance it ---- */
+/* --------------------------- sync and latency --------------------------- */
+/*
+ * A browser can delay sound but can never play it before the file's own timeline.
+ * Bluetooth earbuds add output latency, so the sound arrives late. "Sound earlier"
+ * and "picture later" are the same outcome, so negative audio offsets are applied
+ * by holding the picture back instead -- the canvas in the player does that.
+ */
 
 let audioGraph = null;
 
@@ -1065,31 +1071,247 @@ function ensureAudioGraph() {
   try {
     const ctx = new Ctx();
     const source = ctx.createMediaElementSource(video);
-    const delay = ctx.createDelay(5);
-    delay.delayTime.value = 0;
-    source.connect(delay);
-    delay.connect(ctx.destination);
-    audioGraph = { ctx, delay };
+    const node = ctx.createDelay(6);
+    node.delayTime.value = 0;
+    source.connect(node);
+    node.connect(ctx.destination);
+    audioGraph = { ctx, delay: node };
   } catch {
-    audioGraph = null; // some browsers refuse; audio sync is then unavailable
+    audioGraph = null; // refused: sync controls still work, the sound is not routed
   }
   return audioGraph;
 }
 
-function applyAudioDelay() {
-  const wanted = sub.audio;
-  if (!wanted) {
-    if (audioGraph) audioGraph.delay.delayTime.value = 0;
-    return;
-  }
+const sync = {
+  deviceLatencyMs: 0,
+  applied: { videoDelayMs: 0, audioDelayMs: 0, clamped: false },
+  timer: null,
+};
+
+function autoLatencyEnabled() {
+  return Boolean(state.settings?.autoLatency);
+}
+
+/**
+ * The Context reports the estimated output latency of the device path, which is
+ * where Bluetooth shows up. It is only meaningful while audio is flowing.
+ */
+function measureDeviceLatency() {
   const graph = ensureAudioGraph();
-  if (!graph) {
-    sub.audio = 0;
-    toast('Audio delay needs Web Audio, which this browser refused', { error: true });
-    return;
-  }
+  if (!graph) return 0;
   if (graph.ctx.state === 'suspended') graph.ctx.resume().catch(() => {});
-  graph.delay.delayTime.value = Math.max(0, wanted);
+  const reported = Number(graph.ctx.outputLatency) || Number(graph.ctx.baseLatency) || 0;
+  return Math.round(reported * 1000);
+}
+
+/** Poll the device while it plays; Bluetooth latency wanders during a session. */
+function startLatencyWatch() {
+  clearInterval(sync.timer);
+  if (!autoLatencyEnabled()) return;
+  const sample = () => {
+    if (!player.current) return;
+    const measured = measureDeviceLatency();
+    if (!measured) return;
+    const next = SyncMath.smoothLatency(sync.deviceLatencyMs, measured);
+    if (next !== sync.deviceLatencyMs) {
+      sync.deviceLatencyMs = next;
+      applySync();
+    }
+  };
+  sample();
+  sync.timer = setInterval(sample, 2500);
+}
+
+/* --- the delayed picture --- */
+
+const delayPipe = {
+  canvas: null,
+  ctx2d: null,
+  queue: [],
+  drawn: null,
+  captureId: null,
+  rafId: null,
+  active: false,
+  lastMediaTime: 0,
+};
+
+function delaySeconds() {
+  return (sync.applied.videoDelayMs || 0) / 1000;
+}
+
+function ensureDelayCanvas() {
+  const canvas = $('#playerDelay');
+  if (!canvas) return null;
+  if (!delayPipe.canvas) {
+    delayPipe.canvas = canvas;
+    delayPipe.ctx2d = canvas.getContext('2d');
+  }
+  const video = player.video;
+  const size = delayCaptureSize();
+  if (size && (canvas.width !== size.resizeWidth || canvas.height !== size.resizeHeight)) {
+    canvas.width = size.resizeWidth;
+    canvas.height = size.resizeHeight;
+  }
+  return canvas;
+}
+
+/**
+ * Free frames that can no longer be shown -- but never the one on screen, which
+ * is still being read by the canvas. Closing it out from under drawImage() is
+ * what produced "The image source is detached".
+ */
+function releaseQueue(keepAfter) {
+  const remaining = [];
+  for (const entry of delayPipe.queue) {
+    const stillNeeded = keepAfter == null ? false : entry.t >= keepAfter;
+    if (stillNeeded || entry === delayPipe.drawn) remaining.push(entry);
+    else entry.bitmap.close?.();
+  }
+  delayPipe.queue = remaining;
+}
+
+/**
+ * Frames are held in memory, so they are captured at display size rather than at
+ * source size: a 4K film buffered for a second would otherwise cost hundreds of
+ * megabytes. The canvas is at most the window, so nothing visible is lost.
+ */
+const DELAY_MAX_WIDTH = 1280;
+const DELAY_MAX_FRAMES = 48;
+
+function delayCaptureSize() {
+  const video = player.video;
+  if (!video?.videoWidth) return null;
+  const scale = Math.min(1, DELAY_MAX_WIDTH / video.videoWidth);
+  return {
+    resizeWidth: Math.max(2, Math.round(video.videoWidth * scale)),
+    resizeHeight: Math.max(2, Math.round(video.videoHeight * scale)),
+    resizeQuality: 'medium',
+  };
+}
+
+function startDelayPipeline() {
+  const video = player.video;
+  const canvas = ensureDelayCanvas();
+  if (!video || !canvas || typeof video.requestVideoFrameCallback !== 'function') return false;
+
+  if (!delayPipe.active) {
+    delayPipe.active = true;
+    canvas.hidden = false;
+    delayPipe.lastMediaTime = 0;
+
+    const capture = (now, meta) => {
+      if (!delayPipe.active) return;
+      // Keep only the window that can possibly be shown, plus a little slack.
+      const keepFrom = meta.mediaTime - delaySeconds() - 0.8;
+      releaseQueue(keepFrom);
+      if (delayPipe.queue.length < DELAY_MAX_FRAMES) {
+        const size = delayCaptureSize();
+        createImageBitmap(video, size || undefined).then((bitmap) => {
+          if (!delayPipe.active) { bitmap.close?.(); return; }
+          delayPipe.queue.push({ t: meta.mediaTime, bitmap });
+        }).catch(() => {});
+      }
+      delayPipe.captureId = video.requestVideoFrameCallback(capture);
+    };
+    delayPipe.captureId = video.requestVideoFrameCallback(capture);
+
+    const draw = () => {
+      if (!delayPipe.active) return;
+      const target = video.currentTime - delaySeconds();
+      let candidate = null;
+      for (const entry of delayPipe.queue) {
+        if (entry.t <= target) candidate = entry;
+        else break;
+      }
+      if (candidate && candidate !== delayPipe.drawn) {
+        const previous = delayPipe.drawn;
+        delayPipe.drawn = candidate;
+        const { ctx2d, canvas: surface } = delayPipe;
+        try {
+          ctx2d.drawImage(candidate.bitmap, 0, 0, surface.width, surface.height);
+          delayPipe.lastMediaTime = candidate.t;
+          // Diagnostic for tests and support: how far behind the picture is.
+          surface.dataset.mediaTime = String(candidate.t);
+          if (previous && !delayPipe.queue.includes(previous)) previous.bitmap.close?.();
+        } catch {
+          // The frame was released by a concurrent prune; the next tick retries.
+          delayPipe.drawn = previous;
+        }
+      }
+      delayPipe.rafId = requestAnimationFrame(draw);
+    };
+    delayPipe.rafId = requestAnimationFrame(draw);
+  }
+  return true;
+}
+
+function stopDelayPipeline() {
+  delayPipe.active = false;
+  const video = player.video;
+  if (delayPipe.captureId != null && video?.cancelVideoFrameCallback) {
+    video.cancelVideoFrameCallback(delayPipe.captureId);
+  }
+  delayPipe.captureId = null;
+  if (delayPipe.rafId) cancelAnimationFrame(delayPipe.rafId);
+  delayPipe.rafId = null;
+  releaseQueue(null);
+  if (delayPipe.drawn) delayPipe.drawn.bitmap.close?.();
+  delayPipe.drawn = null;
+  const canvas = delayPipe.canvas;
+  if (canvas) {
+    canvas.hidden = true;
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+/**
+ * The single place the two offsets are decided. Everything else only reads
+ * sync.applied, so the buttons, the keys and the automatic correction cannot
+ * disagree with each other.
+ */
+function applySync() {
+  const wanted = SyncMath.computeSync({
+    deviceLatencyMs: autoLatencyEnabled() ? sync.deviceLatencyMs : 0,
+    manualMs: sub.audio * 1000,
+  });
+  sync.applied = wanted;
+
+  if (audioGraph) {
+    audioGraph.delay.delayTime.value = wanted.audioDelayMs / 1000;
+  }
+
+  // Sound routed through Web Audio has to be resumed by a user gesture.
+  if (wanted.audioDelayMs > 0 || autoLatencyEnabled()) {
+    const graph = ensureAudioGraph();
+    if (graph?.ctx.state === 'suspended') graph.ctx.resume().catch(() => {});
+  }
+
+  if (wanted.videoDelayMs > 0) {
+    if (!startDelayPipeline()) {
+      sync.applied = { videoDelayMs: 0, audioDelayMs: wanted.audioDelayMs, clamped: true };
+      delayPipe.canvas?.setAttribute('hidden', '');
+    }
+  } else {
+    stopDelayPipeline();
+  }
+  paintSyncReadout();
+}
+
+function paintSyncReadout() {
+  const device = $('#deviceLatency');
+  const auto = $('#autoLatencyBtn');
+  if (device) {
+    device.textContent = autoLatencyEnabled()
+      ? (sync.deviceLatencyMs ? `${sync.deviceLatencyMs} ms` : 'measuring…')
+      : 'off';
+  }
+  if (auto) auto.classList.toggle('is-on', autoLatencyEnabled());
+
+  const audio = $('#audioDelay');
+  if (audio) {
+    const manual = Math.round(sub.audio * 1000);
+    audio.textContent = describeDelay(manual);
+  }
 }
 
 /* ---- the controls ---- */
@@ -1100,6 +1322,7 @@ function describeDelay(ms) {
 }
 
 function paintSubPanel() {
+  paintSyncReadout();
   const delay = $('#subDelay');
   const size = $('#subSize');
   const bottom = $('#subBottom');
@@ -1166,8 +1389,9 @@ async function startSubtitles(item) {
     sub.cues = [];
     stopSubtitleLoop();
   }
-  applyAudioDelay();
+  applySync();
   paintSubPanel();
+  startLatencyWatch();
   await loadTrackOptions(item);
 }
 
@@ -1229,16 +1453,18 @@ function adjustSubtitle(kind, direction) {
     case 'bottom':
       sub.bottom = Math.max(0, Math.min(60, sub.bottom + direction * SUB_BOTTOM_STEP));
       break;
-    case 'audio':
-      // Only delaying sound is possible in a browser; pressing the "earlier" key
-      // at zero has to say so rather than silently doing nothing.
-      if (direction < 0 && sub.audio <= 0) {
-        toast('Audio is at 0 ms — the browser can delay sound but not advance it. Use Real VLC for that direction.');
+    case 'audio': {
+      // Both directions work: later is the delay node, earlier is a delayed
+      // picture, which is the same thing seen from the other side.
+      const next = Math.max(-2, Math.min(2, Math.round((sub.audio + direction * 0.05) * 100) / 100));
+      if (next === sub.audio) {
+        toast(`Audio is already at the ${next < 0 ? 'earliest' : 'latest'} limit (${describeDelay(Math.round(next * 1000))})`);
         return;
       }
-      sub.audio = Math.max(0, Math.min(2, Math.round((sub.audio + direction * 0.05) * 100) / 100));
-      applyAudioDelay();
+      sub.audio = next;
+      applySync();
       break;
+    }
     default:
       return;
   }
@@ -1295,7 +1521,10 @@ function closePlayer({ report = true } = {}) {
   const video = $('#playerVideo');
   if (report) reportProgress();
   clearInterval(player.reportTimer);
+  clearInterval(sync.timer);
+  sync.timer = null;
   stopSubtitleLoop();
+  stopDelayPipeline();
   openSubPanel(false);
   video.pause();
   video.removeAttribute('src');
@@ -1554,6 +1783,52 @@ async function renderSettings() {
     }));
   }
 
+  /* audio latency compensation */
+  const latencyToggle = el('button', {
+    class: `switch${state.settings.autoLatency ? ' is-on' : ''}`,
+    type: 'button',
+    role: 'switch',
+    'aria-checked': state.settings.autoLatency ? 'true' : 'false',
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      const next = !state.settings.autoLatency;
+      try {
+        await saveSettings({ autoLatency: next });
+      } catch {
+        return;
+      }
+      button.classList.toggle('is-on', next);
+      button.setAttribute('aria-checked', String(next));
+      sync.deviceLatencyMs = 0;
+      paintSyncReadout();
+      if (next) {
+        sync.deviceLatencyMs = measureDeviceLatency();
+        if (player.current) {
+          startLatencyWatch();
+          applySync();
+        }
+      } else {
+        clearInterval(sync.timer);
+        sync.timer = null;
+        if (player.current) applySync();
+      }
+    },
+  }, el('span', { class: 'switch__knob' }));
+
+  const latencySection = el('div', { class: 'field' },
+    el('label', { class: 'field__label', text: 'Audio latency compensation' }),
+    el('div', { class: 'row-actions' }, latencyToggle,
+      el('span', { class: 'field__hint', text: 'Compensate for Bluetooth and wireless headphones automatically' })),
+    el('p', { class: 'field__hint', text:
+      'Bluetooth earbuds deliver sound late, by an amount that drifts as the link changes. ' +
+      'While this is on, VLCFlix measures the device latency and holds the picture back to match, ' +
+      'continuing to re-measure during playback. Your manual audio offset stays untouched at 0 ' +
+      'and is applied on top, so the two never fight.' }),
+    el('p', { class: 'field__hint', text:
+      'Uses the Web Audio API, which needs the sound routed through the player. ' +
+      'It does not affect playback in Real VLC.' })
+  );
+
   const vlcPathInput = el('input', {
     class: 'input',
     type: 'text',
@@ -1589,7 +1864,8 @@ async function renderSettings() {
       el('div', { class: 'status-line' },
         el('span', { class: `dot ${system.tools.ffmpeg ? 'ok' : 'warn'}` }),
         el('span', { text: system.tools.ffmpeg ? 'ffmpeg available — artwork and previews will be generated.' : 'ffmpeg not on PATH — cards fall back to generated gradients and no previews.' }))
-    )
+    ),
+    latencySection
   );
 
   const advanced = el('details', {},
@@ -1903,6 +2179,23 @@ function wireEvents() {
   $('#playerScrub').addEventListener('input', (event) => {
     const ratio = Number(event.target.value) / 1000;
     seekToSeconds(ratio * playerTotal());
+  });
+  $('#autoLatencyBtn').addEventListener('click', async () => {
+    const next = !autoLatencyEnabled();
+    await saveSettings({ autoLatency: next });
+    sync.deviceLatencyMs = 0;
+    paintSyncReadout();
+    if (next) {
+      sync.deviceLatencyMs = measureDeviceLatency();
+      startLatencyWatch();
+      applySync();
+      toast(`Latency compensation on — measured ${sync.deviceLatencyMs || '?'} ms`);
+    } else {
+      clearInterval(sync.timer);
+      sync.timer = null;
+      applySync();
+      toast('Latency compensation off');
+    }
   });
   $('#playerCC').addEventListener('click', (event) => {
     event.stopPropagation();

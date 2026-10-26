@@ -26,6 +26,9 @@ const DEFAULTS = {
     playMode: 'vlc',
     // Ask VLC to go fullscreen when playback starts.
     vlcFullscreen: true,
+    // Compensate automatically for the output latency of the audio device
+    // (Bluetooth earbuds add a variable 100-300 ms). Off unless asked for.
+    autoLatency: false,
   },
   progress: {}, // { [itemId]: { position, duration, updatedAt } }
   myList: [], // [itemId]

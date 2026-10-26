@@ -232,7 +232,8 @@ app.post('/api/library/scan', (req, res) => {
 app.get('/api/scan/status', (req, res) => res.json(scanState));
 
 app.post('/api/settings', async (req, res) => {
-  const allowed = ['libraryFolders', 'vlcPath', 'vlcHttpPort', 'vlcPassword', 'playMode', 'vlcFullscreen'];
+  const allowed = ['libraryFolders', 'vlcPath', 'vlcHttpPort', 'vlcPassword', 'playMode',
+    'vlcFullscreen', 'autoLatency'];
   const patch = {};
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(req.body, key)) patch[key] = req.body[key];
@@ -252,6 +253,9 @@ app.post('/api/settings', async (req, res) => {
       return res.status(400).json({ error: 'vlcHttpPort must be 1-65535' });
     }
     patch.vlcHttpPort = port;
+  }
+  if ('autoLatency' in patch && typeof patch.autoLatency !== 'boolean') {
+    return res.status(400).json({ error: 'autoLatency must be true or false' });
   }
   if ('playMode' in patch && !['vlc', 'ffmpeg', 'browser'].includes(patch.playMode)) {
     return res.status(400).json({ error: "playMode must be 'vlc', 'ffmpeg' or 'browser'" });

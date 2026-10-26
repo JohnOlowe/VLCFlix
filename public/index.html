@@ -124,6 +124,7 @@
 <!-- Built-in player -->
 <div class="player" id="player" hidden>
   <video id="playerVideo" playsinline></video>
+  <canvas class="player__delay" id="playerDelay" hidden></canvas>
   <div class="player__subs" id="playerSubs" aria-live="polite"></div>
   <div class="subpanel" id="subPanel" hidden>
     <div class="subpanel__head">Subtitles</div>
@@ -151,6 +152,11 @@
       <button class="subpanel__btn" type="button" data-sub-adj="audio" data-dir="-1" title="Earlier (J)">−</button>
       <span class="subpanel__value" id="audioDelay">0 ms</span>
       <button class="subpanel__btn" type="button" data-sub-adj="audio" data-dir="1" title="Later (K)">+</button>
+    </div>
+    <div class="subpanel__row">
+      <span class="subpanel__label">Device latency</span>
+      <span class="subpanel__value" id="deviceLatency">—</span>
+      <button class="subpanel__btn subpanel__btn--auto" type="button" id="autoLatencyBtn" title="Compensate automatically">AUTO</button>
     </div>
     <div class="subpanel__hint">G / H subtitles · J / K audio · V next track</div>
   </div>
@@ -199,6 +205,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+<script src="/js/sync-math.js"></script>
 <script src="/js/app.js" type="module"></script>
 </body>
 </html>

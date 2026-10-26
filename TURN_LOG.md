@@ -466,3 +466,46 @@ computed font size to 36px; height label and CSS variable both read 12%; picking
 `Ghostlight.2019.1080p.WEB-DL.srt` renders "RELEASE SUB italic" and the server
 reports `selected=Ghostlight.2019.1080p.WEB-DL.srt`. Zero console errors. 48 tests
 (was 44).
+
+## 2026-10-26 — v1.1.4: negative audio sync, and automatic Bluetooth latency
+Two requests that turned out to be the same problem.
+
+### The observation that solved both
+A browser cannot advance sound past the file's timeline — that is `<video>`, not
+VLCFlix. But "sound 200 ms earlier than the picture" and "picture 200 ms later than
+the sound" are the same outcome, and delaying the picture is always possible.
+So the negative direction is served by holding frames back:
+`requestVideoFrameCallback` captures decoded frames, `createImageBitmap` stores them,
+and a canvas overlay draws the frame that belongs to `currentTime - delay`.
+
+The arithmetic lives in `public/js/sync-math.js` so it can be tested directly:
+
+    videoDelay = deviceLatency + audioDelay - manual     (both >= 0)
+
+with the smallest non-negative pair chosen. 14 tests in tests/sync.test.js,
+including the one that matters most: turning the manual offset to zero must not
+cancel the device correction.
+
+### Automatic latency compensation
+Settings toggle plus an AUTO button in the player panel. Reads
+`AudioContext.outputLatency`, re-measures every 2.5 s while playing, smooths small
+drifts (large changes jump, because that means a different device), and always
+applies the correction on the picture side. That is what keeps it independent of the
+manual offset: the manual control stays at 0 and remains the user's to use.
+
+### Two bugs the live test caught
+1. **Use-after-close on the frame buffer:** pruning closed the bitmap that was on
+   screen -> "The image source is detached". The displayed frame is now exempt from
+   pruning, and a failed draw restores the previous reference instead of leaving a
+   dangling one.
+2. **Memory:** frames were captured at source resolution, so a 4K film buffered for a
+   second would cost hundreds of MB. Capture is now capped at 1280 px wide and 48
+   frames, drawn to a canvas of the same size (the canvas is never larger than the
+   window, so nothing visible is lost).
+
+### Verified in real Chrome
+- 6x J (-300 ms): audio label -300, canvas visible, measured picture lag **0.34 s**.
+- 10x K to +200 ms: canvas hides, back to the delay node.
+- AUTO on: device readout 32 ms, measured lag 0.06 s, `autoLatency` persisted.
+- With AUTO on, H still moves subtitles (+200 ms) and audio stays 0 ms.
+- Zero console errors. 62 tests (was 48).

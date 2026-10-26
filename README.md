@@ -13,6 +13,81 @@ documented HTTP control interface.
 
 ---
 
+## Windows desktop app
+
+VLCFlix ships as a normal Windows application: **`VLCFlix.exe`**, an installer, and a
+desktop icon. There is no bundled browser.
+
+**Download:** `release/VLCFlix-Setup-1.0.0.exe` — or build it yourself with
+`scripts/build-win.sh` (see [Building the Windows app](#building-the-windows-app)).
+
+Run the installer and it will:
+
+1. Install to `%LOCALAPPDATA%\Programs\VLCFlix` — **per-user, so no UAC prompt**.
+2. Create a **desktop icon** and a Start Menu entry.
+3. Register an entry in *Add or remove programs*, including an uninstaller.
+
+Double-click the icon. A native window opens and the app is there.
+
+### Why it is small
+
+| Part | Size | Notes |
+|---|---|---|
+| `VLCFlix.exe` | 670 KB | Win32 shell: window, server lifecycle, WebView2 host |
+| `node.exe` | 67 MB | the bundled runtime — the app's backend is your existing Node server |
+| `WebView2Loader.dll` | 165 KB | Microsoft's redistributable loader |
+| app + dependencies | 4 MB | server, front-end, demo clips |
+| **Installer** | **21 MB** | LZMA-compressed |
+
+The UI renders in **WebView2** — the Chromium-based engine that is already part of
+Windows 10 and 11. Nothing Chromium-shaped is bundled, which is the difference between
+21 MB and the ~200 MB an Electron app would cost.
+
+If WebView2 is somehow absent (rare; it is a Windows component and ships with Edge),
+the app says so plainly instead of failing silently.
+
+### What the shell actually does
+
+1. Picks a free loopback port.
+2. Starts `resources\node.exe resources\app\server\index.js` with
+   `HOST=127.0.0.1` and `VLCFLIX_DATA_DIR=%LOCALAPPDATA%\VLCFlix`.
+3. Polls `/api/health` until it answers, then shows the window.
+4. On close, kills the server — enforced with a **job object**, so the background
+   process cannot outlive the window even if the app is killed from Task Manager.
+
+Nothing is written into *Program Files*. Settings, watch progress and generated
+artwork live in `%LOCALAPPDATA%\VLCFlix`, and survive an uninstall.
+
+### If it will not start
+
+Check two log files, in `%LOCALAPPDATA%\VLCFlix`:
+
+- **`launcher.log`** — what the shell tried: paths, port, whether `node.exe` started,
+  whether the health check answered.
+- **`server.log`** — the Node server's own stdout and stderr.
+
+Both are written on every launch, because a windowed app with no console is otherwise
+impossible to diagnose.
+
+### Building the Windows app
+
+On Linux or in WSL, with `mingw-w64`, `nsis` and `zip`:
+
+```bash
+VERSION=1.0.0 bash scripts/build-win.sh
+```
+
+That fetches `node.exe` and the WebView2 SDK into `.cache/`, cross-compiles
+`src/win/main.cpp`, assembles `dist/win/VLCFlix/`, and produces the installer and a
+portable zip. It is reproducible from a clean checkout.
+
+### Uninstalling
+
+*Settings → Apps → VLCFlix → Uninstall*, or run `Uninstall.exe` in the install folder.
+Your library settings are kept; the uninstaller offers to remove them too.
+
+---
+
 ## Quick start
 
 Requires **Node.js 18+** and, for full functionality, **VLC** and **ffmpeg**.

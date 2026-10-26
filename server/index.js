@@ -10,7 +10,13 @@ const vlc = require('./vlc');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4173;
-const MEDIA_DIR = path.join(__dirname, '..', 'data', 'media');
+// The dev server wants 0.0.0.0 so the sandbox preview proxy can reach it. The
+// packaged desktop app sets HOST=127.0.0.1: a single-user desktop app has no
+// business exposing an unauthenticated API to the LAN.
+const HOST = process.env.HOST || '0.0.0.0';
+// Derived from the store so VLCFLIX_DATA_DIR relocates artwork too: an
+// installed build must not write into Program Files.
+const MEDIA_DIR = path.join(store.DATA_DIR, 'media');
 const SAMPLES_DIR = path.join(__dirname, '..', 'samples');
 
 app.use(express.json());
@@ -439,8 +445,8 @@ app.get('/api/health', (req, res) => res.json({ ok: true, uptime: process.uptime
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`VLCFlix on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`VLCFlix on http://${HOST}:${PORT}`);
     const settings = store.getSettings();
     if (!settings.libraryFolders.length) {
       console.log('No library folders configured yet — point VLCFlix at your videos from Settings.');

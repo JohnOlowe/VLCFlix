@@ -162,3 +162,54 @@
   token is scoped to repository contents on VLCFlix only.
 - Rotation is still reasonable because the token passed through chat, but that is
   hygiene, not a defect in its scope.
+
+## 2026-10-26 — Native Windows desktop app (installable exe + desktop icon)
+- User asked for a native Windows app with an installer and desktop icon rather
+  than a browser tab.
+- Checked the toolchain before designing: mingw-w64, nsis and wine64 available via
+  apt. Verified early that mingw can compile and link against MSVC-oriented
+  WebView2.h (needed an EventToken.h shim and hand-written COM handlers, since
+  mingw has no wrl Callback and no __uuidof).
+- Architecture: keep the tested Node backend, add a 670 KB Win32 shell that hosts
+  the UI in the OS WebView2 runtime. Explicitly rejected Electron (~200 MB) and a
+  C#/WebView2 rewrite (would duplicate the VLC integration and discard 23 tests).
+- Added: src/win/main.cpp, installer.nsi, app.rc, app.manifest, resource.h,
+  shim/EventToken.h, icon.ico, scripts/build-win.sh, LICENSE.txt.
+
+### Verified (under Wine 10, not assumed)
+- Silent install produced VLCFlix.exe, Uninstall.exe, resources/, a **desktop
+  shortcut**, Start Menu entries and a complete uninstall registry key.
+- The installed copy resolved its paths, started node.exe, and answered
+  /api/health in 800 ms; the server log read
+  `VLCFlix on http://127.0.0.1:34327`.
+- Curling it from Linux returned the full UI: / 200 (9.2 KB), /css/styles.css 200
+  (30.8 KB), /js/app.js 200 (51.4 KB), and /api/bootstrap reported
+  `platform: win32`.
+- Silent uninstall removed files, shortcuts and the registry key, and kept user data.
+
+### Not verified — stated plainly
+- **WebView2 never rendered a pixel.** Wine has no WebView2 runtime, so the window
+  surface is unproven. The server, payload and lifecycle are proven; the browser
+  surface is not.
+- VLC detection from the installed app is unproven (no VLC inside Wine).
+
+### Bugs found by running it, and fixed
+1. Server bound `0.0.0.0` in a single-user desktop app. Launcher now sets
+   `HOST=127.0.0.1`; dev server keeps 0.0.0.0 for the sandbox preview proxy.
+2. A startup failure produced **no evidence at all** — a windowed app with no
+   console. Added `launcher.log` and redirection of the server's stdout/stderr to
+   `server.log`. This is what found the rest.
+3. `icon.ico` was PNG-compressed per entry; NSIS could not load it. Regenerated
+   with BMP/DIB entries.
+4. `${__FILEDIR__}` resolved incorrectly when the script was passed as a relative
+   path; icon and licence paths are now passed with `-D`.
+5. `makensis` died with SIGBUS: it mmaps a solid-compression block in `TMPDIR`, and
+   `/tmp` here is a 992 MB tmpfs. `TMPDIR` now points into `.cache/winbuild`.
+
+### Side effects disclosed
+- Dumped the Wine prefix twice by filling `/tmp` (a 992 MB tmpfs). Cleaned up; no
+  workspace data lost.
+- Killed my own shell twice with `pkill -f` patterns that matched the command line.
+  Avoided thereafter by using `wineserver -k` and explicit PIDs.
+- `dist/` was removed after copying the artifacts to `release/`: the workspace
+  reached 178 MB against a ~128 MB snapshot cap. Builds are reproducible.

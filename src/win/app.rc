@@ -1,0 +1,38 @@
+#include <windows.h>
+#include "resource.h"
+
+// The window class, taskbar and window icon all come from this one entry.
+IDI_APPICON ICON "icon.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName",      "VLCFlix"
+      VALUE "FileDescription",  "VLCFlix - Netflix-style front-end for VLC"
+      VALUE "FileVersion",      "1.0.0.0"
+      VALUE "InternalName",     "VLCFlix"
+      VALUE "LegalCopyright",   "Free software"
+      VALUE "OriginalFilename", "VLCFlix.exe"
+      VALUE "ProductName",      "VLCFlix"
+      VALUE "ProductVersion",   "1.0.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+
+// Lets Windows show a proper shield/publisher line and lets the app request
+// per-monitor DPI awareness through the manifest at load time.
+1 RT_MANIFEST "app.manifest"

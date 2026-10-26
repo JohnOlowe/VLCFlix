@@ -9,6 +9,11 @@
 id_ed25519*
 .gitconfig
 
+# Built binaries are published as release assets, not committed
+release/
+*.o
+*.res.o
+
 # Build and cache output
 .cache/
 .venv/

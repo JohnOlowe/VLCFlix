@@ -5,8 +5,8 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
     "tracking_branch": "origin/main",
-    "local_head": "a53d691",
-    "remote_sha": "a53d691eb7617a7e8f07a9da1ab48453ac3d2525",
+    "local_head": "f2ac2c9",
+    "remote_sha": "f2ac2c98d29cd935ac43068fe65bbb9e22aede3a",
     "pushed": true,
     "awaiting": "nothing - user should rotate the chat-exposed PAT",
     "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
@@ -71,11 +71,14 @@
     "Confirm which follow-up matters most: subtitles, season grouping, online metadata, or fullscreen-aware dock."
   ],
   "git_auth": {
-    "credential_file": ".git-credentials",
-    "ignored": true,
+    "token_location": ".secrets/github-token",
+    "token_location_reason": "snapshots strip .git-credentials and .git/config by filename; .secrets/ is git-ignored but not snapshot-excluded, so it persists and cannot be pushed",
     "mode": "600",
-    "helper": "store --file=/home/user/VLCFlix/.git-credentials",
-    "use_http_path": true,
+    "gitignored": true,
+    "committed_to_github": false,
+    "verified_absent_on_remote": "fresh clone checked: no .secrets, no .git-credentials, no 'github_pat_' string anywhere",
+    "remote_url_file": ".gitremote (tracked, non-secret)",
+    "restore_command": "bash scripts/setup-git-auth.sh",
     "identity": "JohnOlowe (id 121398818)",
     "token_type": "fine-grained (no X-OAuth-Scopes header)",
     "scope_probes": {
@@ -86,9 +89,10 @@
     },
     "scope_caveats": [
       "all 15 visible repos are public, so 200s do not prove read scope",
-      "write scope beyond VLCFlix was not tested - testing it would mutate another repo",
+      "write scope beyond VLCFlix was not tested - that would require mutating another repo",
       "token is broader than a single repository; recommend narrowing and rotating"
     ],
+    "negative_control": "hiding the token + clearing .git-credentials produced 'No anonymous write access'; restoring made dry-run succeed",
     "token_value_in_state_files": false
   }
 }

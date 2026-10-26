@@ -122,3 +122,23 @@
   `.git-credentials` is absent from the remote — the credential was not pushed.
 - Advised the user to rotate this token, since it passed through chat and is
   broader than one repository.
+
+## 2026-10-26 — Credential persistence fixed (snapshot-strip discovery)
+- Observed on restore: `.git-credentials` was **gone**, `git remote -v` empty,
+  `credential.helper` and `user.name` unset — while all regular files survived.
+- Root cause: workspace snapshots exclude `.git-credentials`, `.git/config` and
+  `.netrc` **by filename**, independent of `.gitignore`. The earlier arrangement
+  was therefore correct with respect to GitHub but not durable in the workspace.
+  Corrected an assumption: gitignore was never at fault, and a fresh clone could
+  never contain a gitignored file in the first place.
+- Fix: token now lives at `.secrets/github-token` (mode 600). `.secrets/` is
+  git-ignored but is not on the snapshot exclusion list, so it persists and still
+  cannot reach GitHub. Added tracked `.gitremote` and `scripts/setup-git-auth.sh`,
+  which rebuilds origin, commit identity and `.git-credentials` idempotently
+  without printing the token.
+- Verified: dry-run push succeeded after restore; negative control (token hidden,
+  credentials cleared) returned `remote: No anonymous write access.`
+- Committed `f2ac2c9` and pushed; local HEAD matched `git ls-remote` exactly.
+- Verified absence from GitHub independently: cloned the remote to /tmp and
+  confirmed no `.secrets`, no `.git-credentials`, and no `github_pat_` string
+  anywhere in the tree.

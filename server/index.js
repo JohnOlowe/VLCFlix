@@ -382,7 +382,6 @@ app.post('/api/player/play', async (req, res) => {
       streamUrl: `/api/stream/${id}?engine=ffmpeg${startAt ? `&t=${Math.round(startAt)}` : ''}`,
       title: item.title,
       seekTo: 0,
-      accelerated: detectHwAccel() || 'software',
     });
   }
 
@@ -520,42 +519,6 @@ app.post('/api/mylist', (req, res) => {
 
 /* --------------------------- ffmpeg engine ------------------------- */
 
-/**
- * Which hardware decoder ffmpeg can use on this machine, resolved once.
- *
- * Only accelerators that work by simply passing `-hwaccel <name>` are listed
- * (QSV / D3D11VA / DXVA2 on Windows, VideoToolbox on macOS). VAAPI on Linux needs
- * an explicit device and format negotiation, so it is deliberately not guessed.
- * An empty string means software, and every failure falls back to it.
- */
-let hwAccelCache;
-function detectHwAccel() {
-  if (hwAccelCache !== undefined) return hwAccelCache;
-  hwAccelCache = '';
-  try {
-    const out = execFileSync('ffmpeg', ['-hide_banner', '-hwaccels'], {
-      encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const available = out.split(/\r?\n/).slice(1).map((line) => line.trim().toLowerCase()).filter(Boolean);
-    const wanted = process.platform === 'win32'
-      ? ['qsv', 'd3d11va', 'dxva2']
-      : process.platform === 'darwin' ? ['videotoolbox'] : [];
-    hwAccelCache = wanted.find((name) => available.includes(name)) || '';
-  } catch {
-    hwAccelCache = '';
-  }
-  return hwAccelCache;
-}
-
-/**
- * Transcode/remux to fragmented MP4 so the built-in player can show containers it
- * cannot read natively (MKV, AVI, HEVC, AC3 ...).
- *
- * H.264 is copied rather than re-encoded: decoding and re-encoding a file the
- * browser can already decode is pure waste, and hardware acceleration is only
- * relevant when pixels actually have to be decoded. Seeking restarts the process
- * at the requested offset, which is why `t` exists.
- */
 /** Every ffmpeg build can decode; not every one can encode. Cached after the
  *  first question, because it spawns a process. */
 let x264Cache;
@@ -575,7 +538,6 @@ function hasX264() {
 
 function streamViaFfmpeg(req, res, item) {
   const start = Math.max(0, Math.floor(Number(req.query.t) || 0));
-  const accel = detectHwAccel();
   const copyVideo = item.vcodec === 'h264';
   const copyAudio = copyVideo && item.acodec === 'aac';
 
@@ -590,7 +552,13 @@ function streamViaFfmpeg(req, res, item) {
 
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   if (start > 0) args.push('-ss', String(start));
-  if (!copyVideo && accel) args.push('-hwaccel', accel);
+  // Deliberately no -hwaccel. `-hwaccel qsv` (and the other GPU decoders) hand
+  // the filter chain frames in a GPU pixel format such as `qsv`, which neither
+  // the scaler nor libx264 can consume, and ffmpeg exits with
+  //   "Impossible to convert between the formats supported by the filter
+  //    'Parsed_null_0' and the filter 'auto_scale_0'"
+  // leaving a black screen. A software decode always yields frames the encoder
+  // can take, and transcoding is CPU-bound anyway.
   args.push('-i', item.path, '-sn', '-dn', '-map', '0:v:0', '-map', '0:a:0?');
   if (copyVideo) {
     args.push('-c:v', 'copy');
@@ -602,7 +570,7 @@ function streamViaFfmpeg(req, res, item) {
   if (!copyAudio) args.push('-b:a', '160k', '-ac', '2');
   args.push('-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
 
-  console.log(`[ffmpeg] ${item.filename}: ${copyVideo ? 'copy video' : `transcode (${accel || 'software'})`} at ${start}s`);
+  console.log(`[ffmpeg] ${item.filename}: ${copyVideo ? 'copy video' : 'transcode (software decode)'} at ${start}s`);
 
   const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const stop = () => { try { child.kill('SIGKILL'); } catch { /* already gone */ } };

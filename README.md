@@ -310,7 +310,15 @@ Bitrate, size and resolution are unchanged; the subtitle is read, not copied.
 
 ## When a stream fails
 
-The **FFMPEG** engine pipes the film through ffmpeg. If that pipe fails — an
+The **FFMPEG** engine pipes the film through ffmpeg, decoding in **software**.
+Hardware decode (`-hwaccel qsv` / `d3d11va`) is deliberately not used: those
+decoders hand the filter chain frames in a GPU pixel format such as `qsv`, which
+neither the scaler nor the H.264 encoder can consume, so ffmpeg exits with
+*"Impossible to convert between the formats supported by the filter"* and writes
+nothing — a black screen. Software decode always produces frames the encoder can
+take.
+
+If that pipe fails anyway — an
 ffmpeg build without `libx264`, a codec it will not transcode, a stream that never
 produces a picture — VLCFlix does not leave you looking at a black rectangle:
 
@@ -318,7 +326,9 @@ produces a picture — VLCFlix does not leave you looking at a black rectangle:
    player decodes, and keeps your position;
 2. a short message says the built-in player was used instead;
 3. if the file will not play that way either, the reason is put on the screen
-   (*"the video could not be decoded"*) instead of nothing.
+   (*"the video could not be decoded"*) instead of nothing;
+4. while there is no picture the controls stay on screen — a black player never
+   hides its own close button.
 
 A pipe that produces no picture within 7 seconds counts as failed, so a silent
 hang is treated the same as an error. `server.log` in `%LOCALAPPDATA%\VLCFlix`

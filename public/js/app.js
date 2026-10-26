@@ -855,6 +855,9 @@ function showPlayerNotice(text) {
   if (!notice) return;
   notice.textContent = text;
   notice.hidden = false;
+  // Keep the controls on screen: with no picture, they are the only way out.
+  clearTimeout(player.hideTimer);
+  $('#player')?.classList.add('is-active');
 }
 
 function clearPlayerNotice() {
@@ -1647,6 +1650,12 @@ function schedulePlayerHide() {
   root.classList.add('is-active');
   clearTimeout(player.hideTimer);
   player.hideTimer = setTimeout(() => {
+    // Never hide the controls over a broken picture. On a black screen they are
+    // the only way out, and a stream that fails still reports itself as playing,
+    // so paused alone is not enough to tell.
+    const notice = $('#playerNotice');
+    if (notice && !notice.hidden) return;
+    if (player.video && player.video.videoWidth === 0) return;
     if (!player.video?.paused) root.classList.remove('is-active');
   }, 2800);
 }

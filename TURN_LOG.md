@@ -715,3 +715,44 @@ Housekeeping: the workspace was 206 MB against a 128 MB snapshot budget. Six old
 installer/zip pairs were deleted, leaving only 1.1.9 (55 MB counted). Two stale
 servers left by earlier harness runs were also found and killed — one of them had
 been answering `accept.js` on port 4976 with pre-change code.
+
+## 2026-10-26 — v1.1.11: the black screen named itself
+The user's `server.log` had the answer:
+
+```
+[ffmpeg] Mean_Girls_2_1080P.mp4: transcode (qsv) at 0s
+[ffmpeg] Impossible to convert between the formats supported by the filter
+         'Parsed_null_0' and the filter 'auto_scale_0'
+[ffmpeg] Pixel formats:  src: qsv   dst: yuv420p ...
+[ffmpeg] Could not open encoder before EOF
+[ffmpeg] Nothing was written into output file ...
+```
+
+The transcode path passed `-hwaccel qsv`. QSV decodes into the GPU pixel format
+`qsv`, and neither the implicit scaler nor libx264 can take that, so ffmpeg exits
+before writing a single frame. Every film that needed transcoding (anything not
+already H.264) was therefore a black screen — which is exactly what was reported,
+and why the 1.1.10 fallback could only ever show a notice: the browser cannot
+decode those HEVC files either.
+
+Fix: **no hardware decode in the transcode path.** Transcoding is CPU-bound on
+the encoder side anyway, and software decode always yields frames the encoder can
+consume. `detectHwAccel()` and its unused `accelerated` response field are gone.
+
+Also fixed, from the same report ("it was like finding one's way on a broken
+screen ... I found where the close button was"): the chrome's auto-hide now
+refuses to run while `videoWidth === 0`, and showing the notice cancels the hide
+timer. A failed stream keeps its controls — and its close button — on screen.
+
+Verified with a 10-bit HEVC 1920x1080 clip (the same shape as the reported file):
+it now transcodes and plays through ffmpeg itself — `readyState 4`, 1920x1080,
+position advancing, no fallback, no console errors, and the log reads
+`transcode (software decode)`. Control behaviour checked both ways: with a
+picture the chrome still hides when idle and returns on a mouse move; with a
+broken picture it stays (`is-active` true, notice visible, close button
+clickable). 64/64 tests, player harness 14/14.
+
+Two self-inflicted errors this turn, both caught before shipping: the block
+deletion that removed `detectHwAccel` also took `hasX264()` with it, which made
+every ffmpeg stream 500 (the HEVC harness caught it, the unit tests did not), and
+the first `directStreamUrl` dropped the `?` from `?engine=ffmpeg&t=40`.

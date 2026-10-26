@@ -5,12 +5,13 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
     "tracking_branch": "origin/main",
-    "local_head": "f2ac2c9",
-    "remote_sha": "f2ac2c98d29cd935ac43068fe65bbb9e22aede3a",
+    "local_head": "7a02667",
+    "remote_sha": "7a0266723d080641fa494d2737148f595ad31a90",
     "pushed": true,
-    "awaiting": "nothing - user should rotate the chat-exposed PAT",
+    "awaiting": "nothing - v1.1.7 pushed and remote SHA matched",
     "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
-    "remote_sha_verified_at": "2026-10-26"
+    "remote_sha_verified_at": "2026-10-26",
+    "note": "local_head is the v1.1.7 feature commit; this checkpoint update is the follow-up commit on top of it"
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

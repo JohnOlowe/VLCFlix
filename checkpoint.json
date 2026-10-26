@@ -5,13 +5,13 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
     "tracking_branch": "origin/main",
-    "local_head": "3e5d359",
-    "remote_sha": "3e5d3593159acfcac8eb50c461f1dc37d9195027",
+    "local_head": "821447e",
+    "remote_sha": "821447e7dd269d059fe313a05d90e1889e5a37b0",
     "pushed": true,
-    "awaiting": "user confirmation of 1.1.13: controls appear while the picture is being delayed, seeking lands where asked in a resumed film, and only the button itself pauses",
+    "awaiting": "user runs tools/hwdecode-probe.cmd on the laptop and sends back vlcflix-hwdecode-report.txt; and confirms 1.2.0 still plays with the switch off",
     "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
     "remote_sha_verified_at": "2026-10-26",
-    "note": "local_head is the v1.1.13 fix commit; this checkpoint update is the follow-up commit on top of it"
+    "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it"
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

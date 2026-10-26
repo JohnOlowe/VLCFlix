@@ -5,10 +5,10 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
     "tracking_branch": "origin/main",
-    "local_head": "2e2b506",
-    "remote_sha": "2e2b5060bfa799c4a5c8b787cc81a0d961bb6395",
+    "local_head": "fe7f9e4",
+    "remote_sha": "fe7f9e45ff3d5c16379ad6803e91ab5f77ccbc55",
     "pushed": true,
-    "awaiting": "user report on 1.1.10: does the film play via the fallback, or does the notice appear? paste the [ffmpeg] line from server.log",
+    "awaiting": "user confirmation that an HEVC film now plays with the FFMPEG engine in 1.1.11",
     "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
     "remote_sha_verified_at": "2026-10-26",
     "note": "local_head is the v1.1.8 feature commit; this checkpoint update is the follow-up commit on top of it"

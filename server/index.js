@@ -39,8 +39,73 @@ const scanState = {
   error: null,
 };
 
+/* Artwork resume (in-memory). A full scan is not needed to finish artwork: the
+   catalogue already knows every file, its duration and what has been drawn. */
+const artState = {
+  running: false,
+  done: 0,
+  total: 0,
+  current: '',
+  startedAt: null,
+  finishedAt: null,
+  cancelled: false,
+};
+
+/** What the header chip should show: a scan if one is running, else artwork. */
+function liveStatus() {
+  if (scanState.running) return scanState;
+  // The pass that just ended reported itself, so the window can say "artwork
+  // finished" instead of pretending a library scan ran.
+  if (!artState.running) return artState.finishedAt ? { ...scanState, running: false, kind: 'art', phase: 'art', done: artState.done, total: artState.total, finishedAt: artState.finishedAt } : scanState;
+  return {
+    running: true,
+    kind: 'art', // resumes what is missing; not a library scan, so say so
+    phase: 'art',
+    done: artState.done,
+    total: artState.total,
+    current: artState.current,
+    startedAt: artState.startedAt,
+    finishedAt: null,
+    error: null,
+  };
+}
+
+/**
+ * Finish the artwork that is missing, without walking the library again. This is
+ * what makes reopening the app continue where it stopped instead of starting
+ * over: only items with no usable file on disk are drawn, and each one is
+ * recorded as soon as it lands.
+ */
+async function resumeArtwork() {
+  if (artState.running || scanState.running) return { total: 0, drawn: 0 };
+  const catalog = store.getCatalog();
+  const items = catalog.items || [];
+  const pending = items.filter((item) => library.needsArtwork(item, MEDIA_DIR) && library.shouldRetryArt(item));
+  if (!pending.length) return { total: 0, drawn: 0 };
+
+  Object.assign(artState, { running: true, done: 0, total: pending.length, current: '', startedAt: Date.now(), cancelled: false });
+  try {
+    const result = await library.renderMissingArtwork(items, {
+      mediaDir: MEDIA_DIR,
+      retryFailed: false,
+      cancel: () => artState.cancelled || scanState.running,
+      onProgress: (p) => Object.assign(artState, p),
+      onCatalog: () => store.saveCatalog(catalog),
+    });
+    console.log(`[artwork] pass finished: ${result.drawn} drawn, ${result.remaining} still missing`);
+    return result;
+  } catch (err) {
+    console.error('[artwork] pass failed:', err);
+    return { total: pending.length, drawn: artState.done, error: err.message };
+  } finally {
+    artState.running = false;
+    artState.finishedAt = Date.now();
+  }
+}
+
 async function runScan() {
   if (scanState.running) return;
+  artState.finishedAt = null;
   const settings = store.getSettings();
   Object.assign(scanState, {
     running: true, phase: null, done: 0, total: 0, current: '',
@@ -213,7 +278,7 @@ app.get('/api/bootstrap', async (req, res) => {
       tools,
       isDemo: (catalog.folders || []).some((f) => path.resolve(f) === path.resolve(SAMPLES_DIR)),
     },
-    scan: scanState,
+    scan: liveStatus(),
     vlc: await vlcStatus(settings),
     nowPlaying: nowPlaying.state,
   });
@@ -231,11 +296,14 @@ app.post('/api/library/scan', (req, res) => {
   if (scanState.running) {
     return res.status(409).json({ error: 'A scan is already running', scan: scanState });
   }
+  // A background artwork pass is not a scan: let the scan take over, and let the
+  // pass stop at its next item boundary instead of running two ffmpeg pools.
+  artState.cancelled = true;
   runScan(); // deliberately not awaited: the client polls /api/scan/status
   res.status(202).json({ started: true, scan: scanState });
 });
 
-app.get('/api/scan/status', (req, res) => res.json(scanState));
+app.get('/api/scan/status', (req, res) => res.json(liveStatus()));
 
 app.post('/api/settings', async (req, res) => {
   const allowed = ['libraryFolders', 'vlcPath', 'vlcHttpPort', 'vlcPassword', 'playMode',
@@ -672,11 +740,42 @@ app.use((req, res) => res.status(404).json({ error: 'Not found' }));
  * until the user pressed Scan. Checking is cheap (the catalogue is already in
  * memory); doing the work is not, so it only happens when something needs it.
  */
-function pendingArtwork() {
+function sweepTempArtwork() {
+  const removed = library.sweepTempArt(MEDIA_DIR);
+  if (removed) console.log(`[startup] cleared ${removed} half-written artwork file(s) from an interrupted run`);
+}
+
+/**
+ * A pass killed between writing a file and saving the catalogue leaves the file
+ * on disk with the entry still empty. Adopt those files instead of drawing them
+ * again, so a crash costs nothing but the item that was in flight.
+ */
+function adoptExistingArtwork() {
   const catalog = store.getCatalog();
   const items = catalog.items || [];
-  return items.filter((item) =>
-    !item.poster || !item.backdrop || item.previewVersion !== library.PREVIEW_VERSION);
+  let adopted = 0;
+  for (const item of items) {
+    const files = library.artPaths(MEDIA_DIR, item.id);
+    for (const key of ['poster', 'backdrop', 'preview']) {
+      if (item[key]) continue;
+      try {
+        if (fs.statSync(files[key]).size > 0) { item[key] = path.basename(files[key]); adopted += 1; }
+      } catch { /* nothing there */ }
+    }
+  }
+  if (adopted) {
+    console.log(`[startup] adopted ${adopted} artwork file(s) already on disk`);
+    store.saveCatalog(catalog);
+  }
+  return adopted;
+}
+
+function pendingArtwork() {
+  const items = store.getCatalog().items || [];
+  // Judge by what is on disk, not by what the catalogue claims: an interrupted
+  // pass leaves entries that look finished, and a deleted media file leaves
+  // entries that will never be drawn.
+  return items.filter((item) => library.needsArtwork(item, MEDIA_DIR) && library.shouldRetryArt(item));
 }
 
 if (require.main === module) {
@@ -688,11 +787,20 @@ if (require.main === module) {
       return;
     }
 
+    adoptExistingArtwork();
+    const items = store.getCatalog().items || [];
+    const cached = items.filter((item) => library.needsArtwork(item, MEDIA_DIR)).length;
     const stale = pendingArtwork();
-    if (!stale.length) return;
-    console.log(`[startup] ${stale.length} item(s) need artwork or a newer preview — refreshing in the background`);
-    // Let the window paint before ffmpeg starts competing for the CPU.
-    setTimeout(() => { runScan(); }, 1500);
+    if (!stale.length) {
+      console.log(`[startup] artwork complete for all ${items.length} item(s) — nothing to draw`);
+      return;
+    }
+    console.log(`[startup] artwork: ${items.length - cached} of ${items.length} already drawn, resuming ${stale.length} — no rescan needed`);
+    // Announce the pass now so the window paints a progress chip when it opens,
+    // and let the window paint before ffmpeg starts competing for the CPU.
+    Object.assign(artState, { running: true, done: 0, total: stale.length, current: '', startedAt: Date.now() });
+    sweepTempArtwork();
+    setTimeout(() => { artState.running = false; resumeArtwork(); }, 1500);
   });
 }
 

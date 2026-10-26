@@ -354,6 +354,31 @@ re-scanning a large library is cheap.
 Artwork is written to `data/media/`. VLCFlix reads your videos and never moves,
 renames or deletes them.
 
+### Artwork is drawn once, and never twice
+
+Artwork lives in `%LOCALAPPDATA%\VLCFlix\media` (or `data/media` when run from
+source), next to the catalogue, so it survives closing the app and installing a
+new version over the old one. On every launch VLCFlix compares the catalogue
+against **the files actually on disk**:
+
+| On launch | What happens |
+|---|---|
+| every film has its three files | nothing at all; the grid is instant |
+| some films are missing files | only those are drawn, straight from the catalogue — **the library is not rescanned** and no file is probed twice |
+| the app was closed mid-pass | the films already drawn are kept and the pass resumes from the next one |
+| a file was deleted, or the catalogue lost track of it after a crash | that file is detected and redrawn |
+
+A file is written under a temporary name and renamed only when it is complete,
+so an interrupted run can never leave a half-written poster that later looks
+finished. Artwork files are versioned by the format that produced them, which is
+what triggers a one-off re-render when the format itself changes between
+releases — never on an ordinary restart.
+
+A film that cannot be read (a damaged file, or a drive that is not connected) is
+attempted at most three times and then left alone with the reason recorded, so
+one bad file cannot make every launch look like it is starting over. Press
+**Scan library** to retry it deliberately.
+
 ### Sidecar metadata
 
 Filenames are a poor place for real metadata. Drop a JSON file beside any video

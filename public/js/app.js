@@ -2019,11 +2019,13 @@ function watchScan() {
     if (fill) fill.style.width = '100%';
     if (status) {
       if (scan.error) status.textContent = `Scan failed: ${scan.error}`;
+      else if (scan.kind === 'art') status.textContent = 'Artwork complete — every title has its picture.';
       else status.textContent = `Scan complete — ${state.items.length} titles.`;
     }
     await refreshCatalog().catch(() => {});
     paintFoldersAfterScan();
     if (scan.error) toast(`Scan failed: ${scan.error}`, { error: true });
+    else if (scan.kind === 'art') toast('Artwork finished — every title is drawn.');
     else toast(`Library scanned: ${state.items.length} title${state.items.length === 1 ? '' : 's'}`);
   };
 

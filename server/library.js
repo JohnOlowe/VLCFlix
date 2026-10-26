@@ -219,13 +219,66 @@ function previewSegments(duration, { count = 5, length = 2 } = {}) {
   return starts.map((start) => ({ start, length: len }));
 }
 
-async function renderArt(file, duration, outDir, id,
-                        needs = { poster: true, backdrop: true, preview: true }) {
-  const at = (fraction) => Math.max(0, Math.min(duration * fraction, Math.max(0, duration - 1)));
-  const outputs = {
+function artPaths(outDir, id) {
+  return {
     poster: path.join(outDir, `${id}-poster.jpg`),
     backdrop: path.join(outDir, `${id}-backdrop.jpg`),
     preview: path.join(outDir, `${id}-preview.mp4`),
+  };
+}
+
+const fileHasContent = (file) => {
+  try { return fs.statSync(file).size > 0; } catch { return false; }
+};
+
+/**
+ * What is actually missing on disk, which is not the same as what the catalogue
+ * claims: a file can be deleted, or never finished because the app was closed
+ * mid-render. Trusting the catalogue is what makes artwork start over.
+ */
+function missingArt(item, mediaDir) {
+  const files = artPaths(mediaDir, item.id);
+  return {
+    poster: !fileHasContent(files.poster),
+    backdrop: !fileHasContent(files.backdrop),
+    preview: item.previewVersion !== PREVIEW_VERSION || !fileHasContent(files.preview),
+  };
+}
+
+const needsArtwork = (item, mediaDir) => Object.values(missingArt(item, mediaDir)).some(Boolean);
+
+/** Give up on a file that will not render; a manual scan asks for it again. */
+const ART_MAX_ATTEMPTS = 3;
+const shouldRetryArt = (item) => (item.artAttempts || 0) < ART_MAX_ATTEMPTS;
+
+/** Half-written files from a pass that was killed: never shown, never reused. */
+function sweepTempArt(outDir) {
+  let removed = 0;
+  try {
+    for (const name of fs.readdirSync(outDir)) {
+      if (!/\.tmp[0-9a-z-]+\.(jpg|mp4)$/i.test(name)) continue;
+      const full = path.join(outDir, name);
+      try {
+        if (Date.now() - fs.statSync(full).mtimeMs < 5 * 60 * 1000) continue;
+        fs.unlinkSync(full);
+        removed += 1;
+      } catch { /* another pass may own it */ }
+    }
+  } catch { /* no media dir yet */ }
+  return removed;
+}
+
+async function renderArt(file, duration, outDir, id,
+                        needs = { poster: true, backdrop: true, preview: true }) {
+  const at = (fraction) => Math.max(0, Math.min(duration * fraction, Math.max(0, duration - 1)));
+  const final = artPaths(outDir, id);
+  // Render to a temp name and rename when complete, so an interrupted pass can
+  // never leave a truncated image or clip that looks finished.
+  const tag = `.tmp${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
+  const outputs = {
+    poster: final.poster.replace(/(\.jpg)$/i, `${tag}$1`),
+    backdrop: final.backdrop.replace(/(\.jpg)$/i, `${tag}$1`),
+    preview: final.preview.replace(/(\.mp4)$/i, `${tag}$1`),
   };
 
   const jobs = [];
@@ -264,11 +317,12 @@ async function renderArt(file, duration, outDir, id,
 
   const settled = await Promise.allSettled(jobs);
   const produced = {};
+  const failures = [];
   settled.forEach((result, i) => {
     const key = keys[i];
-    const file_path = outputs[key];
-    if (result.status === 'fulfilled' && fs.existsSync(file_path)) produced[key] = path.basename(file_path);
+    if (result.status === 'fulfilled' && fileHasContent(outputs[key])) produced[key] = true;
     else if (result.status === 'rejected') {
+      failures.push(key);
       console.warn(`[library] ${key} failed for ${path.basename(file)}: ${result.reason?.message?.split('\n')[0]}`);
     }
   });
@@ -280,7 +334,21 @@ async function renderArt(file, duration, outDir, id,
       .map((key) => correctExposure(outputs[key], key === 'poster' ? 64 : 72))
   );
 
-  return produced;
+  const done = {};
+  for (const key of Object.keys(produced)) {
+    try {
+      fs.renameSync(outputs[key], final[key]);
+      done[key] = path.basename(final[key]);
+    } catch (err) {
+      failures.push(key);
+      console.warn(`[library] could not publish ${key} for ${path.basename(file)}: ${err.message}`);
+    }
+  }
+  for (const key of Object.keys(outputs)) {
+    if (done[key]) continue;
+    try { fs.unlinkSync(outputs[key]); } catch { /* nothing to clean */ }
+  }
+  return { produced: done, failures };
 }
 
 const SUB_EXT = new Set(['.srt', '.vtt']);
@@ -433,6 +501,81 @@ async function walk(folder, found = [], depth = 0) {
  * @param {(p: {phase:string,done:number,total:number,current:string}) => void} [opts.onProgress]
  * @param {(catalog: object) => void} [opts.onCatalog]  called whenever the catalog improves
  */
+/**
+ * Draw everything that is missing and nothing else, so a pass can be stopped at
+ * any point and the next one picks up the remainder. Shared by a full scan and
+ * by the pass that runs when the app is reopened.
+ */
+async function renderMissingArtwork(items, {
+  mediaDir,
+  onProgress = () => {},
+  onCatalog = () => {},
+  retryFailed = false,
+  cancel = () => false,
+} = {}) {
+  const candidates = items.filter((item) => retryFailed || shouldRetryArt(item));
+  const pending = candidates.filter((item) => needsArtwork(item, mediaDir));
+  if (!pending.length) return { total: 0, drawn: 0, remaining: 0 };
+
+  let drawn = 0;
+  let remaining = 0;
+  let lastPublish = Date.now();
+  onProgress({ phase: 'art', done: 0, total: pending.length, current: '' });
+
+  await runPool(pending, 2, async (item) => {
+    if (cancel()) { remaining += 1; return; }
+    const files = artPaths(mediaDir, item.id);
+    try {
+      // A catalogue entry with no duration has never been probed (an interrupted
+      // first run); probe just this file rather than rescanning the library.
+      if (!item.duration) {
+        if (!fileHasContent(item.path)) throw new Error('the video file is missing');
+        const info = await probeVideo(item.path);
+        item.duration = info.duration;
+        item.width = info.width || item.width;
+        item.height = info.height || item.height;
+        item.vcodec = info.vcodec || item.vcodec;
+        item.acodec = info.acodec || item.acodec;
+      }
+      if (!item.duration) throw new Error('the video could not be read');
+
+      const needs = missingArt(item, mediaDir);
+      const { produced, failures } = await renderArt(item.path, item.duration, mediaDir, item.id, needs);
+
+      item.poster = produced.poster || (fileHasContent(files.poster) ? path.basename(files.poster) : item.poster || null);
+      item.backdrop = produced.backdrop || (fileHasContent(files.backdrop) ? path.basename(files.backdrop) : item.backdrop || null);
+      item.preview = produced.preview || (fileHasContent(files.preview) ? path.basename(files.preview) : item.preview || null);
+      // Only claim the new format once a clip exists, or a transient ffmpeg
+      // failure would mark it done and never retry.
+      if (!needs.preview || produced.preview) item.previewVersion = PREVIEW_VERSION;
+
+      if (needsArtwork(item, mediaDir)) {
+        throw new Error(failures.length ? `${failures.join(', ')} could not be drawn` : 'artwork incomplete');
+      }
+      drawn += 1;
+      delete item.artError;
+      delete item.artAttempts;
+    } catch (err) {
+      remaining += 1;
+      item.artAttempts = (item.artAttempts || 0) + 1;
+      item.artError = err.message;
+      console.warn(`[library] artwork failed for ${item.filename}: ${err.message}`);
+    }
+
+    onProgress({ phase: 'art', done: drawn, total: pending.length, current: item.filename });
+    // Publish at a sane rate; one write per frame would thrash the disk. The
+    // next pass starts from whatever the last publish recorded.
+    if (Date.now() - lastPublish > 1200 || drawn + remaining === pending.length) {
+      lastPublish = Date.now();
+      onCatalog();
+    }
+  });
+
+  onProgress({ phase: 'art', done: drawn, total: pending.length, current: '' });
+  onCatalog();
+  return { total: pending.length, drawn, remaining };
+}
+
 async function scan(folders, {
   previous = null,
   mediaDir,
@@ -539,42 +682,14 @@ async function scan(folders, {
 
   /* ---------------- phase 2: draw (background) ---------------- */
 
-  const pending = catalog.items.filter((item) =>
-    !item.poster || !item.backdrop || item.previewVersion !== PREVIEW_VERSION);
-  let drawn = 0;
-  let lastPublish = Date.now();
-
-  if (pending.length && tools.canRender) {
-    await runPool(pending, 2, async (item) => {
-      if (!item.duration) return;
-      const needs = {
-        poster: !item.poster,
-        backdrop: !item.backdrop,
-        preview: item.previewVersion !== PREVIEW_VERSION,
-      };
-      try {
-        const art = await renderArt(item.path, item.duration, mediaDir, item.id, needs);
-        item.poster = art.poster || item.poster;
-        item.backdrop = art.backdrop || item.backdrop;
-        item.preview = art.preview || item.preview;
-        // Only claim the new format once a clip exists, or a transient ffmpeg
-        // failure would mark it done and never retry.
-        if (!needs.preview || art.preview) item.previewVersion = PREVIEW_VERSION;
-      } catch (err) {
-        console.warn(`[library] artwork failed for ${item.filename}: ${err.message}`);
-      }
-      drawn += 1;
-      onProgress({ phase: 'art', done: drawn, total: pending.length, current: item.filename });
-      // Republish at a sane rate; one write per frame would thrash the disk.
-      if (Date.now() - lastPublish > 1200 || drawn === pending.length) {
-        lastPublish = Date.now();
-        onCatalog(catalog);
-      }
+  if (tools.canRender) {
+    await renderMissingArtwork(catalog.items, {
+      mediaDir,
+      retryFailed: true,
+      onProgress,
+      onCatalog: () => onCatalog(catalog),
     });
   }
-
-  onProgress({ phase: 'art', done: drawn, total: pending.length, current: '' });
-  onCatalog(catalog);
 
   return catalog;
 }
@@ -584,4 +699,6 @@ function mimeFor(file) {
 }
 
 module.exports = { scan, parseName, mimeFor, probeTools, toVtt, findSubtitles,
-  listFolderSubtitles, previewSegments, PREVIEW_VERSION, VIDEO_EXT };
+  listFolderSubtitles, previewSegments, PREVIEW_VERSION, VIDEO_EXT,
+  artPaths, missingArt, needsArtwork, shouldRetryArt, renderMissingArtwork,
+  sweepTempArt, ART_MAX_ATTEMPTS };

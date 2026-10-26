@@ -253,15 +253,42 @@ test('artwork URLs carry a version, so a re-render cannot be served from cache',
   assert.match(item.backdropUrl, /\?v=2-1700000000000$/, item.backdropUrl);
 });
 
-test('stale artwork is detected so it can be refreshed without a manual scan', () => {
+test('artwork work is judged by the files on disk, so a reopen resumes instead of restarting', () => {
   const write = (items) => store.saveCatalog({ scannedAt: Date.now(), items, errors: [] });
+  const media = path.join(TMP, 'media');
+  fs.mkdirSync(media, { recursive: true });
+  const touch = (name, bytes = 8) => fs.writeFileSync(path.join(media, name), Buffer.alloc(bytes));
+  const clear = () => fs.rmSync(media, { recursive: true, force: true }) || fs.mkdirSync(media, { recursive: true });
+  const draw = (id) => { touch(`${id}-poster.jpg`); touch(`${id}-backdrop.jpg`); touch(`${id}-preview.mp4`); };
 
+  clear();
   write([{ id: 'a', poster: null, backdrop: null }]);
   assert.equal(pendingArtwork().length, 1, 'a film with no artwork needs work');
 
-  write([{ id: 'b', poster: 'p.jpg', backdrop: 'b.jpg', previewVersion: 1 }]);
+  clear();
+  draw('b');
+  write([{ id: 'b', poster: 'b-poster.jpg', backdrop: 'b-backdrop.jpg', previewVersion: 1 }]);
   assert.equal(pendingArtwork().length, 1, 'an old preview format needs re-rendering');
 
-  write([{ id: 'c', poster: 'p.jpg', backdrop: 'b.jpg', previewVersion: 2 }]);
-  assert.equal(pendingArtwork().length, 0, 'nothing to do once it is current');
+  clear();
+  draw('c');
+  write([{ id: 'c', poster: 'c-poster.jpg', backdrop: 'c-backdrop.jpg', previewVersion: 2 }]);
+  assert.equal(pendingArtwork().length, 0, 'nothing to do once the files are there');
+
+  // The catalogue is not evidence: an entry can outlive its files.
+  write([{ id: 'd', poster: 'd-poster.jpg', backdrop: 'd-backdrop.jpg', previewVersion: 2 }]);
+  assert.equal(pendingArtwork().length, 1, 'a catalogue entry whose files are gone must be redrawn');
+
+  // A half-written file is not a finished one.
+  clear();
+  write([{ id: 'e', poster: 'e-poster.jpg', backdrop: 'e-backdrop.jpg', previewVersion: 2 }]);
+  touch('e-poster.jpg'); touch('e-backdrop.jpg'); touch('e-preview.mp4', 0);
+  assert.equal(pendingArtwork().length, 1, 'an empty preview file does not count as drawn');
+
+  // One unreadable file must not force a full rescan at every launch.
+  clear();
+  draw('f');
+  write([{ id: 'f', poster: 'f-poster.jpg', backdrop: 'f-backdrop.jpg', previewVersion: 2, artAttempts: 3 }]);
+  assert.equal(pendingArtwork().length, 0, 'a file that has failed repeatedly is left alone');
 });
+

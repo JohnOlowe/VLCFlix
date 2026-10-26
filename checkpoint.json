@@ -35,7 +35,8 @@
     "vlc_failure_path": "reports VLC's own stderr in 0.37s instead of a 20s timeout",
     "builtin_player": "verified with VP9/WebM: duration 10s, currentTime advancing",
     "ui_reviewed": "Chromium 1600x900 across home, rails, hover, detail, browse, search, settings, player, VLC dock",
-    "v117_checks": "14-check browser harness all pass, negative control fails as designed; 64/64 unit tests"
+    "v117_checks": "14-check browser harness all pass, negative control fails as designed; 64/64 unit tests",
+    "v118_checks": "fresh install over existing data rewrote 0/48 files; 8 deleted previews redrawn only; adopted a nulled catalogue field with 0 rewrites; killed pass resumed at 0.4 s; 64/64 tests"
   },
   "commit_identity": {
     "name": "John Olowe",
@@ -105,10 +106,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.7.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.7.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.8.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.8.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.7 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.8 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -130,7 +131,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.7",
+    "version": "1.1.8",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -195,5 +196,12 @@
     "double_tap": "two quick clicks on a side skip -10 s / +10 s with a badge over that side; two quick clicks in the middle toggle when the controls are hidden, and are simply two toggles when they are up",
     "regression_fixed": "the v1.1.6 full-screen clickable .player__center overlay covered #playerClose and the bottom bar; it is display-only again",
     "scroll_audit": "wheel input is one-to-one with scroll (measured); no wheel handlers exist; the Windows shell is unchanged since v1.1.4; overscroll-behavior: contain added to both nested scrollers"
+  },
+  "features_v118": {
+    "resume": "startup draws only what is missing, straight from the stored catalogue: no folder walk and no ffprobe for items that already have a duration",
+    "judged_by_disk": "missingArt() stats poster/backdrop/preview files; the catalogue is not trusted, and files found on disk are adopted into it",
+    "atomic": "artwork renders to *.tmpNNN.ext and is renamed when complete; stale temps swept at startup",
+    "failure_records": "artAttempts/artError, three attempts then left alone until a manual scan (one unreadable file used to force a full rescan at every launch)",
+    "progress_label": "the chip shows the artwork pass and ends with \"Artwork finished\" rather than claiming a scan ran"
   }
 }

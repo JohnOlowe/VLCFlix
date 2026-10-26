@@ -598,3 +598,46 @@ Testing: a new 14-check harness covers every requirement above, with a negative
 control -- collapsing the three bands into "everywhere is the middle" makes it fail
 exactly where it should. 64 unit tests still pass. Screenshot of the skip badge read
 back before shipping.
+
+## 2026-10-26 — v1.1.8: artwork resumes instead of starting over
+Reported: artwork draws everything again at every launch, so it takes a long time
+to become usable. Two separate causes, both measured.
+
+1. **Startup triggered a whole library scan.** Whenever anything was outstanding,
+   the launch path called `runScan()`, which walks every folder and runs `ffprobe`
+   over every file before it draws anything — reading 0/N, then artwork 0/M. On a
+   large library that is minutes of work to draw a handful of missing pictures, and
+   it looks exactly like starting over.
+2. **One unreadable file made that permanent.** An item that cannot be drawn
+   (`duration === 0`) was skipped silently and stayed outstanding forever, so every
+   single launch re-ran the full scan. Reproduced: 12 good clips plus one file of
+   random bytes logged `[startup] 1 item(s) need artwork` and did a full rescan on
+   every launch, indefinitely.
+
+Now the launch path renders only what is missing, from the stored catalogue: no
+walk, no `ffprobe` for items that already have a duration. Measured on 60 clips,
+killed mid-pass at 6/60: relaunch reached the artwork phase in **0.4 s** (was
+2.1 s) with `[startup] artwork: 5 of 60 already drawn, resuming 55 — no rescan
+needed`, and drew only the remainder.
+
+Also fixed while in there:
+
+- **Judged by disk, not by the catalogue.** `missingArt()` stats the three files.
+  A catalogue entry that outlives its files (deleted media, a wipe) is redrawn; an
+  entry that lost its fields but whose file is on disk is adopted without drawing.
+- **Atomic files.** Posters, backdrops and previews render to `*.tmpNNN.jpg/mp4`
+  and are renamed when complete, so a killed pass can never leave a truncated file
+  that later counts as finished. Stale temp files are swept at startup.
+- **Failures are recorded**, not retried forever: `artAttempts`/`artError`, three
+  attempts, then left alone until a manual scan. The bad file from the repro now
+  settles and the fourth launch logs `artwork complete for all 13 item(s)`.
+- **The progress chip tells the truth**: an artwork pass shows `Artwork 3/8 · 37%`
+  from the first paint (the pass is announced before the 1.5 s delay that lets the
+  window draw) and ends with *"Artwork finished"* instead of claiming a scan ran.
+
+Verified: fresh install over an existing user-data folder rewrote **0 of 48**
+artwork files; deleting every preview with the catalogue intact redrew exactly the
+16 previews; a catalogue field nulled by hand was restored from the file on disk
+with 0 files rewritten; 64/64 unit tests, including a rewritten artwork test whose
+negative control (catalogue-only check) fails as it should; the player harness
+still passes end to end.

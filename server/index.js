@@ -81,10 +81,16 @@ const itemUrl = (item, choices = {}) => {
   const tracks = chosen
     ? [{ name: chosen, label: 'Chosen', lang: '' }]
     : (item.subtitles || []).map((t) => ({ name: t.name, label: t.label, lang: t.lang || '' }));
+  // Artwork keeps its filename when it is re-rendered, and the media route is
+  // served "immutable", so a browser would happily replay the old clip for an
+  // hour. The version and the source file's mtime both go in the URL, which
+  // makes a re-rendered asset a different URL and therefore a fresh request.
+  const artVersion = `v=${item.previewVersion || 0}-${item.mtimeMs || 0}`;
+  const artUrl = (name) => (name ? `/media/${name}?${artVersion}` : null);
   return {
-    posterUrl: item.poster ? `/media/${item.poster}` : null,
-    backdropUrl: item.backdrop ? `/media/${item.backdrop}` : null,
-    previewUrl: item.preview ? `/media/${item.preview}` : null,
+    posterUrl: artUrl(item.poster),
+    backdropUrl: artUrl(item.backdrop),
+    previewUrl: artUrl(item.preview),
     subtitles: tracks.map((track, index) => ({
       url: subtitleUrl(item.id, track.name),
       name: track.name,
@@ -657,14 +663,37 @@ app.get('/api/health', (req, res) => res.json({ ok: true, uptime: process.uptime
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
+/**
+ * Is anything in the stored catalogue out of date?
+ *
+ * Artwork format changes between releases, and a re-install must not leave the
+ * user staring at clips rendered by an older version -- which is exactly what
+ * happened in 1.1.2, when the preview format changed but nothing re-rendered it
+ * until the user pressed Scan. Checking is cheap (the catalogue is already in
+ * memory); doing the work is not, so it only happens when something needs it.
+ */
+function pendingArtwork() {
+  const catalog = store.getCatalog();
+  const items = catalog.items || [];
+  return items.filter((item) =>
+    !item.poster || !item.backdrop || item.previewVersion !== library.PREVIEW_VERSION);
+}
+
 if (require.main === module) {
   app.listen(PORT, HOST, () => {
     console.log(`VLCFlix on http://${HOST}:${PORT}`);
     const settings = store.getSettings();
     if (!settings.libraryFolders.length) {
       console.log('No library folders configured yet — point VLCFlix at your videos from Settings.');
+      return;
     }
+
+    const stale = pendingArtwork();
+    if (!stale.length) return;
+    console.log(`[startup] ${stale.length} item(s) need artwork or a newer preview — refreshing in the background`);
+    // Let the window paint before ffmpeg starts competing for the CPU.
+    setTimeout(() => { runScan(); }, 1500);
   });
 }
 
-module.exports = { app, runScan, scanState };
+module.exports = { app, runScan, scanState, pendingArtwork };

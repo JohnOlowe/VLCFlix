@@ -103,10 +103,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.4.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.4.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.5.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.5.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.4 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.5 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -128,7 +128,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.4",
+    "version": "1.1.5",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -180,5 +180,9 @@
     "negative_audio_sync": "a delayed picture is equivalent to earlier sound; frames buffered via requestVideoFrameCallback + createImageBitmap and drawn N ms late on a canvas overlay",
     "auto_latency": "settings.autoLatency; reads AudioContext.outputLatency, re-measures every 2.5 s, smoothed; correction lives on the picture side so manual offset stays independent and zero-able",
     "sync_math": "public/js/sync-math.js is shared with tests/sync.test.js (14 cases)"
+  },
+  "features_v115": {
+    "startup_refresh": "pendingArtwork() checked at startup; stale or missing artwork re-renders in the background without a manual scan",
+    "cache_busting": "artwork URLs carry ?v=<previewVersion>-<source mtime>, because /media is served immutable under a filename that never changes"
   }
 }

@@ -509,3 +509,38 @@ manual offset: the manual control stays at 0 and remains the user's to use.
 - AUTO on: device readout 32 ms, measured lag 0.06 s, `autoLatency` persisted.
 - With AUTO on, H still moves subtitles (+200 ms) and audio stays 0 ms.
 - Zero console errors. 62 tests (was 48).
+
+## 2026-10-26 — v1.1.5: an upgrade left the old previews in place
+Reported: reinstalled without uninstalling and the montage previews did not appear.
+
+Two causes, both mine, and the second would have defeated a rescan anyway:
+
+1. **Nothing re-rendered on upgrade.** The 1.1.2 stale-preview check lived inside
+   `scan()`, and `runScan()` is only reached from `POST /api/library/scan` -- i.e.
+   the Scan button. After upgrading, the stored catalogue (with single-chunk
+   previews) was never revisited, so the new format never happened.
+2. **The browser would have kept serving the old clip.** `/media` is mounted with
+   `maxAge: '1h', immutable: true` and a re-render keeps the same filename, so the
+   URL was byte-identical. `immutable` tells the browser not to revalidate, so even
+   a completed re-render would be invisible for up to an hour.
+
+Fixes:
+- `pendingArtwork()` is checked once at startup; if anything is missing artwork or
+  carries an older `previewVersion`, the refresh runs in the background 1.5 s after
+  listen (after the window paints), logging
+  `[startup] N item(s) need artwork or a newer preview`.
+- Artwork URLs now carry `?v=<previewVersion>-<source mtime>`, so a re-rendered
+  asset is a different URL and therefore a real request. A changed source file
+  changes the mtime part too.
+
+Verified by simulating the exact upgrade: built a library with the current code,
+then downgraded the stored state to what 1.1.1 would have left (previewVersion
+removed, preview overwritten with a single 8 s chunk sampled at one timestamp).
+A plain restart, with no user action, logged the refresh and produced a 10 s
+montage whose colours follow the film (ff0000, 01ff02, 0000ff, 0000ff, fffeff).
+The URL moved from `?v=0-<mtime>` to `?v=2-<mtime>`.
+
+Test note: the first version of the cache-busting test passed even with the fix
+reverted -- it looped over `catalog.items`, which was empty, so the assertion never
+ran. It now seeds its own catalogue and fails correctly when the version is removed.
+64 tests (was 62).

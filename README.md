@@ -305,6 +305,10 @@ browsable after **685 ms**, and artwork finished **8.3 s later in the background
    small indicator in the header — *"Artwork 40/113 · 35%"* — shows it is alive
    while you browse; clicking it reopens the panel. The grid refreshes as artwork
    lands, so thumbnails appear while you scroll instead of all at once.
+   Upgrading never leaves stale artwork: on startup VLCFlix checks the stored
+   catalogue and, if any film has no artwork or a preview from an older format,
+   refreshes those in the background without being asked. Artwork URLs carry a
+   version, so a re-rendered clip is never served from the browser's cache.
 2. **Phase 2 — draw (background).** Posters and backdrops are rendered two at a
    time and the catalog is republished as they land. The settings panel reads
    *"Library ready — drawing artwork 40/113"*, and cards fill in while you scroll.

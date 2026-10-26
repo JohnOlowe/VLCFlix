@@ -15,7 +15,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'vlcflix-test-'));
 process.env.VLCFLIX_DATA_DIR = TMP;
 
 const store = require('../server/store');
-const { app } = require('../server/index');
+const { app, pendingArtwork } = require('../server/index');
 
 let server;
 let base;
@@ -227,4 +227,41 @@ test('playMode rejects an unknown engine', async () => {
     body: JSON.stringify({ playMode: 'potato' }),
   });
   assert.equal(res.status, 400);
+});
+
+test('artwork URLs carry a version, so a re-render cannot be served from cache', async () => {
+  // Seed the catalogue explicitly: an empty one would make this assertion vacuous.
+  store.saveCatalog({
+    scannedAt: Date.now(),
+    items: [{
+      id: 'versioned', title: 'Versioned', path: '/videos/x.mp4', filename: 'x.mp4',
+      poster: 'versioned-poster.jpg', backdrop: 'versioned-backdrop.jpg',
+      preview: 'versioned-preview.mp4', mtimeMs: 1700000000000, addedAt: 1700000000000,
+      duration: 60, previewVersion: 2,
+    }],
+    errors: [],
+  });
+
+  const catalog = await fetch(`${base}/api/catalog`).then((r) => r.json());
+  const item = catalog.items.find((i) => i.id === 'versioned');
+  assert.ok(item, 'seeded item should be in the catalogue');
+
+  // The media route is served immutable and the filename never changes, so the
+  // URL itself has to carry the version or a browser replays the old asset.
+  assert.match(item.previewUrl, /\?v=2-1700000000000$/, item.previewUrl);
+  assert.match(item.posterUrl, /\?v=2-1700000000000$/, item.posterUrl);
+  assert.match(item.backdropUrl, /\?v=2-1700000000000$/, item.backdropUrl);
+});
+
+test('stale artwork is detected so it can be refreshed without a manual scan', () => {
+  const write = (items) => store.saveCatalog({ scannedAt: Date.now(), items, errors: [] });
+
+  write([{ id: 'a', poster: null, backdrop: null }]);
+  assert.equal(pendingArtwork().length, 1, 'a film with no artwork needs work');
+
+  write([{ id: 'b', poster: 'p.jpg', backdrop: 'b.jpg', previewVersion: 1 }]);
+  assert.equal(pendingArtwork().length, 1, 'an old preview format needs re-rendering');
+
+  write([{ id: 'c', poster: 'p.jpg', backdrop: 'b.jpg', previewVersion: 2 }]);
+  assert.equal(pendingArtwork().length, 0, 'nothing to do once it is current');
 });

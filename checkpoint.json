@@ -5,10 +5,10 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
     "tracking_branch": "origin/main",
-    "local_head": "f0c993c",
-    "remote_sha": "f0c993c3e47fba256a3f6bee900f83af4cbf57ab",
+    "local_head": "f2f35cc",
+    "remote_sha": "f2f35cc99abfc23779f9cf67dd7586f69c40b802",
     "pushed": true,
-    "awaiting": "nothing - v1.1.8 pushed and remote SHA matched",
+    "awaiting": "user answer needed: what exactly \"playback is not working\" does; v1.1.9 launch fix pushed and verified",
     "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
     "remote_sha_verified_at": "2026-10-26",
     "note": "local_head is the v1.1.8 feature commit; this checkpoint update is the follow-up commit on top of it"
@@ -209,5 +209,11 @@
     "watchdog": "WebView2 navigation watchdog raised 8 s -> 20 s, because a cold start produced false \"page never finished loading\" failures",
     "single_stat_pass": "startup stats the artwork once and reuses the result instead of four passes over the library",
     "stale_urls_cleared": "catalogue fields pointing at files that are gone are cleared, so the grid falls back to its gradient instead of requesting a 404"
+  },
+  "open_question_playback": {
+    "reported": "user said \"the playback is not working\" alongside a launcher log",
+    "log_shows": "first two WebView2 attempts timed out at the 8 s watchdog; page loaded only after Retry; window then received WM_CLOSE",
+    "not_yet_known": "whether playback fails with the app open (no video, no sound, error toast, VLC never launches) or whether \"playback\" meant the app not starting",
+    "asked_user": "yes - see the closing question of the turn"
   }
 }

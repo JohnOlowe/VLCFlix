@@ -103,10 +103,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.1.2.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.1.2.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.1.3.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.1.3.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.1.2 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.1.3 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -128,7 +128,7 @@
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
     ],
-    "version": "1.1.2",
+    "version": "1.1.3",
     "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
     "v101_fixes": [
       "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
@@ -168,5 +168,12 @@
     "preview_montage": "PREVIEW_VERSION=2; five 2 s snippets at 12/32/52/72/90% concatenated in one ffmpeg pass; stale clips re-render automatically",
     "detail_preview": "Info panel plays the same clip as hover (attachHeroPreview, 500 ms delay)",
     "muted_autoplay_fixed": "el() set the muted ATTRIBUTE (defaultMuted); the property is what the autoplay policy checks"
+  },
+  "features_v113": {
+    "custom_subtitle_renderer": "hand-written WebVTT parser + overlay; native <track> cannot be retimed/resized/moved",
+    "keys": "G/H subtitle delay, J/K audio delay, V next track (VLC Windows/Linux defaults)",
+    "picker": "every subtitle file in the folder via /api/subtitles/:id/tracks, name matches first; choice stored in subtitleChoices.json keyed by item id",
+    "style": "size 50-250%, height 0-60% from bottom, persisted in localStorage",
+    "audio_limit": "browser can delay but not advance audio; J at 0 ms reports the limitation instead of silently doing nothing"
   }
 }

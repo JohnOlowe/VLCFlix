@@ -328,6 +328,44 @@ function findSubtitles(file, entries) {
   return tracks;
 }
 
+/** The label shown for a subtitle file: language suffix, else the filename. */
+function labelFor(base, name) {
+  const stem = path.basename(name, path.extname(name));
+  if (stem === base) return 'Default';
+  const suffix = stem.startsWith(base + '.') ? stem.slice(base.length + 1) : stem;
+  const key = suffix.toLowerCase();
+  const lang = /^[a-z]{2,3}([-_][a-z]{2,4})?$/i.test(key) ? key.split(/[-_]/)[0] : null;
+  // Not a language tag and not a name match: show the file's own stem, since
+  // mangling "Ghostlight.2019.1080p.WEB-DL" into words helps nobody.
+  return LANG_NAMES[key] || LANG_NAMES[lang] || suffix;
+}
+
+/**
+ * Every subtitle file sitting beside the film.
+ *
+ * Name matching is the convention, but downloaded subtitles are frequently named
+ * after the release rather than the video, so the picker offers everything in the
+ * folder instead of pretending only exact matches exist.
+ */
+function listFolderSubtitles(file, entries) {
+  const base = path.basename(file, path.extname(file));
+  const found = [];
+  for (const name of entries) {
+    const ext = path.extname(name).toLowerCase();
+    if (!SUB_EXT.has(ext)) continue;
+    const stem = path.basename(name, path.extname(name));
+    found.push({
+      name,
+      ext: ext.slice(1),
+      label: labelFor(base, name),
+      matches: stem === base || stem.startsWith(base + '.'),
+    });
+  }
+  // Name matches first, then everything else alphabetically.
+  found.sort((a, b) => (b.matches - a.matches) || a.name.localeCompare(b.name));
+  return found;
+}
+
 /** SRT is not a web format; WebVTT is the same idea with a stricter header. */
 function toVtt(input) {
   const text = Buffer.isBuffer(input) ? input.toString('utf8') : String(input);
@@ -546,4 +584,4 @@ function mimeFor(file) {
 }
 
 module.exports = { scan, parseName, mimeFor, probeTools, toVtt, findSubtitles,
-  previewSegments, PREVIEW_VERSION, VIDEO_EXT };
+  listFolderSubtitles, previewSegments, PREVIEW_VERSION, VIDEO_EXT };

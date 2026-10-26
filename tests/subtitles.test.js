@@ -103,7 +103,7 @@ test('a video with no sidecars reports no tracks', () => {
   assert.deepEqual(findSubtitles('/v/Movie.mkv', ['Movie.mkv', 'notes.txt']), []);
 });
 
-const { previewSegments } = require('../server/library');
+const { previewSegments, listFolderSubtitles } = require('../server/library');
 
 test('preview samples several different parts of the film', () => {
   const segments = previewSegments(600);
@@ -134,4 +134,32 @@ test('a very short clip does not repeat the same frames', () => {
 test('an unreadable or empty file yields no preview', () => {
   assert.deepEqual(previewSegments(0), []);
   assert.deepEqual(previewSegments(NaN), []);
+});
+
+test('offers subtitle files whose names do not match the video', () => {
+  // The reported problem: downloaded subtitles named after the release, not the
+  // film, so name matching alone leaves the user with no track at all.
+  const found = listFolderSubtitles('/v/ghostlight.mp4',
+    ['ghostlight.mp4', 'Ghostlight.2019.1080p.WEB-DL.srt']);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].matches, false);
+  assert.equal(found[0].name, 'Ghostlight.2019.1080p.WEB-DL.srt');
+});
+
+test('puts name-matched subtitle files before unrelated ones', () => {
+  const found = listFolderSubtitles('/v/Movie.mkv',
+    ['Zulu.srt', 'Movie.srt', 'Movie.en.srt', 'Alpha.srt']);
+  assert.deepEqual(found.map((f) => f.matches), [true, true, false, false]);
+});
+
+test('a mismatched file keeps its own name as the label', () => {
+  const found = listFolderSubtitles('/v/Movie.mkv', ['Movie.mkv', 'Some.Release.2020.srt']);
+  assert.equal(found[0].label, 'Some.Release.2020',
+    'mangling the filename into words helps nobody');
+});
+
+test('only subtitle extensions are offered', () => {
+  const found = listFolderSubtitles('/v/Movie.mkv',
+    ['Movie.mkv', 'Movie.nfo', 'Movie.srt', 'readme.txt', 'notes.vtt']);
+  assert.deepEqual(found.map((f) => f.ext).sort(), ['srt', 'vtt']);
 });

@@ -148,6 +148,8 @@ function hideToast() {
 
 /* ------------------------------ bootstrap ------------------------------- */
 
+loadSubPrefs();
+
 async function boot() {
   const [data, system] = await Promise.all([api('/api/bootstrap'), api('/api/system')]);
   Object.assign(state, {
@@ -857,7 +859,9 @@ function openPlayer(item, session) {
   video.muted = false;
   video.volume = 1;
   $('#playerVol').value = '1';
-  attachSubtitles(item);
+  openSubPanel(false);
+  sub.tracksLoaded = false;
+  startSubtitles(item);
 
   const resumeAt = Number(session.seekTo) || 0;
   const onLoaded = () => {
@@ -882,64 +886,397 @@ function openPlayer(item, session) {
   updatePlayerToggle();
 }
 
-/** Sidecar subtitles, served as WebVTT by the server. */
-function attachSubtitles(item) {
-  const video = player.video;
-  if (!video) return;
-  for (const existing of Array.from(video.querySelectorAll('track'))) existing.remove();
-  player.tracks = item.subtitles || [];
+/* ------------------------------ subtitles ------------------------------ */
 
-  player.tracks.forEach((track, index) => {
-    const node = document.createElement('track');
-    node.kind = 'subtitles';
-    node.label = track.label || `Track ${index + 1}`;
-    if (track.lang) node.srclang = track.lang;
-    node.src = track.url;
-    if (track.default) node.default = true;
-    video.append(node);
+/**
+ * Subtitles are drawn by hand rather than through <track>.
+ *
+ * A native <track> is opaque once loaded: its timing cannot be shifted, and ::cue
+ * gives no usable control of size or vertical position. The cues are therefore
+ * fetched as WebVTT, parsed here, and painted into an overlay, which makes the
+ * three things a viewer actually needs -- delay, size, height -- plain state.
+ */
+const SUB_STEP_MS = 50;      // VLC's own step
+const SUB_SIZE_STEP = 0.1;
+const SUB_BOTTOM_STEP = 2;
+const SUB_DEFAULTS = { delay: 0, size: 1, bottom: 8, audio: 0 };
+
+const sub = {
+  cues: [],
+  trackName: null,
+  tracks: [],
+  ...SUB_DEFAULTS,
+  raf: null,
+  shown: null,
+  panelOpen: false,
+};
+
+function loadSubPrefs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('vlcflix.subtitles') || '{}');
+    Object.assign(sub, {
+      delay: Number(saved.delay) || 0,
+      size: Number(saved.size) || 1,
+      bottom: Number(saved.bottom) || 8,
+      audio: Number(saved.audio) || 0,
+    });
+  } catch { /* first run, or storage blocked */ }
+}
+
+function saveSubPrefs() {
+  try {
+    localStorage.setItem('vlcflix.subtitles',
+      JSON.stringify({ delay: sub.delay, size: sub.size, bottom: sub.bottom, audio: sub.audio }));
+  } catch { /* storage full or blocked; the session still works */ }
+}
+
+/** Parse WebVTT into {start, end, html}. Cue identifiers and settings are ignored. */
+function parseVtt(text) {
+  const cues = [];
+  const stamp = '((?:\\d{1,2}:)?\\d{2}:\\d{2}\\.\\d{3})';
+  const re = new RegExp(`${stamp}\\s*-->\\s*${stamp}`, 'g');
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+
+  const seconds = (value) => {
+    const parts = value.split(':').map(Number);
+    const [h, m, s] = parts.length === 3 ? parts : [0, parts[0], parts[1]];
+    return h * 3600 + m * 60 + s;
+  };
+
+  let current = null;
+  let buffer = [];
+  const flush = () => {
+    if (current) {
+      current.html = sanitizeCue(buffer.join('\n').trim());
+      cues.push(current);
+    }
+    current = null;
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    re.lastIndex = 0;
+    const timing = re.exec(line);
+    if (timing) {
+      flush();
+      current = { start: seconds(timing[1]), end: seconds(timing[2]), html: '' };
+    } else if (line.trim() === '') {
+      flush();
+    } else if (current && !/^WEBVTT/.test(line)) {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return cues.filter((c) => c.end > c.start && c.html);
+}
+
+/**
+ * Subtitle text is HTML-ish (<i> is used for lyrics and foreign dialogue), so the
+ * markup is escaped and only the harmless inline tags are put back. A subtitle
+ * file is untrusted input and is never injected raw.
+ */
+function sanitizeCue(text) {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return escaped.replace(/&lt;(\/?)(i|b|u|em|strong)&gt;/gi, '<$1$2>');
+}
+
+async function loadSubtitleTrack(url, name) {
+  sub.trackName = name;
+  stopSubtitleLoop();
+  if (!url) {
+    sub.cues = [];
+    renderCues(0);
+    return;
+  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    sub.cues = parseVtt(await response.text());
+  } catch (err) {
+    sub.cues = [];
+    toast(`Could not load subtitles: ${err.message}`, { error: true });
+  }
+  applySubtitleStyle();
+  startSubtitleLoop();
+}
+
+/** Media time the subtitles should be showing right now. */
+function subtitleClock() {
+  const video = player.video;
+  if (!video) return 0;
+  // Delayed audio means the sound lags the picture, so the captions that belong
+  // to what is being *heard* are the ones from earlier in the file.
+  const heard = video.currentTime - (sub.audio || 0);
+  // sub.delay is milliseconds (VLC's unit and step); the media clock is seconds.
+  return heard - (sub.delay || 0) / 1000;
+}
+
+function applySubtitleStyle() {
+  const layer = $('#playerSubs');
+  if (!layer) return;
+  layer.style.setProperty('--sub-size', String(sub.size));
+  layer.style.setProperty('--sub-bottom', `${sub.bottom}%`);
+}
+
+function renderCues(now) {
+  const layer = $('#playerSubs');
+  if (!layer) return;
+  const active = sub.cues.filter((cue) => now >= cue.start && now < cue.end);
+  const key = active.map((c) => c.start + c.html).join('|');
+  if (key === sub.shown) return;       // no change: leave the DOM alone
+  sub.shown = key;
+  layer.replaceChildren(...active.map((cue) => {
+    const node = document.createElement('div');
+    node.className = 'cue';
+    node.innerHTML = cue.html;
+    return node;
+  }));
+}
+
+function startSubtitleLoop() {
+  stopSubtitleLoop();
+  const tick = () => {
+    renderCues(subtitleClock());
+    sub.raf = requestAnimationFrame(tick);
+  };
+  sub.raf = requestAnimationFrame(tick);
+}
+
+function stopSubtitleLoop() {
+  if (sub.raf) cancelAnimationFrame(sub.raf);
+  sub.raf = null;
+  sub.shown = null;
+  const layer = $('#playerSubs');
+  if (layer) layer.replaceChildren();
+}
+
+/* ---- audio delay: the browser can only ever delay sound, never advance it ---- */
+
+let audioGraph = null;
+
+function ensureAudioGraph() {
+  const video = player.video;
+  if (audioGraph || !video) return audioGraph;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  try {
+    const ctx = new Ctx();
+    const source = ctx.createMediaElementSource(video);
+    const delay = ctx.createDelay(5);
+    delay.delayTime.value = 0;
+    source.connect(delay);
+    delay.connect(ctx.destination);
+    audioGraph = { ctx, delay };
+  } catch {
+    audioGraph = null; // some browsers refuse; audio sync is then unavailable
+  }
+  return audioGraph;
+}
+
+function applyAudioDelay() {
+  const wanted = sub.audio;
+  if (!wanted) {
+    if (audioGraph) audioGraph.delay.delayTime.value = 0;
+    return;
+  }
+  const graph = ensureAudioGraph();
+  if (!graph) {
+    sub.audio = 0;
+    toast('Audio delay needs Web Audio, which this browser refused', { error: true });
+    return;
+  }
+  if (graph.ctx.state === 'suspended') graph.ctx.resume().catch(() => {});
+  graph.delay.delayTime.value = Math.max(0, wanted);
+}
+
+/* ---- the controls ---- */
+
+function describeDelay(ms) {
+  if (!ms) return '0 ms';
+  return `${ms > 0 ? '+' : '−'}${Math.abs(ms)} ms`;
+}
+
+function paintSubPanel() {
+  const delay = $('#subDelay');
+  const size = $('#subSize');
+  const bottom = $('#subBottom');
+  const audio = $('#audioDelay');
+  const cc = $('#playerCC');
+  if (delay) delay.textContent = describeDelay(sub.delay);
+  if (size) size.textContent = `${Math.round(sub.size * 100)}%`;
+  if (bottom) bottom.textContent = `${sub.bottom}%`;
+  if (audio) audio.textContent = describeDelay(Math.round(sub.audio * 1000));
+  if (cc) {
+    cc.hidden = false;
+    cc.classList.toggle('is-on', Boolean(sub.trackName));
+  }
+}
+
+function paintTrackList(force) {
+  const host = $('#subPanelTracks');
+  if (!host) return;
+  if (force === 'reload') sub.tracksLoaded = false;
+  if (sub.tracksLoaded && host.childElementCount) {
+    for (const button of host.querySelectorAll('.subpanel__track')) {
+      button.classList.toggle('is-on', (button.dataset.name || null) === sub.trackName);
+    }
+    return;
+  }
+  sub.tracksLoaded = true;
+  host.replaceChildren();
+
+  const off = el('button', {
+    class: `subpanel__track${sub.trackName ? '' : ' is-on'}`,
+    type: 'button',
+    text: 'Off',
+    onclick: () => chooseSubtitle(null),
   });
+  host.append(off);
 
-  const cc = $('#playerCC');
-  if (cc) {
-    cc.hidden = player.tracks.length === 0;
-    cc.classList.remove('is-on');
-    cc.title = player.tracks.length
-      ? `${player.tracks.length} subtitle track${player.tracks.length === 1 ? '' : 's'}`
-      : 'No subtitles';
+  if (!sub.tracks.length) {
+    host.append(el('span', { class: 'subpanel__empty', text: 'No subtitle files beside this video' }));
+    return;
   }
-  // textTracks appear asynchronously once <track> elements are attached.
-  if (player.tracks.length) {
-    setTimeout(() => setSubtitleTrack(0), 60);
+  for (const track of sub.tracks) {
+    host.append(el('button', {
+      class: `subpanel__track${track.name === sub.trackName ? ' is-on' : ''}${track.matches ? '' : ' subpanel__track--quiet'}`,
+      type: 'button',
+      title: track.name,
+      dataset: { name: track.name },
+      text: track.label,
+      onclick: () => chooseSubtitle(track),
+    }));
   }
 }
 
-function setSubtitleTrack(index) {
-  const video = player.video;
-  if (!video) return;
-  const tracks = video.textTracks || [];
-  for (let i = 0; i < tracks.length; i += 1) {
-    tracks[i].mode = i === index ? 'showing' : 'disabled';
+/**
+ * Pick up the subtitles a film should start with: the file chosen by hand for this
+ * film if there is one, otherwise the track whose name matches the video.
+ */
+async function startSubtitles(item) {
+  applySubtitleStyle();
+  const first = (item.subtitles || [])[0];
+  if (first) {
+    await loadSubtitleTrack(first.url, first.name);
+  } else {
+    sub.trackName = null;
+    sub.cues = [];
+    stopSubtitleLoop();
   }
-  const cc = $('#playerCC');
-  if (cc) {
-    cc.classList.toggle('is-on', index >= 0);
-    cc.setAttribute('aria-pressed', index >= 0 ? 'true' : 'false');
+  applyAudioDelay();
+  paintSubPanel();
+  await loadTrackOptions(item);
+}
+
+/** Ask the server which subtitle files exist beside this film. */
+async function loadTrackOptions(item) {
+  try {
+    const data = await api(`/api/subtitles/${item.id}/tracks`);
+    sub.tracks = data.tracks || [];
+  } catch {
+    sub.tracks = (item.subtitles || []).map((t) => ({ name: t.name, label: t.label, url: t.url, matches: true }));
+  }
+  sub.tracksLoaded = false;
+  paintTrackList();
+}
+
+async function chooseSubtitle(track) {
+  const item = player.current;
+  if (!item) return;
+  if (!track) {
+    sub.trackName = null;
+    sub.cues = [];
+    stopSubtitleLoop();
+    paintSubPanel();
+    paintTrackList();
+    if (state.settings?.playMode !== 'vlc') {
+      // Persist the explicit "off" as no override: the film goes back to its
+      // name-matched default next time, which is what "Off" means here.
+      api(`/api/subtitles/${item.id}/track`, { method: 'POST', body: { name: null } }).catch(() => {});
+    }
+    return;
+  }
+  await loadSubtitleTrack(track.url, track.name);
+  paintSubPanel();
+  paintTrackList();
+  api(`/api/subtitles/${item.id}/track`, { method: 'POST', body: { name: track.name } })
+    .catch(() => {}); // remembering the choice is a convenience, not a requirement
+}
+
+function openSubPanel(open) {
+  const panel = $('#subPanel');
+  if (!panel) return;
+  sub.panelOpen = open ?? !sub.panelOpen;
+  panel.hidden = !sub.panelOpen;
+  if (sub.panelOpen) {
+    paintSubPanel();
+    paintTrackList();
   }
 }
 
-/** Cycle: every available track, then off. */
-function cycleSubtitles() {
-  const video = player.video;
-  if (!video || !(video.textTracks || []).length) return;
-  const tracks = video.textTracks;
-  let current = -1;
-  for (let i = 0; i < tracks.length; i += 1) {
-    if (tracks[i].mode === 'showing') { current = i; break; }
+/** One entry point for every adjustment, so keys and buttons cannot disagree. */
+function adjustSubtitle(kind, direction) {
+  switch (kind) {
+    case 'delay':
+      sub.delay = Math.max(-60000, Math.min(60000, sub.delay + direction * SUB_STEP_MS));
+      break;
+    case 'size':
+      sub.size = Math.max(0.5, Math.min(2.5, Math.round((sub.size + direction * SUB_SIZE_STEP) * 10) / 10));
+      break;
+    case 'bottom':
+      sub.bottom = Math.max(0, Math.min(60, sub.bottom + direction * SUB_BOTTOM_STEP));
+      break;
+    case 'audio':
+      // Only delaying sound is possible in a browser; pressing the "earlier" key
+      // at zero has to say so rather than silently doing nothing.
+      if (direction < 0 && sub.audio <= 0) {
+        toast('Audio is at 0 ms — the browser can delay sound but not advance it. Use Real VLC for that direction.');
+        return;
+      }
+      sub.audio = Math.max(0, Math.min(2, Math.round((sub.audio + direction * 0.05) * 100) / 100));
+      applyAudioDelay();
+      break;
+    default:
+      return;
   }
-  const next = current + 1 >= tracks.length ? -1 : current + 1;
-  setSubtitleTrack(next);
-  if (next >= 0) toast(`Subtitles: ${player.tracks[next]?.label || next + 1}`);
-  else toast('Subtitles off');
+  applySubtitleStyle();
+  paintSubPanel();
+  saveSubPrefs();
+  const label = {
+    delay: `Subtitles ${describeDelay(sub.delay)}${sub.delay > 0 ? ' (later)' : sub.delay < 0 ? ' (earlier)' : ''}`,
+    size: `Subtitle size ${Math.round(sub.size * 100)}%`,
+    bottom: `Subtitles at ${sub.bottom}% from the bottom`,
+    audio: `Audio ${describeDelay(Math.round(sub.audio * 1000))}`,
+  }[kind];
+  toast(label);
+}
+
+/** VLC's own bindings on Windows/Linux: G/H subtitles, J/K audio, V next track. */
+function handleSubtitleKey(event) {
+  if (!player.current) return;
+  const target = event.target;
+  if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+
+  const key = event.key.toLowerCase();
+  if (!['g', 'h', 'j', 'k', 'v'].includes(key)) return;
+  event.preventDefault();
+
+  if (key === 'g') adjustSubtitle('delay', -1);
+  else if (key === 'h') adjustSubtitle('delay', 1);
+  else if (key === 'j') adjustSubtitle('audio', -1);
+  else if (key === 'k') adjustSubtitle('audio', 1);
+  else if (key === 'v') cycleSubtitleTrack();
+}
+
+function cycleSubtitleTrack() {
+  const options = [{ name: null }, ...sub.tracks];
+  const index = options.findIndex((t) => (t.name || null) === sub.trackName);
+  const next = options[(index + 1) % options.length];
+  chooseSubtitle(next.name ? next : null);
 }
 
 function reportProgress() {
@@ -958,6 +1295,8 @@ function closePlayer({ report = true } = {}) {
   const video = $('#playerVideo');
   if (report) reportProgress();
   clearInterval(player.reportTimer);
+  stopSubtitleLoop();
+  openSubPanel(false);
   video.pause();
   video.removeAttribute('src');
   video.load();
@@ -1565,7 +1904,16 @@ function wireEvents() {
     const ratio = Number(event.target.value) / 1000;
     seekToSeconds(ratio * playerTotal());
   });
-  $('#playerCC').addEventListener('click', cycleSubtitles);
+  $('#playerCC').addEventListener('click', (event) => {
+    event.stopPropagation();
+    openSubPanel();
+  });
+  for (const button of document.querySelectorAll('[data-sub-adj]')) {
+    button.addEventListener('click', () => {
+      adjustSubtitle(button.dataset.subAdj, Number(button.dataset.dir));
+    });
+  }
+  document.addEventListener('keydown', handleSubtitleKey);
   $('#playerMute').addEventListener('click', () => {
     video.muted = !video.muted;
     $('#playerMute').replaceChildren(SVG(video.muted ? 'i-muted' : 'i-volume'));

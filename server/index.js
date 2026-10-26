@@ -69,24 +69,38 @@ async function runScan() {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-const itemUrl = (item) => ({
-  posterUrl: item.poster ? `/media/${item.poster}` : null,
-  backdropUrl: item.backdrop ? `/media/${item.backdrop}` : null,
-  previewUrl: item.preview ? `/media/${item.preview}` : null,
-  subtitles: (item.subtitles || []).map((track, index) => ({
-    url: `/api/subtitles/${item.id}/${index}`,
-    label: track.label,
-    lang: track.lang || '',
-    default: index === 0,
-  })),
-});
+const subtitleUrl = (id, name) =>
+  `/api/subtitles/${id}/file?name=${encodeURIComponent(name)}`;
+
+/**
+ * The tracks a player should offer for a film: the file the user picked by hand
+ * if there is one, otherwise the ones whose names match the video.
+ */
+const itemUrl = (item, choices = {}) => {
+  const chosen = choices[item.id];
+  const tracks = chosen
+    ? [{ name: chosen, label: 'Chosen', lang: '' }]
+    : (item.subtitles || []).map((t) => ({ name: t.name, label: t.label, lang: t.lang || '' }));
+  return {
+    posterUrl: item.poster ? `/media/${item.poster}` : null,
+    backdropUrl: item.backdrop ? `/media/${item.backdrop}` : null,
+    previewUrl: item.preview ? `/media/${item.preview}` : null,
+    subtitles: tracks.map((track, index) => ({
+      url: subtitleUrl(item.id, track.name),
+      name: track.name,
+      label: track.label,
+      lang: track.lang || '',
+      default: index === 0,
+    })),
+  };
+};
 
 function publicSettings(settings) {
   const { vlcPassword, ...safe } = settings;
   return { ...safe, vlcPasswordSet: Boolean(vlcPassword) };
 }
 
-function decorate(items, progress, myList) {
+function decorate(items, progress, myList, choices = {}) {
   return items.map((item) => {
     const p = progress[item.id];
     const percent = p ? Math.min(100, Math.round((p.position / Math.max(p.duration, 1)) * 100)) : 0;
@@ -104,7 +118,7 @@ function decorate(items, progress, myList) {
       filename: item.filename,
       size: item.size,
       addedAt: item.addedAt,
-      ...itemUrl(item),
+      ...itemUrl(item, choices),
       hasArtwork: Boolean(item.poster),
       inMyList: myList.includes(item.id),
       progress: p ? { position: p.position, duration: p.duration, percent } : null,
@@ -556,17 +570,77 @@ app.get('/api/stream/:id', (req, res) => {
 
 /* ------------------------------- misc ------------------------------ */
 
-/** Sidecar subtitles, converted to WebVTT because <track> cannot read SRT. */
-app.get('/api/subtitles/:id/:index', (req, res) => {
+/* ---------------------------- subtitles ---------------------------- */
+
+/** Every subtitle file beside the film, plus which one is in force. */
+app.get('/api/subtitles/:id/tracks', (req, res) => {
   const item = findItem(req.params.id);
   if (!item) return res.status(404).json({ error: 'Unknown item' });
-  const track = (item.subtitles || [])[Number(req.params.index)];
-  if (!track) return res.status(404).json({ error: 'Unknown subtitle track' });
 
-  const file = path.join(path.dirname(item.path), track.name);
+  let entries = [];
+  try {
+    entries = fs.readdirSync(path.dirname(item.path));
+  } catch {
+    return res.status(410).json({ error: 'Folder is no longer readable' });
+  }
+
+  const chosen = store.getSubtitleChoices()[item.id] || null;
+  const found = library.listFolderSubtitles(item.path, entries);
+  res.json({
+    selected: chosen || (item.subtitles || [])[0]?.name || null,
+    tracks: found.map((entry) => ({
+      name: entry.name,
+      label: entry.label,
+      matches: entry.matches,
+      url: subtitleUrl(item.id, entry.name),
+    })),
+  });
+});
+
+/** Remember a hand-picked subtitle for one film, or clear the choice. */
+app.post('/api/subtitles/:id/track', (req, res) => {
+  const item = findItem(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Unknown item' });
+
+  const name = req.body?.name ?? null;
+  if (name !== null) {
+    // Only files that actually sit in this film's folder, and only subtitle files:
+    // the value arrives from the client and is used to build a path.
+    let entries = [];
+    try {
+      entries = fs.readdirSync(path.dirname(item.path));
+    } catch {
+      return res.status(410).json({ error: 'Folder is no longer readable' });
+    }
+    const allowed = library.listFolderSubtitles(item.path, entries).map((t) => t.name);
+    if (!allowed.includes(name)) {
+      return res.status(400).json({ error: 'That file is not a subtitle in this folder' });
+    }
+  }
+  store.setSubtitleChoice(item.id, name);
+  res.json({ selected: name });
+});
+
+/** Sidecar subtitles, converted to WebVTT on the way out. */
+app.get('/api/subtitles/:id/file', (req, res) => {
+  const item = findItem(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Unknown item' });
+
+  const name = String(req.query.name || '');
+  let entries = [];
+  try {
+    entries = fs.readdirSync(path.dirname(item.path));
+  } catch {
+    return res.status(410).json({ error: 'Folder is no longer readable' });
+  }
+  // Resolve the request against the real listing rather than the raw string, so a
+  // crafted name cannot escape the folder.
+  const match = library.listFolderSubtitles(item.path, entries).find((t) => t.name === name);
+  if (!match) return res.status(404).json({ error: 'Unknown subtitle file' });
+
   let raw;
   try {
-    raw = fs.readFileSync(file);
+    raw = fs.readFileSync(path.join(path.dirname(item.path), match.name));
   } catch {
     return res.status(410).json({ error: 'Subtitle file is no longer on disk' });
   }

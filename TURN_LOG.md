@@ -430,3 +430,39 @@ Playwright's headless Chromium ships **without H.264** and reports
 the real Chrome channel (`playwright install chrome`) for a trustworthy result:
 detail video reached `paused=false, opacity=1, currentTime 2 -> 3.2`, zero console
 errors. Do not diagnose video problems with headless Chromium.
+
+## 2026-10-26 — v1.1.3: VLC sync keys, subtitle picker, size and position
+
+### Keys
+G/H = subtitle delay, J/K = audio delay, V = next track — the Windows/Linux VLC
+defaults. Sources disagree on direction (some blogs have G/H reversed), so this
+follows the VideoLAN-derived tables: **G earlier, H later, J earlier, K later**,
+50 ms per press like VLC. Every press toasts what it did ("Subtitles +300 ms
+(later)") so the user never has to remember which way is which.
+
+### Native <track> had to go
+`<track>` + `::cue` is opaque once loaded: cue timing cannot be shifted and there
+is no usable control of size or vertical position. Replaced with a small WebVTT
+parser (`parseVtt`) and an overlay renderer driven by requestAnimationFrame.
+Cue text is HTML-escaped and only `<i> <b> <u> <em> <strong>` are restored, because
+subtitle files are untrusted input.
+
+### Subtitles that are not named after the video
+`listFolderSubtitles` lists every `.srt`/`.vtt` in the film's folder, name matches
+first; the picker shows them all and a mismatched file keeps its own stem as the
+label. The choice is stored per film in `subtitleChoices.json` and used as the
+default next time.
+
+### Two bugs caught by the live test
+1. **Unit mismatch:** `sub.delay` is milliseconds (VLC's unit), but `subtitleClock`
+   subtracted it as seconds. Pressing H twice moved the clock back 100 *seconds* and
+   every cue disappeared. Only visible by playing a file, not by reading the code.
+2. Release-named subtitles were labelled "Ghostlight.2019.1080p.WEB DL" — the label
+   function was title-casing and de-hyphenating a filename. It now keeps the stem.
+
+### Verified in real Chrome
+cue renders; G/H shift it and the label follows; size 100%->120% changes the
+computed font size to 36px; height label and CSS variable both read 12%; picking
+`Ghostlight.2019.1080p.WEB-DL.srt` renders "RELEASE SUB italic" and the server
+reports `selected=Ghostlight.2019.1080p.WEB-DL.srt`. Zero console errors. 48 tests
+(was 44).

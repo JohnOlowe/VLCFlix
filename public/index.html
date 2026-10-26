@@ -124,6 +124,36 @@
 <!-- Built-in player -->
 <div class="player" id="player" hidden>
   <video id="playerVideo" playsinline></video>
+  <div class="player__subs" id="playerSubs" aria-live="polite"></div>
+  <div class="subpanel" id="subPanel" hidden>
+    <div class="subpanel__head">Subtitles</div>
+    <div class="subpanel__tracks" id="subPanelTracks"></div>
+    <div class="subpanel__row">
+      <span class="subpanel__label">Delay</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="delay" data-dir="-1" title="Earlier (G)">−</button>
+      <span class="subpanel__value" id="subDelay">0 ms</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="delay" data-dir="1" title="Later (H)">+</button>
+    </div>
+    <div class="subpanel__row">
+      <span class="subpanel__label">Size</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="size" data-dir="-1">−</button>
+      <span class="subpanel__value" id="subSize">100%</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="size" data-dir="1">+</button>
+    </div>
+    <div class="subpanel__row">
+      <span class="subpanel__label">Height</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="bottom" data-dir="1" title="Move up">↑</button>
+      <span class="subpanel__value" id="subBottom">8%</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="bottom" data-dir="-1" title="Move down">↓</button>
+    </div>
+    <div class="subpanel__row">
+      <span class="subpanel__label">Audio</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="audio" data-dir="-1" title="Earlier (J)">−</button>
+      <span class="subpanel__value" id="audioDelay">0 ms</span>
+      <button class="subpanel__btn" type="button" data-sub-adj="audio" data-dir="1" title="Later (K)">+</button>
+    </div>
+    <div class="subpanel__hint">G / H subtitles · J / K audio · V next track</div>
+  </div>
   <div class="player__chrome" id="playerChrome">
     <button class="player__back" id="playerClose" type="button" aria-label="Close player"><svg><use href="#i-back"/></svg></button>
     <div class="player__title" id="playerTitle"></div>

@@ -221,10 +221,35 @@ The Silent Coast.fr.srt       -> "French"
 The Silent Coast.forced.srt   -> "Forced"
 ```
 
-`.vtt` sidecars work the same way. The built-in player cannot read SRT, so the
-server converts it to WebVTT on the fly; a **CC** button appears in the player and
-cycles through the tracks. VLC finds the same files by itself, so nothing is needed
-for the VLC engine.
+`.vtt` sidecars work the same way. SRT is converted to WebVTT on the fly.
+
+**Subtitles whose names do not match the video** are still offered: the player's
+panel lists every subtitle file in the film's folder, name matches first. Picking
+one is remembered for that film, so a badly named download only needs selecting
+once. VLC finds name-matched files by itself.
+
+### Subtitle and audio sync
+
+Subtitles are drawn by VLCFlix rather than by the browser's `<track>`, because a
+native track cannot be retimed, resized or moved. The **CC** button opens a panel
+with the track list and four controls:
+
+| Control | Keys (VLC's own) | Notes |
+|---|---|---|
+| Subtitle delay | **G** earlier · **H** later | 50 ms per press, like VLC; ±60 s range |
+| Subtitle size | panel − / + | 50%–250% |
+| Subtitle height | panel ↑ / ↓ | distance from the bottom of the picture |
+| Audio delay | **J** earlier · **K** later | see the limitation below |
+| Next track | **V** | cycles through Off and every file |
+
+**Direction, since VLC's own docs disagree:** G shows subtitles earlier, H later;
+J plays sound earlier, K later. Every press reports what it did — *"Subtitles
++300 ms (later)"* — so the direction never has to be remembered.
+
+**One honest limitation:** a browser can delay sound but cannot make it play
+earlier than the file's own timeline. **J below 0 ms does nothing** and says so;
+negative audio delay needs the **Real VLC** engine, where it is a real player-side
+offset. Subtitle and size/height settings persist across sessions.
 
 Bitrate, size and resolution are unchanged; the subtitle is read, not copied.
 

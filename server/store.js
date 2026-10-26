@@ -29,6 +29,7 @@ const DEFAULTS = {
   },
   progress: {}, // { [itemId]: { position, duration, updatedAt } }
   myList: [], // [itemId]
+  subtitleChoices: {}, // { [itemId]: fileName } — a hand-picked subtitle
 };
 
 function ensureDir() {
@@ -100,8 +101,22 @@ function toggleMyList(id) {
   return next;
 }
 
+function getSubtitleChoices() {
+  return read('subtitleChoices') || {};
+}
+
+/** null clears the override, returning the film to its name-matched subtitles. */
+function setSubtitleChoice(id, fileName) {
+  const all = getSubtitleChoices();
+  if (fileName) all[id] = fileName;
+  else delete all[id];
+  return write('subtitleChoices', all);
+}
+
 module.exports = {
   DATA_DIR,
+  getSubtitleChoices,
+  setSubtitleChoice,
   getSettings,
   saveSettings,
   getCatalog,

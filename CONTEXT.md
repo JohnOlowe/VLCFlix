@@ -5,8 +5,8 @@
 - Product direction confirmed by the user: modify VLC for Windows itself, adding features and changing its interface. The homepage should be Netflix-like and show previews for different videos.
 
 ## Current state
-- A local clone exists at `/home/user/VLCFlix` on branch `main`.
-- The initial setup commit was pushed to `origin/main`; verified remote SHA at that point was `913b93d8253e9a82335e5111ab37db3be4f456b8`.
+- A local clone exists at `/home/user/VLCFlix` on branch `main`, tracking `origin/main`.
+- Initial setup files were pushed in two commits: `913b93d8253e9a82335e5111ab37db3be4f456b8` and `40d887cdb984de79f0e9bfa21b814d32295aa290`. Both remote SHA checks matched local HEAD at verification time.
 - The pushed files are `.gitignore`, `AGENTS.md`, `CONTEXT.md`, `TURN_LOG.md`, and `checkpoint.json`. `.git-credentials` was excluded and remains ignored.
 - No VLC source files, build system, or tests are present in the checkout yet.
 - User-provided fine-grained PAT is stored in ignored, mode-600 `/home/user/VLCFlix/.git-credentials`; its value is not repeated in state files. Local Git credential storage uses `credential.useHttpPath=true`. Successful push verified authentication and push access.

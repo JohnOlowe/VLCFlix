@@ -27,14 +27,15 @@
 ## 2026-10-26 — Local ignored credential storage
 - At the user's request, wrote the PAT to `/home/user/VLCFlix/.git-credentials`, which is ignored by the new `.gitignore`; did not include the value in state notes.
 - Set file mode to `600` and configured the repository-local credential helper to use this file with `credential.useHttpPath=true`.
-- Verified with `stat` that the mode is `600`, `git check-ignore -v` that it is ignored, and `git config --get` that the helper/path settings are active. Did not display the credential contents or test authentication; token validity remains unverified.
-- No commit or push occurred. The remote still has no refs at last check; working tree contains untracked state files and `.gitignore`.
+- Verified with `stat` that the mode is `600`, `git check-ignore -v` that it is ignored, and `git config --get` that the helper/path settings are active. Did not display the credential contents or test authentication; token validity remains unverified at that point.
+- No commit or push occurred. The remote still had no refs at that point; working tree contained only setup/state files and `.gitignore`.
 
-## 2026-10-26 — User authorizes initial push
+## 2026-10-26 — Initial setup files pushed
 - User authorized pushing all current files except the token credential file and supplied author name `John Olowe` plus the instruction to use a generic email.
 - Retrieved the public GitHub account profile for `JohnOlowe`; its account ID is `121398818`. Configured the GitHub ID-based noreply address `121398818+JohnOlowe@users.noreply.github.com` as the generic author email.
 - Added ignore rules for the credential and common secret/build/cache paths before the first commit, per `AGENTS.md`.
 - Staged and checked `.gitignore`, `AGENTS.md`, `CONTEXT.md`, `TURN_LOG.md`, and `checkpoint.json`. `git diff --cached --check` passed; `.git-credentials` is ignored and was not staged.
 - Created root commit `913b93d8253e9a82335e5111ab37db3be4f456b8` (`chore: add repository agent setup`) and pushed `main` to `origin`.
 - Verified with `git ls-remote origin refs/heads/main` that the remote SHA exactly matched local HEAD: `913b93d8253e9a82335e5111ab37db3be4f456b8`.
-- No VLC source code was added; the commit contains only setup/state files and `.gitignore`. The credential file was not committed.
+- Updated the state files and created `40d887cdb984de79f0e9bfa21b814d32295aa290` (`docs: record initial repository push`); pushed it to `origin/main` and verified remote SHA `40d887cdb984de79f0e9bfa21b814d32295aa290` matched local HEAD.
+- No VLC source code was added; the commits contain setup/state files and `.gitignore` only. The credential file was not committed.

@@ -4,9 +4,12 @@
     "path": "/home/user/VLCFlix",
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "main",
-    "local_head": "913b93d8253e9a82335e5111ab37db3be4f456b8",
-    "remote_main_at_last_verification": "913b93d8253e9a82335e5111ab37db3be4f456b8",
-    "committed_files": [".gitignore", "AGENTS.md", "CONTEXT.md", "TURN_LOG.md", "checkpoint.json"],
+    "tracking_branch": "origin/main",
+    "last_verified_remote_sha": "40d887cdb984de79f0e9bfa21b814d32295aa290",
+    "verified_commits": [
+      "913b93d8253e9a82335e5111ab37db3be4f456b8",
+      "40d887cdb984de79f0e9bfa21b814d32295aa290"
+    ],
     "credential_file": ".git-credentials (ignored, not committed)"
   },
   "state_files": [
@@ -34,11 +37,11 @@
     "email_basis": "GitHub ID-based noreply format using public account ID"
   },
   "verification": {
-    "staged_check": "passed; .git-credentials excluded",
-    "push": "verified; remote main SHA equals local HEAD",
+    "latest_push_verified": "true; second push remote SHA matched local HEAD at verification time",
     "code_tests": "not applicable; no VLC source code in checkout yet"
   },
   "next_steps": [
+    "Fetch/pull remote at start of next repository-work turn.",
     "Obtain/populate VLCFlix source and inspect its README, build system, and tests.",
     "Define a verifiable first homepage-preview milestone before implementation."
   ]

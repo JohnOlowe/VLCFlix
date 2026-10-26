@@ -557,12 +557,12 @@ static void LogWebViewState() {
   }
   BOOL visible = FALSE;
   RECT bounds{};
-  g_controller->get_IsVisible(&visible);
-  g_controller->get_Bounds(&bounds);
+  if (FAILED(g_controller->get_IsVisible(&visible))) visible = -1;
+  if (FAILED(g_controller->get_Bounds(&bounds))) { bounds.right = bounds.left = -1; }
   LPWSTR source = nullptr;
-  g_webview->get_Source(&source);
+  if (FAILED(g_webview->get_Source(&source))) source = nullptr;
   UINT32 browserPid = 0;
-  g_webview->get_BrowserProcessId(&browserPid);
+  if (FAILED(g_webview->get_BrowserProcessId(&browserPid))) browserPid = 0;
   Log(L"[webview2] state: visible=%d bounds=%ldx%ld source=%ls browserPid=%lu", visible,
       bounds.right - bounds.left, bounds.bottom - bounds.top,
       source ? source : L"(null)", browserPid);
@@ -680,6 +680,12 @@ HRESULT STDMETHODCALLTYPE ControllerHandler::Invoke(
     NextAttempt(L"controller creation failed");
     return S_OK;
   }
+  // The controller is BORROWED: the runtime drops its own reference when this
+  // handler returns. Storing the raw pointer let it be destroyed immediately,
+  // which closes the webview -- Navigate still "succeeded" because it ran inside
+  // this call, but no navigation ever happened and nothing painted. Any later
+  // use (resize, state dump) then crashed on freed memory.
+  controller->AddRef();
   g_controller = controller;
   LogHr(L"put_IsVisible", g_controller->put_IsVisible(TRUE));
 

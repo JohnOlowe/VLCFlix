@@ -286,3 +286,29 @@
   started (0x80070002)". Screenshot read. Retry ladder and accounting both work.
 - Removed a diagnostic that passed a null handler to add_WebMessageReceived: it can only
   ever fail, so its result proves nothing.
+
+## 2026-10-26 — v1.0.3: ROOT CAUSE — controller reference was borrowed, not owned
+- New log: all HRESULTs 0, watchdog fires at 8 s, then
+  `[crash] code=0xC0000005 address=... module=VLCFlix.exe` — the crash is in OUR code,
+  immediately after the watchdog, i.e. on the first use of the controller after Navigate.
+- **Root cause:** `ICoreWebView2Controller*` passed to
+  `ICoreWebView2CreateCoreWebView2ControllerCompletedHandler::Invoke` is a borrowed
+  reference. `g_controller = controller;` stored it raw, so the runtime released its own
+  reference when Invoke returned and the object was destroyed. Microsoft's docs for
+  ICoreWebView2Controller: "The CoreWebView2Controller owns the CoreWebView2, and if all
+  references to the CoreWebView2Controller go away, the WebView will be closed."
+  That single defect explains every symptom seen so far:
+    * black window: the webview was closed microseconds after creation;
+    * `Navigate -> 0` with no navigation events: Navigate ran *inside* the handler,
+      before the release;
+    * "maximise then click and it closes" (1.0.0/1.0.1): WM_SIZE called put_Bounds on
+      the freed object;
+    * standalone crash (1.0.2): the watchdog called get_IsVisible/get_Bounds/get_Source
+      on the freed object.
+- Corroborated by four independent sources (StackOverflow 77772018, StackOverflow
+  66820213, AutoHotkey community thread, MS ICoreWebView2Controller reference).
+- Fix: `controller->AddRef();` before storing, `Release()` in TearDownWebView().
+- Verified under Wine: no crash, escalation still reaches the panel, process stays alive.
+  The render itself still cannot be exercised here.
+- Lesson recorded: whenever a WebView2 completed handler hands over an interface, it is
+  borrowed unless AddRef'd — including the environment.

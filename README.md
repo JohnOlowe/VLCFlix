@@ -58,6 +58,18 @@ the app says so plainly instead of failing silently.
 Nothing is written into *Program Files*. Settings, watch progress and generated
 artwork live in `%LOCALAPPDATA%\VLCFlix`, and survive an uninstall.
 
+### Known cause of the blank window (fixed in 1.0.3)
+
+`ICoreWebView2Controller*` handed to a completion handler is a **borrowed** reference.
+Earlier builds stored it raw, so the runtime dropped its own reference the moment the
+handler returned, the controller was destroyed, and — per Microsoft's documentation —
+"if all references to the controller go away, the WebView is closed". The webview was
+therefore torn down microseconds after being created: `Navigate` had already returned
+`S_OK` inside the handler, but nothing ever loaded, and any later use of the stale
+pointer (a resize, a diagnostic dump) crashed with `0xC0000005`.
+
+The fix is one call: `controller->AddRef()` before storing it, released on teardown.
+
 ### If the window stays black
 
 From 1.0.2 the app never shows an unexplained black window. The "Starting VLCFlix..."

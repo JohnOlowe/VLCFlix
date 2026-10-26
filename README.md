@@ -255,7 +255,9 @@ and waiting two seconds. For each video, phase 2:
 - **Generates three assets** with `ffmpeg`:
    - `poster.jpg` — 400×600 crop, for grid views
    - `backdrop.jpg` — 1280×720 crop, for the hero and cards
-   - `preview.mp4` — an 8-second muted clip for hover previews
+   - `preview.mp4` — a montage: five 2-second snippets across the film
+     (12%, 32%, 52%, 72%, 90%) concatenated into one 10-second muted clip, so the
+     preview shows the film changing rather than one frozen moment
 - **Grades each still** (contrast, saturation, vignette) and then **measures its
   mean luma** using ffmpeg's `signalstats`, correcting exposure with a gamma curve
   if the frame is too dark or too flat for white text to sit on. A dark opening

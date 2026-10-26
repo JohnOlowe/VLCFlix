@@ -196,3 +196,35 @@ test('unknown api routes return json 404', async () => {
   assert.equal(res.status, 404);
   assert.equal(res.body.error, 'Not found');
 });
+
+test('playMode accepts all three engines', async () => {
+  for (const mode of ['vlc', 'ffmpeg', 'browser']) {
+    const res = await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playMode: mode }),
+    });
+    assert.equal(res.status, 200, `POST playMode=${mode} should be accepted`);
+    const body = await res.json();
+    assert.equal(body.settings.playMode, mode);
+  }
+});
+
+test('the ffmpeg engine survives a round trip through bootstrap', async () => {
+  await fetch(`${base}/api/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ playMode: 'ffmpeg' }),
+  });
+  const boot = await fetch(`${base}/api/bootstrap`).then((r) => r.json());
+  assert.equal(boot.settings.playMode, 'ffmpeg');
+});
+
+test('playMode rejects an unknown engine', async () => {
+  const res = await fetch(`${base}/api/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ playMode: 'potato' }),
+  });
+  assert.equal(res.status, 400);
+});

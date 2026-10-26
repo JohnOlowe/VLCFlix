@@ -314,14 +314,17 @@ function renderHero() {
 }
 
 /** Cross-fade into the muted preview clip after a short idle beat. */
-function attachHeroPreview(hero, item) {
+function attachHeroPreview(hero, item, { delay = 3800 } = {}) {
   const video = el('video', {
     class: 'hero__video',
-    muted: true,
     loop: true,
     playsinline: true,
-    preload: 'metadata',
+    preload: 'auto',
   });
+  // The `muted` content attribute only sets defaultMuted; the property is what
+  // the autoplay policy checks. Without this the clip is silently refused and
+  // the panel keeps showing the still.
+  video.muted = true;
   video.src = item.previewUrl;
   hero.insertBefore(video, hero.firstChild);
 
@@ -346,7 +349,11 @@ function attachHeroPreview(hero, item) {
     }).catch(() => { /* autoplay blocked — still image is fine */ });
   };
 
-  video.addEventListener('loadeddata', () => setTimeout(start, 3800), { once: true });
+  video.addEventListener('canplay', () => setTimeout(start, delay), { once: true });
+  // Safety net: `canplay` does not fire at all on some containers until playback
+  // is requested. play() is idempotent, so calling it twice is harmless.
+  setTimeout(start, delay + 1500);
+  video.load();
   // Stop the preview when the hero scrolls out of view.
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -454,7 +461,8 @@ function wireHoverPreview(card, item) {
       if (!card.matches(':hover')) return;
       if (activePreview && activePreview !== card) activePreview.dispatchEvent(new Event('mouseleave'));
       activePreview = card;
-      video = el('video', { class: 'card__video', muted: true, loop: true, playsinline: true, preload: 'auto' });
+      video = el('video', { class: 'card__video', loop: true, playsinline: true, preload: 'auto' });
+      video.muted = true; // attribute alone does not satisfy the autoplay policy
       video.src = item.previewUrl;
       card.append(video);
       video.play().then(() => video.classList.add('is-on')).catch(() => {});
@@ -643,6 +651,10 @@ function openDetail(id) {
     hero.style.setProperty('--c1', item.accent || c1);
     hero.style.setProperty('--c2', c2);
   }
+
+  // Same clip as the card hover, so opening Info continues the motion instead of
+  // freezing on a still. The backdrop underneath is the poster frame.
+  if (item.previewUrl) attachHeroPreview(hero, item, { delay: 500 });
 
   const meta = el('div', { class: 'detail__meta-line' });
   const pct = item.progress?.percent;
@@ -1187,9 +1199,17 @@ async function renderSettings() {
       class: (state.settings.playMode === value) ? 'is-active' : '',
       text: label,
       onclick: async (event) => {
-        await saveSettings({ playMode: value });
+        // Capture the button BEFORE awaiting: currentTarget is null after the
+        // await yields, and the throw landed after every button had already been
+        // de-highlighted, so the control looked like nothing had happened.
+        const button = event.currentTarget;
+        try {
+          await saveSettings({ playMode: value });
+        } catch {
+          return; // the refusal has been shown in a toast; leave the old choice
+        }
         $$('button', modeSeg).forEach((b) => b.classList.remove('is-active'));
-        event.currentTarget.classList.add('is-active');
+        button.classList.add('is-active');
         paintEngine();
       },
     }));
@@ -1293,9 +1313,15 @@ async function renderSettings() {
 }
 
 async function saveSettings(patch) {
-  const { settings } = await api('/api/settings', { method: 'POST', body: patch });
-  state.settings = settings;
-  paintEngine();
+  try {
+    const { settings } = await api('/api/settings', { method: 'POST', body: patch });
+    state.settings = settings;
+    paintEngine();
+  } catch (err) {
+    // Without this the control simply did nothing when the server refused.
+    toast(`Could not save: ${err.message}`, { error: true });
+    throw err;
+  }
 }
 
 /** Header chip: the only progress indicator visible outside Settings. */

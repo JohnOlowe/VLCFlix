@@ -239,8 +239,8 @@ app.post('/api/settings', async (req, res) => {
     }
     patch.vlcHttpPort = port;
   }
-  if ('playMode' in patch && !['vlc', 'browser'].includes(patch.playMode)) {
-    return res.status(400).json({ error: "playMode must be 'vlc' or 'browser'" });
+  if ('playMode' in patch && !['vlc', 'ffmpeg', 'browser'].includes(patch.playMode)) {
+    return res.status(400).json({ error: "playMode must be 'vlc', 'ffmpeg' or 'browser'" });
   }
   store.saveSettings(patch);
   res.json({ settings: publicSettings(store.getSettings()) });

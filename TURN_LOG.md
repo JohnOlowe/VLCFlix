@@ -386,3 +386,47 @@ panel closed the whole time:
   closed 6 s           chip "Artwork 4/32 · 13%", 12 artwork images in the grid
   reopen mid-scan      "Library ready — drawing artwork 6/32" after 150 ms
   finished             chip hidden, 100 artwork images, 0 console errors
+
+## 2026-10-26 — v1.1.2: engine switch, preview montage, preview in Info
+
+### "I can't switch to FFmpeg (hardware)"
+Two independent defects, both mine, both introduced with the engine in 1.1.0:
+1. `POST /api/settings` whitelisted only `['vlc','browser']`, so `playMode: 'ffmpeg'`
+   was answered with 400 and never saved. The client showed nothing at all.
+2. The segmented control's handler did
+   `await saveSettings(...)` then `event.currentTarget.classList.add(...)`.
+   `currentTarget` is null once an await yields, so it threw — **after** the line that
+   clears `is-active` from every button. Result: the control rendered with no button
+   selected and no error the user could see.
+Fixed by capturing the button before the await, returning early if the save is
+refused, and surfacing server refusals as a toast instead of swallowing them.
+
+### Preview = one moment -> montage
+`previewSegments()` takes five 2 s snippets at 12/32/52/72/90% of the runtime and
+concatenates them in a single ffmpeg pass. Segments are clamped so they never
+overrun the end, and a short film yields fewer distinct snippets rather than
+repeating frames. `PREVIEW_VERSION = 2` marks old clips stale so an existing library
+re-renders them without a manual rescan; the version is only claimed once a clip
+actually exists, so a transient ffmpeg failure retries next scan.
+
+Verified with a 40 s film built as RED/GREEN/BLUE/WHITE quarters: the generated
+preview samples at 1/3/5/7/9 s return ff0000, 01ff02, 0000ff, 0000ff, fffeff —
+i.e. the film's own colour sequence, not one repeated frame.
+
+### Preview in the Info panel
+`openDetail` now calls `attachHeroPreview(hero, item, { delay: 500 })`, so the panel
+plays the same clip the hover card plays.
+
+### Third bug found while testing this
+`el()` assigns unknown props with `setAttribute`, so `muted: true` set the *content
+attribute* (which maps to `defaultMuted`), not the property the autoplay policy
+checks. The clip was silently refused and `is-on` was never added, which is why the
+panel showed a still. Fixed in both the hero and card previews by setting
+`video.muted = true` directly.
+
+### Testing note
+Playwright's headless Chromium ships **without H.264** and reports
+`DEMUXER_ERROR_NO_SUPPORTED_STREAMS` — it cannot play these clips at all. Installed
+the real Chrome channel (`playwright install chrome`) for a trustworthy result:
+detail video reached `paused=false, opacity=1, currentTime 2 -> 3.2`, zero console
+errors. Do not diagnose video problems with headless Chromium.

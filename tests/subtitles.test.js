@@ -102,3 +102,36 @@ test('picks up .vtt sidecars too', () => {
 test('a video with no sidecars reports no tracks', () => {
   assert.deepEqual(findSubtitles('/v/Movie.mkv', ['Movie.mkv', 'notes.txt']), []);
 });
+
+const { previewSegments } = require('../server/library');
+
+test('preview samples several different parts of the film', () => {
+  const segments = previewSegments(600);
+  assert.equal(segments.length, 5);
+  const starts = segments.map((s) => s.start);
+  // Spread out, strictly increasing: one moment repeated five times is not a preview.
+  for (let i = 1; i < starts.length; i += 1) assert.ok(starts[i] > starts[i - 1]);
+  assert.ok(starts[0] > 0, 'should not open on the studio logo');
+  assert.ok(starts[starts.length - 1] > 600 * 0.8, 'should reach the last act');
+});
+
+test('preview never runs past the end of the film', () => {
+  for (const duration of [3, 16, 60, 5400]) {
+    for (const segment of previewSegments(duration)) {
+      assert.ok(segment.start + segment.length <= duration + 0.001,
+        `segment ${segment.start}+${segment.length} overruns a ${duration}s film`);
+    }
+  }
+});
+
+test('a very short clip does not repeat the same frames', () => {
+  const segments = previewSegments(1);
+  assert.ok(segments.length <= 2);
+  const starts = segments.map((s) => s.start);
+  assert.equal(new Set(starts).size, starts.length);
+});
+
+test('an unreadable or empty file yields no preview', () => {
+  assert.deepEqual(previewSegments(0), []);
+  assert.deepEqual(previewSegments(NaN), []);
+});

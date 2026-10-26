@@ -194,7 +194,33 @@ async function correctExposure(file, target = 70) {
   return luma;
 }
 
-async function renderArt(file, duration, outDir, id) {
+/**
+ * Bump when the preview format changes, so existing libraries re-render their
+ * clips instead of keeping the old style forever (artwork is cached by
+ * size+mtime, and a format change is invisible to that check).
+ */
+const PREVIEW_VERSION = 2;
+
+/**
+ * Where the preview snippets are taken from: spread across the film, never past
+ * its end, never so short that a frame or two is all you get.
+ */
+function previewSegments(duration, { count = 5, length = 2 } = {}) {
+  if (!(duration > 0)) return [];
+  const len = Math.min(length, Math.max(0.6, duration / count));
+  const fractions = [0.12, 0.32, 0.52, 0.72, 0.9].slice(0, count);
+  const starts = [];
+  for (const fraction of fractions) {
+    const start = Math.max(0, Math.min(duration * fraction, duration - len));
+    // A very short film cannot support distinct snippets; do not repeat frames.
+    if (starts.some((existing) => Math.abs(existing - start) < 0.15)) continue;
+    starts.push(start);
+  }
+  return starts.map((start) => ({ start, length: len }));
+}
+
+async function renderArt(file, duration, outDir, id,
+                        needs = { poster: true, backdrop: true, preview: true }) {
   const at = (fraction) => Math.max(0, Math.min(duration * fraction, Math.max(0, duration - 1)));
   const outputs = {
     poster: path.join(outDir, `${id}-poster.jpg`),
@@ -202,26 +228,48 @@ async function renderArt(file, duration, outDir, id) {
     preview: path.join(outDir, `${id}-preview.mp4`),
   };
 
-  const jobs = [
-    run('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(at(0.38)), '-i', file,
+  const jobs = [];
+  const keys = [];
+
+  if (needs.poster) {
+    keys.push('poster');
+    jobs.push(run('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(at(0.38)), '-i', file,
       '-frames:v', '1', '-vf', 'scale=400:600:force_original_aspect_ratio=increase,crop=400:600,' + GRADE,
-      '-q:v', '4', outputs.poster], { timeout: 60000 }),
-    run('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(at(0.22)), '-i', file,
+      '-q:v', '4', outputs.poster], { timeout: 60000 }));
+  }
+  if (needs.backdrop) {
+    keys.push('backdrop');
+    jobs.push(run('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(at(0.22)), '-i', file,
       '-frames:v', '1', '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,' + GRADE,
-      '-q:v', '3', outputs.backdrop], { timeout: 60000 }),
-    run('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(at(0.3)), '-t', '8', '-i', file,
-      '-an', '-vf', 'scale=640:-2', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30',
-      '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputs.preview], { timeout: 120000 }),
-  ];
+      '-q:v', '3', outputs.backdrop], { timeout: 60000 }));
+  }
+  if (needs.preview) {
+    const segments = previewSegments(duration);
+    if (segments.length) {
+      // One ffmpeg pass: seek to each snippet, normalise it, then concat. A single
+      // input would only ever show one moment of the film.
+      const inputs = segments.flatMap((seg) => ['-ss', String(seg.start.toFixed(3)),
+                                                '-t', String(seg.length.toFixed(3)), '-i', file]);
+      const normalise = segments
+        .map((_, i) => `[${i}:v]scale=640:-2,setsar=1,fps=24[v${i}]`)
+        .join(';');
+      const concat = segments.map((_, i) => `[v${i}]`).join('') + `concat=n=${segments.length}:v=1:a=0[out]`;
+      keys.push('preview');
+      jobs.push(run('ffmpeg', ['-y', '-loglevel', 'error', ...inputs,
+        '-filter_complex', `${normalise};${concat}`, '-map', '[out]', '-an',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30', '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart', outputs.preview], { timeout: 180000 }));
+    }
+  }
 
   const settled = await Promise.allSettled(jobs);
   const produced = {};
-  const keys = ['poster', 'backdrop', 'preview'];
   settled.forEach((result, i) => {
-    const file_path = outputs[keys[i]];
-    if (result.status === 'fulfilled' && fs.existsSync(file_path)) produced[keys[i]] = path.basename(file_path);
+    const key = keys[i];
+    const file_path = outputs[key];
+    if (result.status === 'fulfilled' && fs.existsSync(file_path)) produced[key] = path.basename(file_path);
     else if (result.status === 'rejected') {
-      console.warn(`[library] ${keys[i]} failed for ${path.basename(file)}: ${result.reason?.message?.split('\n')[0]}`);
+      console.warn(`[library] ${key} failed for ${path.basename(file)}: ${result.reason?.message?.split('\n')[0]}`);
     }
   });
 
@@ -434,6 +482,8 @@ async function scan(folders, {
       poster: cached?.poster || null,
       backdrop: cached?.backdrop || null,
       preview: cached?.preview || null,
+      // 0 forces a re-render: the file changed, so the old clip is stale.
+      previewVersion: 0,
     };
   });
 
@@ -451,18 +501,27 @@ async function scan(folders, {
 
   /* ---------------- phase 2: draw (background) ---------------- */
 
-  const pending = catalog.items.filter((item) => !item.poster || !item.backdrop);
+  const pending = catalog.items.filter((item) =>
+    !item.poster || !item.backdrop || item.previewVersion !== PREVIEW_VERSION);
   let drawn = 0;
   let lastPublish = Date.now();
 
   if (pending.length && tools.canRender) {
     await runPool(pending, 2, async (item) => {
       if (!item.duration) return;
+      const needs = {
+        poster: !item.poster,
+        backdrop: !item.backdrop,
+        preview: item.previewVersion !== PREVIEW_VERSION,
+      };
       try {
-        const art = await renderArt(item.path, item.duration, mediaDir, item.id);
+        const art = await renderArt(item.path, item.duration, mediaDir, item.id, needs);
         item.poster = art.poster || item.poster;
         item.backdrop = art.backdrop || item.backdrop;
         item.preview = art.preview || item.preview;
+        // Only claim the new format once a clip exists, or a transient ffmpeg
+        // failure would mark it done and never retry.
+        if (!needs.preview || art.preview) item.previewVersion = PREVIEW_VERSION;
       } catch (err) {
         console.warn(`[library] artwork failed for ${item.filename}: ${err.message}`);
       }
@@ -486,4 +545,5 @@ function mimeFor(file) {
   return MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
 }
 
-module.exports = { scan, parseName, mimeFor, probeTools, toVtt, findSubtitles, VIDEO_EXT };
+module.exports = { scan, parseName, mimeFor, probeTools, toVtt, findSubtitles,
+  previewSegments, PREVIEW_VERSION, VIDEO_EXT };

@@ -29,6 +29,7 @@
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6.2l2 2.2H21v12.3H3z"/></symbol>
   <symbol id="i-tv" viewBox="0 0 24 24"><path d="M3 6h18v11H3zM8 19h8v1.6H8z"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 11H7.8l5.6-5.6L12 4 4 12l8 8 1.4-1.4L7.8 13H20z"/></symbol>
+  <symbol id="i-forward" viewBox="0 0 24 24"><path d="M4 11h12.2l-5.6-5.6L12 4l8 8-8 8-1.4-1.4 5.6-5.6H4z"/></symbol>
 </svg>
 
 <header id="header" class="header">
@@ -125,6 +126,7 @@
 <div class="player" id="player" hidden>
   <video id="playerVideo" playsinline></video>
   <canvas class="player__delay" id="playerDelay" hidden></canvas>
+  <div class="player__flash" id="playerFlash" aria-hidden="true"></div>
   <div class="player__subs" id="playerSubs" aria-live="polite"></div>
   <div class="subpanel" id="subPanel" hidden>
     <div class="subpanel__head">Subtitles</div>

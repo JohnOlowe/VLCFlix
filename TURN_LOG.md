@@ -562,3 +562,39 @@ Checked that making a full-screen overlay interactive did not eat other clicks:
 picture click pauses/resumes and flips the glyph both ways, the bottom toggle still
 works, scrubbing to 70% still seeks (t=11.89s), the CC panel still opens and its
 buttons still work, zero console errors. Screenshot read.
+
+## 2026-10-26 — v1.1.7: picture clicks by position, double-tap skips, scroll checked
+Five reports; four were code, one was not.
+
+1. *"Moving around doesn't bring up the controls."* The cause was v1.1.6 itself. To
+   make the big centre icon clickable I had given `.player__center` the whole
+   picture as clickable area, at full screen size -- so it sat on top of the close
+   button, the bottom bar and everything else. Any click meant for the chrome hit
+   the overlay instead. The overlay is display-only again and the player root now
+   decides what a click means from where it landed.
+2. *"Only the middle centre should activate pause."* The picture is split at 30% and
+   70%: left third, middle, right third. The middle toggles; the sides do not.
+3. *"A double tap at the middle should toggle when the icon isn't displaying."* With
+   the controls hidden, one click in the middle waits 320 ms: a second click turns
+   that into a toggle, otherwise the click just brings the controls back. With the
+   controls already up, every middle click toggles immediately -- no waiting, and
+   two quick clicks pause then resume rather than being read as a "double" that
+   cancels itself out.
+4. *"Double tap right fast forwards, same at left."* The sides skip 10 s in that
+   direction and confirm with a `+10 s` / `−10 s` badge placed over the side used,
+   so it does not cover the centre icon.
+5. *"Scrolling on the touchpad is more sensitive than normal."* Measured rather than
+   guessed. Ten 100 px wheel notches moved the page exactly 100, 200, 300, 400, 488,
+   488 … (it stops at the document end): one-to-one, no amplification. `grep` finds
+   no `wheel` handler anywhere; the horizontal rails do not hijack a mostly-vertical
+   gesture; wheel over a nested panel at its end does not chain to the page behind;
+   frame gaps stayed at 17 ms even while the startup artwork refresh was running.
+   The Windows shell source is byte-identical to v1.1.4 (`git diff 500da0a --
+   src/win/main.cpp` is empty), so the installed app cannot have changed how a swipe
+   is delivered. What did change defensively: `overscroll-behavior: contain` on both
+   nested scrollers, so one gesture can never scroll a panel and the page behind it.
+
+Testing: a new 14-check harness covers every requirement above, with a negative
+control -- collapsing the three bands into "everywhere is the middle" makes it fail
+exactly where it should. 64 unit tests still pass. Screenshot of the skip badge read
+back before shipping.

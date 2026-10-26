@@ -819,6 +819,7 @@ body:not([data-view='home']) .nav {
   display: grid;
   place-items: start center;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 44px 20px;
 }
 
@@ -1110,12 +1111,10 @@ textarea.input {
   inset: 0;
   display: grid;
   place-items: center;
-  /* This overlay carries the play/pause click for the whole picture area. It was
-     pointer-events: none, so the click it is bound to could never arrive and the
-     large icon did nothing. The bottom controls sit after it in the DOM and keep
-     their own clicks. */
-  pointer-events: auto;
-  cursor: pointer;
+  /* Display only. An interactive full-screen overlay covered the back and close
+     buttons and made every click on the picture a pause toggle, so taps are
+     handled on the player itself by zone instead. */
+  pointer-events: none;
 }
 
 .player__center svg {
@@ -1415,6 +1414,7 @@ textarea.input {
 .subpanel__tracks {
   max-height: 132px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   margin-bottom: 10px;
   display: flex;
   flex-direction: column;
@@ -1501,3 +1501,30 @@ textarea.input {
   transition: transform 160ms ease;
 }
 .switch.is-on .switch__knob { transform: translateX(22px); }
+
+/* Transient feedback for double-tap skips. */
+.player__flash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  /* Sits over the side the skip applies to, so it never hides the centre icon. */
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 18px 26px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.66);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+  z-index: 5;
+}
+.player__flash.is-on { opacity: 1; }
+.player__flash.is-left { left: 22%; }
+.player__flash.is-right { left: 78%; }
+.player__flash svg { width: 30px; height: 30px; }

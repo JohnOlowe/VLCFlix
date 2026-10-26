@@ -285,8 +285,22 @@ flowing through the player (so it reports `measuring…` before playback starts)
 this applies to the in-app engines only — Real VLC manages its own output and has
 its own `Ctrl+T` track synchronisation dialog.
 
-Clicking anywhere on the picture toggles play/pause — the large centre icon shows
-which action a click will take.
+### Player gestures
+
+The picture is split into three invisible bands, so a click means what its position
+says it means:
+
+| Where | One click | Two quick clicks |
+|---|---|---|
+| middle third | play / pause | play / pause (with the controls hidden, the first click only brings them back) |
+| left third | show or hide the controls | rewind 10 s |
+| right third | show or hide the controls | skip forward 10 s |
+
+Only the middle toggles playback: a stray click near the edge of the picture can no
+longer pause the film. A skip is confirmed on screen with a `+10 s` / `−10 s` badge
+over the side it applies to, so the feedback never hides the centre icon.
+
+Moving the mouse brings the controls back at any time, from wherever the pointer is.
 
 Subtitle and sync settings persist across sessions.
 

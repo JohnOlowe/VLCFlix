@@ -2167,7 +2167,6 @@ function wireEvents() {
     if (video.paused) video.play().catch(() => {});
     else video.pause();
   };
-  video.addEventListener('click', toggle);
   video.addEventListener('play', () => { updatePlayerToggle(); schedulePlayerHide(); });
   video.addEventListener('pause', updatePlayerToggle);
   video.addEventListener('timeupdate', () => {
@@ -2178,9 +2177,90 @@ function wireEvents() {
   });
   video.addEventListener('ended', () => { video.dataset.reportedEnd = ''; });
   root.addEventListener('mousemove', () => { schedulePlayerHide(); updatePlayerToggle(); });
+
+  /* Tap zones, the way every phone player works:
+   *   centre  -> play/pause (immediately while the controls are up)
+   *   left    -> double tap rewinds 10 s
+   *   right   -> double tap skips forward 10 s
+   * While the controls are hidden a single tap in the middle only reveals them,
+   * so a double tap can still mean "toggle" without the first tap stealing it. */
+  const TAP_SLOP_MS = 320;
+  let lastTap = { at: 0, zone: null };
+  let tapTimer = null;
+
+  const chromeVisible = () => root.classList.contains('is-active');
+
+  const flashTap = (text, icon, side) => {
+    const flash = $('#playerFlash');
+    if (!flash) return;
+    flash.replaceChildren(...(icon ? [SVG(icon)] : []), document.createTextNode(text));
+    flash.classList.toggle('is-left', side === 'left');
+    flash.classList.toggle('is-right', side === 'right');
+    flash.classList.add('is-on');
+    clearTimeout(player.flashTimer);
+    player.flashTimer = setTimeout(() => flash.classList.remove('is-on'), 700);
+  };
+
+  const revealChrome = () => { schedulePlayerHide(); };
+
+  root.addEventListener('click', (event) => {
+    // Controls keep their own clicks; only the bare picture counts as a tap.
+    if (event.target.closest('.player__bottom, .player__back, .subpanel, .player__flash')) return;
+
+    const rect = root.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / Math.max(rect.width, 1);
+    const zone = x < 0.3 ? 'left' : x > 0.7 ? 'right' : 'centre';
+    const now = Date.now();
+    const reset = () => { lastTap = { at: 0, zone: null }; };
+
+    if (zone === 'centre') {
+      // With the controls up, every centre click is a toggle. Recognising a
+      // "double" here would swallow a deliberate second click, so it is not
+      // attempted: two quick clicks pause and then resume, as they should.
+      if (chromeVisible()) {
+        reset();
+        clearTimeout(tapTimer);
+        tapTimer = null;
+        toggle();
+        return;
+      }
+      // Controls hidden (a touchscreen, where no mousemove reveals them first):
+      // the first tap arms a reveal and a second tap within the window toggles.
+      const isDouble = now - lastTap.at < TAP_SLOP_MS && lastTap.zone === 'centre';
+      if (isDouble) {
+        reset();
+        clearTimeout(tapTimer);
+        tapTimer = null;
+        toggle();
+        return;
+      }
+      lastTap = { at: now, zone };
+      clearTimeout(tapTimer);
+      tapTimer = setTimeout(() => { tapTimer = null; revealChrome(); }, TAP_SLOP_MS);
+      return;
+    }
+
+    // Sides: a double tap skips, a single tap shows or hides the controls. The
+    // single action waits one window so a second tap can still become a skip.
+    const isDouble = now - lastTap.at < TAP_SLOP_MS && lastTap.zone === zone;
+    lastTap = { at: now, zone };
+    if (isDouble) {
+      clearTimeout(tapTimer);
+      tapTimer = null;
+      const delta = zone === 'right' ? 10 : -10;
+      seekToSeconds(playerPosition() + delta);
+      flashTap(`${delta > 0 ? '+' : '\u2212'}10 s`, delta > 0 ? 'i-forward' : 'i-back', zone);
+      return;
+    }
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(() => {
+      tapTimer = null;
+      if (chromeVisible()) root.classList.remove('is-active');
+      else revealChrome();
+    }, TAP_SLOP_MS);
+  });
   $('#playerToggle').addEventListener('click', toggle);
   $('#playerClose').addEventListener('click', () => closePlayer());
-  $('#playerCenter').addEventListener('click', toggle);
   $('#playerBack10').addEventListener('click', () => seekToSeconds(playerPosition() - 10));
   $('#playerFwd10').addEventListener('click', () => seekToSeconds(playerPosition() + 10));
   $('#playerScrub').addEventListener('input', (event) => {

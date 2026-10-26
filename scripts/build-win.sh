@@ -62,7 +62,7 @@ x86_64-w64-mingw32-g++ \
   -I "$WV2_DIR/build/native/include" \
   "$ROOT/src/win/main.cpp" "$CACHE/app.res.o" \
   -o "$STAGE/VLCFlix.exe" \
-  -lws2_32 -lole32 -loleaut32 -lshell32 -luuid -ladvapi32 -luser32 -lgdi32 \
+  -lws2_32 -lole32 -loleaut32 -lshell32 -luuid -ladvapi32 -luser32 -lgdi32 -lcomctl32 \
   -static-libgcc -static-libstdc++ -s
 
 # --- 4. application payload -------------------------------------------------

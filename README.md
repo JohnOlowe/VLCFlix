@@ -58,16 +58,35 @@ the app says so plainly instead of failing silently.
 Nothing is written into *Program Files*. Settings, watch progress and generated
 artwork live in `%LOCALAPPDATA%\VLCFlix`, and survive an uninstall.
 
-### If it will not start
+### If the window stays black
 
-Check two log files, in `%LOCALAPPDATA%\VLCFlix`:
+From version 1.0.1 the app no longer fails silently. Every step writes to
+`%LOCALAPPDATA%\VLCFlix\launcher.log`:
 
-- **`launcher.log`** — what the shell tried: paths, port, whether `node.exe` started,
-  whether the health check answered.
+```
+[launch] port    = 58619
+[launch] node.exe started, pid=14744
+[health] server answered on port 58619 after 800 ms
+[webview2] loader = ...\resources\WebView2Loader.dll
+[webview2] CreateCoreWebView2EnvironmentWithOptions -> 0x80070002 (ERROR_FILE_NOT_FOUND)
+```
+
+If the embedded browser cannot start, the window shows a **native panel** instead of a
+black rectangle: the reason, the local address to open in any browser, a button to do
+that, a Retry button, and the log path. The app stays open rather than closing itself.
+
+![Fallback panel](docs/screenshots/webview2-fallback.png)
+
+Most common cause: **the WebView2 runtime is missing** (unusual on Windows 10/11, but it
+happens on stripped or LTSC images and some managed machines). Install the
+*Microsoft Edge WebView2 Runtime* from Microsoft, then press Retry — no reinstall of
+VLCFlix needed.
+
+Logs, both in `%LOCALAPPDATA%\VLCFlix`:
+
+- **`launcher.log`** — paths, port, whether `node.exe` started, the health check, and
+  every WebView2 HRESULT.
 - **`server.log`** — the Node server's own stdout and stderr.
-
-Both are written on every launch, because a windowed app with no console is otherwise
-impossible to diagnose.
 
 ### Building the Windows app
 

@@ -103,10 +103,10 @@
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",
     "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.0.0.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.0.0.zip (30 MB)",
+      "installer": "release/VLCFlix-Setup-1.0.1.exe (21 MB)",
+      "portable": "release/VLCFlix-portable-1.0.1.zip (30 MB)",
       "gitignored": true,
-      "regenerate": "VERSION=1.0.0 bash scripts/build-win.sh"
+      "regenerate": "VERSION=1.0.1 bash scripts/build-win.sh"
     },
     "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
     "verified": [
@@ -119,8 +119,8 @@
       "silent uninstall removes files, shortcuts and the registry key while keeping user data"
     ],
     "not_verified": [
-      "WebView2 rendering: Wine has no WebView2 runtime, so the UI window itself was never displayed. The health check, server and payload are verified; the browser surface is not.",
-      "real VLC detection and playback from the installed app (no VLC inside Wine)"
+      "WebView2 rendering: Wine has no WebView2 runtime, so the UI surface still has never rendered here. The fallback path IS verified under Wine (screenshot in docs/screenshots/webview2-fallback.png).",
+      "the original black-window-on-Windows cause is not yet confirmed; v1.0.1 will identify it from launcher.log instead of guessing"
     ],
     "bugs_found_and_fixed": [
       "server bound 0.0.0.0 in a single-user desktop app; launcher now sets HOST=127.0.0.1",
@@ -128,6 +128,15 @@
       "icon.ico was PNG-compressed and NSIS could not load it; regenerated as BMP/DIB entries",
       "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
       "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
+    ],
+    "version": "1.0.1",
+    "user_reported_symptom": "black window for ~5s, stays black, auto-closes on click (v1.0.0 on real Windows)",
+    "v101_fixes": [
+      "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
+      "NavigationCompleted and ProcessFailed handlers added",
+      "native fallback panel replaces the black window and keeps the app open",
+      "logging moved to the first statement of wWinMain so early exits are recorded",
+      "single-instance exit is now logged instead of being silent"
     ]
   }
 }

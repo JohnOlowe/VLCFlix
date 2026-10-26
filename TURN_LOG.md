@@ -213,3 +213,43 @@
   Avoided thereafter by using `wineserver -k` and explicit PIDs.
 - `dist/` was removed after copying the artifacts to `release/`: the workspace
   reached 178 MB against a ~128 MB snapshot cap. Builds are reproducible.
+
+## 2026-10-26 — v1.0.1: black window / self-closing on real Windows
+- User report: window shows "Starting VLCFlix" ~5 s, then black; clicking after
+  maximising makes it close by itself. Provided launcher.log showed the run ending
+  at `[webview2] loader = ...` with nothing after it.
+- Diagnosis from my own code: there was **no instrumentation after the loader**.
+  Nothing recorded whether environment creation succeeded, whether the controller
+  attached, whether Navigate ran, or whether the page loaded. The black surface was
+  at a step I could not see. Also, every WebView2 failure path called
+  `PostMessage(WM_CLOSE)`, which is the self-closing behaviour.
+- v1.0.1 changes:
+  1. HRESULT logged at every step, with hints for the common codes
+     (0x80070002 FILE_NOT_FOUND, 0x80040154 CLASSNOTREG, ...).
+  2. `NavigationCompleted` and `ProcessFailed` handlers added (were absent).
+  3. A failed browser now raises a **native fallback panel** instead of killing the
+     window: reason, local URL, "Open in browser", "Retry", and the log path.
+  4. Logging moved to the first statement of `wWinMain`; a previous build initialised
+     it after window creation, so early exits (including the single-instance branch)
+     left no trace at all.
+  5. Removed an unused comctl32 dependency and a leftover empty `EDIT` control.
+
+### Verified (Wine 10 + Xvfb, screenshots read)
+- `[webview2] CreateCoreWebView2EnvironmentWithOptions -> 0x80070002
+  (ERROR_FILE_NOT_FOUND)` and `[fallback] showing native panel: ...` appear in
+  launcher.log — the instrumentation captures the real failure.
+- Screenshot of the panel confirms it renders, is readable, shows the live URL
+  (http://127.0.0.1:43139/), the log path and both buttons, and that the window
+  stays open. Saved as docs/screenshots/webview2-fallback.png.
+
+### Harness mistakes, disclosed
+- Ran Wine several times without `DISPLAY`, then spent time chasing the
+  `CreateWindowEx failed` that resulted. `WINEDEBUG=+seh` exposed
+  `nodrv_CreateWindow ... display server is running` — it was the harness.
+- Called `pkill -f` a third time with a self-matching pattern and killed the shell.
+
+### Still unproven
+- WebView2 has never rendered a pixel here; Wine has no WebView2 runtime. The
+  fallback path is proven, the success path is not. The real cause of the user's
+  black window should now be identifiable from `launcher.log`, but it is not yet
+  confirmed — most likely a missing/blocked WebView2 runtime.

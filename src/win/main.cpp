@@ -14,6 +14,11 @@
 //
 // Built with mingw-w64, which means no <wrl/implements.h> and no __uuidof.
 // The handful of COM callbacks WebView2 needs are written out by hand below.
+//
+// Failure policy: a windowed app with no console is undebuggable, so every step
+// that can fail writes a line with its HRESULT to %LOCALAPPDATA%\VLCFlix\
+// launcher.log, and a browser failure never kills the window -- it shows a
+// native panel with the URL so the app remains usable.
 // ---------------------------------------------------------------------------
 
 #ifndef UNICODE
@@ -34,9 +39,8 @@
 #include <string>
 #include <vector>
 #include <cstdio>
-#include <cstring>
 #include <cstdarg>
-#include <cstdio>
+#include <cstring>
 
 #include "WebView2.h"
 #include "resource.h"
@@ -47,22 +51,59 @@
 
 static HINSTANCE g_instance = nullptr;
 static HWND      g_window = nullptr;
-static HWND      g_loading = nullptr;     // "Starting VLCFlix..." label
-static HANDLE    g_server = nullptr;      // server process
-static HANDLE    g_serverJob = nullptr;   // job object: guarantees cleanup
+static HWND      g_loading = nullptr;      // "Starting VLCFlix..." label
+static HANDLE    g_server = nullptr;       // server process
+static HANDLE    g_serverJob = nullptr;    // job object: guarantees cleanup
 static std::wstring g_baseUrl;
 static ICoreWebView2Controller* g_controller = nullptr;
 static ICoreWebView2* g_webview = nullptr;
+static bool g_webviewAttached = false;
+static const wchar_t* g_closeReason = L"none";
 
 #define WM_APP_SERVER_READY  (WM_APP + 1)
 #define WM_APP_SERVER_FAILED (WM_APP + 2)
 
 // ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+static std::wstring g_logPath;
+static SRWLOCK g_logLock = SRWLOCK_INIT;
+
+static void Log(const wchar_t* format, ...) {
+  if (g_logPath.empty()) return;
+  AcquireSRWLockExclusive(&g_logLock);
+  FILE* f = nullptr;
+  if (_wfopen_s(&f, g_logPath.c_str(), L"a, ccs=UTF-8") == 0 && f) {
+    va_list args;
+    va_start(args, format);
+    vfwprintf(f, format, args);
+    va_end(args);
+    fputws(L"\n", f);
+    fclose(f);
+  }
+  ReleaseSRWLockExclusive(&g_logLock);
+}
+
+/** Log an HRESULT in hex plus a human hint for the common WebView2 failures. */
+static void LogHr(const wchar_t* step, HRESULT hr) {
+  const wchar_t* hint = L"";
+  switch (static_cast<unsigned long>(hr)) {
+    case 0x80070002: hint = L" (ERROR_FILE_NOT_FOUND)"; break;
+    case 0x80070003: hint = L" (ERROR_PATH_NOT_FOUND - user data folder?)"; break;
+    case 0x80070005: hint = L" (ERROR_ACCESS_DENIED)"; break;
+    case 0x80070057: hint = L" (E_INVALIDARG)"; break;
+    case 0x80040154: hint = L" (REGDB_E_CLASSNOTREG - WebView2 runtime missing?)"; break;
+    case 0x80070490: hint = L" (ERROR_NOT_FOUND - WebView2 runtime missing?)"; break;
+    default: break;
+  }
+  Log(L"[webview2] %ls -> 0x%08lX%ls", step, static_cast<unsigned long>(hr), hint);
+}
+
+// ---------------------------------------------------------------------------
 // COM plumbing (hand-rolled: mingw has no WRL Callback / __uuidof)
 // ---------------------------------------------------------------------------
 
-// Emits the three IUnknown methods for a handler that implements exactly one
-// WebView2 interface. Each handler is reference-counted and deletes itself.
 #define COM_HANDLER_BOILERPLATE(CLASS, IFACE, IID_NAME)                        \
  public:                                                                       \
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override { \
@@ -90,12 +131,7 @@ static ICoreWebView2* g_webview = nullptr;
                                                                                \
  public:
 
-static void FailAndClose(const wchar_t* message) {
-  MessageBoxW(g_window, message, L"VLCFlix", MB_ICONERROR | MB_OK);
-  if (g_window) PostMessageW(g_window, WM_CLOSE, 0, 0);
-}
-
-// --- environment created ----------------------------------------------------
+static void ShowFallbackPanel(const std::wstring& reason);
 
 class EnvironmentHandler final
     : public ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler {
@@ -106,8 +142,6 @@ class EnvironmentHandler final
                                    ICoreWebView2Environment* environment) override;
 };
 
-// --- controller created -----------------------------------------------------
-
 class ControllerHandler final
     : public ICoreWebView2CreateCoreWebView2ControllerCompletedHandler {
   COM_HANDLER_BOILERPLATE(ControllerHandler,
@@ -117,13 +151,28 @@ class ControllerHandler final
                                    ICoreWebView2Controller* controller) override;
 };
 
-// --- navigation guard -------------------------------------------------------
-
-class NavigationHandler final : public ICoreWebView2NavigationStartingEventHandler {
-  COM_HANDLER_BOILERPLATE(NavigationHandler, ICoreWebView2NavigationStartingEventHandler,
+class NavigationStartingHandler final : public ICoreWebView2NavigationStartingEventHandler {
+  COM_HANDLER_BOILERPLATE(NavigationStartingHandler,
+                          ICoreWebView2NavigationStartingEventHandler,
                           IID_ICoreWebView2NavigationStartingEventHandler)
   HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender,
                                    ICoreWebView2NavigationStartingEventArgs* args) override;
+};
+
+class NavigationCompletedHandler final
+    : public ICoreWebView2NavigationCompletedEventHandler {
+  COM_HANDLER_BOILERPLATE(NavigationCompletedHandler,
+                          ICoreWebView2NavigationCompletedEventHandler,
+                          IID_ICoreWebView2NavigationCompletedEventHandler)
+  HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender,
+                                   ICoreWebView2NavigationCompletedEventArgs* args) override;
+};
+
+class ProcessFailedHandler final : public ICoreWebView2ProcessFailedEventHandler {
+  COM_HANDLER_BOILERPLATE(ProcessFailedHandler, ICoreWebView2ProcessFailedEventHandler,
+                          IID_ICoreWebView2ProcessFailedEventHandler)
+  HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2* sender,
+                                   ICoreWebView2ProcessFailedEventArgs* args) override;
 };
 
 // ---------------------------------------------------------------------------
@@ -154,7 +203,6 @@ static bool FileExists(const std::wstring& path) {
 
 static std::wstring Quote(const std::wstring& s) { return L"\"" + s + L"\""; }
 
-/** Ask the OS for a free loopback port by binding one and reading it back. */
 static int FindFreePort() {
   int port = 0;
   SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -213,44 +261,6 @@ typedef HRESULT(STDMETHODCALLTYPE* PFN_CreateEnvWithOptions)(
     ICoreWebView2EnvironmentOptions* options,
     ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler* handler);
 
-static PFN_CreateEnvWithOptions LoadWebView2Loader(std::wstring* where) {
-  const wchar_t* candidates[] = {L"resources\\WebView2Loader.dll", L"WebView2Loader.dll"};
-  std::wstring exeDir = DirName(ExePath());
-  for (const wchar_t* rel : candidates) {
-    std::wstring full = (rel[0] == L'r') ? JoinPath(exeDir, rel) : std::wstring(rel);
-    HMODULE mod = LoadLibraryW(full.c_str());
-    if (mod) {
-      *where = full;
-      return reinterpret_cast<PFN_CreateEnvWithOptions>(
-          GetProcAddress(mod, "CreateCoreWebView2EnvironmentWithOptions"));
-    }
-  }
-  return nullptr;
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics
-//
-// A windowed app with no console is impossible to debug from the outside, so
-// everything that can go wrong writes a line to
-//   %LOCALAPPDATA%\VLCFlix\launcher.log
-// and the server's own stdout/stderr are redirected to server.log beside it.
-// ---------------------------------------------------------------------------
-
-static std::wstring g_logPath;
-
-static void Log(const wchar_t* format, ...) {
-  if (g_logPath.empty()) return;
-  FILE* f = nullptr;
-  if (_wfopen_s(&f, g_logPath.c_str(), L"a, ccs=UTF-8") != 0 || !f) return;
-  va_list args;
-  va_start(args, format);
-  vfwprintf(f, format, args);
-  va_end(args);
-  fputws(L"\n", f);
-  fclose(f);
-}
-
 static std::wstring AppDataDir() {
   wchar_t* base = nullptr;
   std::wstring dir;
@@ -260,6 +270,31 @@ static std::wstring AppDataDir() {
   }
   CreateDirectoryW(dir.c_str(), nullptr);
   return dir;
+}
+
+static PFN_CreateEnvWithOptions LoadWebView2Loader() {
+  std::wstring exeDir = DirName(ExePath());
+  std::wstring candidates[] = {JoinPath(exeDir, L"resources\\WebView2Loader.dll"),
+                               L"WebView2Loader.dll"};
+  for (const std::wstring& full : candidates) {
+    HMODULE mod = LoadLibraryW(full.c_str());
+    if (!mod) {
+      Log(L"[webview2] LoadLibrary failed for %ls (err %lu)", full.c_str(), GetLastError());
+      continue;
+    }
+    auto fn = reinterpret_cast<PFN_CreateEnvWithOptions>(
+        GetProcAddress(mod, "CreateCoreWebView2EnvironmentWithOptions"));
+    if (!fn) {
+      // Loaded, but the export is missing -- a different problem from a missing
+      // DLL, and it must be reported as such.
+      Log(L"[webview2] %ls loaded but has no CreateCoreWebView2EnvironmentWithOptions "
+          L"(wrong or truncated DLL)", full.c_str());
+      continue;
+    }
+    Log(L"[webview2] loader = %ls", full.c_str());
+    return fn;
+  }
+  return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +307,6 @@ static DWORD WINAPI ServerWaiter(LPVOID param) {
   ServerThreadArgs* args = static_cast<ServerThreadArgs*>(param);
   HWND window = g_window;
 
-  // Give the server up to 25 seconds to answer. First launch is slower because
-  // Node has to load modules from a cold cache.
   for (int i = 0; i < 125; ++i) {
     if (ServerIsUp(args->port, 700)) {
       Log(L"[health] server answered on port %d after %d ms", args->port, i * 200);
@@ -281,7 +314,10 @@ static DWORD WINAPI ServerWaiter(LPVOID param) {
       delete args;
       return 0;
     }
-    if (g_server && WaitForSingleObject(g_server, 0) == WAIT_OBJECT_0) break;
+    if (g_server && WaitForSingleObject(g_server, 0) == WAIT_OBJECT_0) {
+      Log(L"[health] node.exe exited before answering");
+      break;
+    }
     Sleep(200);
   }
   Log(L"[health] server did NOT answer on port %d", args->port);
@@ -292,7 +328,6 @@ static DWORD WINAPI ServerWaiter(LPVOID param) {
 
 static bool StartServer(int port, std::wstring* error) {
   std::wstring exeDir = DirName(ExePath());
-  // Layout: <install>\VLCFlix.exe, <install>\resources\app\...
   std::wstring root = JoinPath(exeDir, L"resources");
   std::wstring app = JoinPath(root, L"app");
   std::wstring node = JoinPath(root, L"node.exe");
@@ -302,20 +337,14 @@ static bool StartServer(int port, std::wstring* error) {
   if (!FileExists(script)) { *error = L"Missing application: " + script; return false; }
 
   std::wstring dataDir = AppDataDir();
-
-  // The command line goes straight to node.exe (no shell), so quoting only has
-  // to survive the Windows argument parser.
   std::wstring cmd = Quote(node) + L" " + Quote(script);
 
   SetEnvironmentVariableW(L"PORT", std::to_wstring(port).c_str());
-  // Loopback only: the API has no authentication and is for this desktop user.
-  SetEnvironmentVariableW(L"HOST", L"127.0.0.1");
+  SetEnvironmentVariableW(L"HOST", L"127.0.0.1");  // loopback only
   SetEnvironmentVariableW(L"NODE_ENV", L"production");
   SetEnvironmentVariableW(L"VLCFLIX_DATA_DIR", dataDir.c_str());
   SetEnvironmentVariableW(L"NODE_NO_WARNINGS", L"1");
 
-  // Send the server's stdout and stderr to a file. Without this, a crash on the
-  // user's machine leaves nothing behind to look at.
   std::wstring serverLog = JoinPath(dataDir, L"server.log");
   SECURITY_ATTRIBUTES inherit{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE logHandle = CreateFileW(serverLog.c_str(), FILE_APPEND_DATA,
@@ -340,8 +369,8 @@ static bool StartServer(int port, std::wstring* error) {
   Log(L"[launch] port    = %d", port);
 
   BOOL started = CreateProcessW(nullptr, mutableCmd.data(), nullptr, nullptr,
-                                logHandle ? TRUE : FALSE, CREATE_NO_WINDOW,
-                                nullptr, app.c_str(), &si, &pi);
+                                logHandle ? TRUE : FALSE, CREATE_NO_WINDOW, nullptr,
+                                app.c_str(), &si, &pi);
   if (logHandle) CloseHandle(logHandle);
   if (!started) {
     DWORD code = GetLastError();
@@ -351,8 +380,6 @@ static bool StartServer(int port, std::wstring* error) {
   }
   Log(L"[launch] node.exe started, pid=%lu", pi.dwProcessId);
 
-  // KILL_ON_JOB_CLOSE: the server can never outlive this window, even if the
-  // app is killed from Task Manager.
   g_serverJob = CreateJobObjectW(nullptr, nullptr);
   if (g_serverJob) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
@@ -377,9 +404,79 @@ static void StopServer() {
     g_server = nullptr;
   }
   if (g_serverJob) {
-    CloseHandle(g_serverJob);  // KILL_ON_JOB_CLOSE cleans up anything left
+    CloseHandle(g_serverJob);
     g_serverJob = nullptr;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fallback panel: a plain Win32 surface used when the browser cannot start.
+// It keeps the window alive and gives the user the URL, instead of dying.
+// ---------------------------------------------------------------------------
+
+static bool g_fallbackShown = false;
+static HBRUSH g_panelBrush = nullptr;
+
+// All fallback controls are parented to the main window so that plain client
+// coordinates work. (An earlier version parented them to the window but looked
+// them up under a container, so nothing ever moved.)
+static HWND MakeFallbackChild(const wchar_t* cls, const wchar_t* text, DWORD style,
+                              int id) {
+  HWND h = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10,
+                           g_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                           g_instance, nullptr);
+  if (h) {
+    SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),
+                 TRUE);
+  }
+  return h;
+}
+
+static void LayoutFallback() {
+  if (!g_fallbackShown) return;
+  RECT client;
+  GetClientRect(g_window, &client);
+  int w = client.right - client.left;
+  int h = client.bottom - client.top;
+  int x = 48;
+  int cw = w - 96;
+  if (cw < 240) { x = 16; cw = w - 32; }
+
+  int textH = (h > 500) ? 168 : 148;
+  int y = (h > 420) ? 44 : 12;
+
+  MoveWindow(GetDlgItem(g_window, IDC_FALLBACK_TITLE), x, y, cw, 30, TRUE);
+  MoveWindow(GetDlgItem(g_window, IDC_FALLBACK_BODY), x, y + 40, cw, textH, TRUE);
+  MoveWindow(GetDlgItem(g_window, IDC_FALLBACK_OPEN), x, y + textH + 40, 180, 34, TRUE);
+  MoveWindow(GetDlgItem(g_window, IDC_FALLBACK_RETRY), x + 196, y + textH + 40, 180, 34,
+             TRUE);
+}
+
+static void ShowFallbackPanel(const std::wstring& reason) {
+  if (g_fallbackShown) { LayoutFallback(); return; }
+  if (g_loading) ShowWindow(g_loading, SW_HIDE);
+
+  Log(L"[fallback] showing native panel: %ls", reason.c_str());
+  Log(L"[fallback] url to offer = %ls", g_baseUrl.c_str());
+  g_fallbackShown = true;
+
+  // The URL goes in the body text as well as the edit box: the box is there for
+  // copy-paste, but the user must be able to read the address even if it fails
+  // to render on some Wine/runtime combination.
+  std::wstring body = reason +
+      L"\r\n\r\nThe background service is running. Open this address in your browser:"
+      L"\r\n" + g_baseUrl +
+      L"\r\n\r\nOr install the Microsoft Edge WebView2 Runtime, then press Retry."
+      L"\r\nDiagnostics: " + g_logPath;
+
+  MakeFallbackChild(L"STATIC", L"VLCFlix could not open its window", SS_LEFT,
+                    IDC_FALLBACK_TITLE);
+  MakeFallbackChild(L"STATIC", body.c_str(), SS_LEFT, IDC_FALLBACK_BODY);
+  MakeFallbackChild(L"BUTTON", L"Open in browser", BS_PUSHBUTTON, IDC_FALLBACK_OPEN);
+  MakeFallbackChild(L"BUTTON", L"Retry", BS_PUSHBUTTON, IDC_FALLBACK_RETRY);
+
+  LayoutFallback();
+  InvalidateRect(g_window, nullptr, TRUE);
 }
 
 // ---------------------------------------------------------------------------
@@ -393,82 +490,149 @@ static void ResizeWebView() {
   g_controller->put_Bounds(bounds);
 }
 
-HRESULT STDMETHODCALLTYPE NavigationHandler::Invoke(
+HRESULT STDMETHODCALLTYPE NavigationStartingHandler::Invoke(
     ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) {
   LPWSTR uri = nullptr;
   args->get_Uri(&uri);
-  bool internal = uri && (wcsncmp(uri, L"http://127.0.0.1:", 17) == 0 ||
-                          wcsncmp(uri, L"http://localhost:", 17) == 0 ||
-                          wcsncmp(uri, L"about:", 6) == 0 ||
-                          wcsncmp(uri, L"data:", 5) == 0);
-  if (!internal && uri) {
-    // Anything else belongs in the user's browser, not in the app window.
+  if (!uri) return S_OK;
+  bool internal = wcsncmp(uri, L"http://127.0.0.1:", 17) == 0 ||
+                  wcsncmp(uri, L"http://localhost:", 17) == 0 ||
+                  wcsncmp(uri, L"about:", 6) == 0 || wcsncmp(uri, L"data:", 5) == 0;
+  Log(L"[webview2] navigation starting: %ls%s", uri,
+      internal ? L"" : L"  (cancelled, handed to the default browser)");
+  if (!internal) {
     ShellExecuteW(nullptr, L"open", uri, nullptr, nullptr, SW_SHOWNORMAL);
     args->put_Cancel(TRUE);
   }
-  if (uri) CoTaskMemFree(uri);
+  CoTaskMemFree(uri);
+  return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE NavigationCompletedHandler::Invoke(
+    ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) {
+  BOOL success = FALSE;
+  args->get_IsSuccess(&success);
+  COREWEBVIEW2_WEB_ERROR_STATUS webError = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+  args->get_WebErrorStatus(&webError);
+  UINT status = 0;
+  // HttpStatusCode lives on a derived interface; older runtimes may not expose
+  // it, so the query is optional and the log copes with 0.
+  ICoreWebView2NavigationCompletedEventArgs2* args2 = nullptr;
+  if (SUCCEEDED(args->QueryInterface(IID_ICoreWebView2NavigationCompletedEventArgs2,
+                                     reinterpret_cast<void**>(&args2))) && args2) {
+    args2->get_HttpStatusCode(reinterpret_cast<int*>(&status));
+    args2->Release();
+  }
+  Log(L"[webview2] navigation completed: success=%d http=%u webError=%d", success, status,
+      static_cast<int>(webError));
+
+  if (!success) {
+    // A failed load is exactly the black window the user sees: report it
+    // instead of leaving an empty surface.
+    wchar_t reason[512];
+    _snwprintf_s(reason, 512, _TRUNCATE,
+                 L"The page did not load (status %u, WebView2 error %d). "
+                 L"The background service is running on:\r\n%s",
+                 status, static_cast<int>(webError), g_baseUrl.c_str());
+    ShowFallbackPanel(reason);
+  }
+  return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ProcessFailedHandler::Invoke(
+    ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) {
+  COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
+  if (args) args->get_ProcessFailedKind(&kind);
+  Log(L"[webview2] PROCESS FAILED, kind=%d", static_cast<int>(kind));
+  wchar_t reason[256];
+  _snwprintf_s(reason, 256, _TRUNCATE,
+               L"The WebView2 browser process stopped unexpectedly (kind %d).",
+               static_cast<int>(kind));
+  ShowFallbackPanel(reason);
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE ControllerHandler::Invoke(
     HRESULT result, ICoreWebView2Controller* controller) {
+  LogHr(L"controller Invoke", result);
   if (FAILED(result) || !controller) {
-    FailAndClose(L"Could not create the WebView2 controller.");
+    ShowFallbackPanel(L"WebView2 created no browser controller.");
     return S_OK;
   }
   g_controller = controller;
-  if (FAILED(g_controller->get_CoreWebView2(&g_webview)) || !g_webview) {
-    FailAndClose(L"WebView2 did not expose its browser object.");
+  g_controller->put_IsVisible(TRUE);
+
+  HRESULT hr = g_controller->get_CoreWebView2(&g_webview);
+  LogHr(L"get_CoreWebView2", hr);
+  if (FAILED(hr) || !g_webview) {
+    ShowFallbackPanel(L"WebView2 did not expose its browser object.");
     return S_OK;
   }
+  g_webviewAttached = true;
+  if (g_loading) ShowWindow(g_loading, SW_HIDE);
   ResizeWebView();
 
-  // A desktop app should not get browser affordances.
   ICoreWebView2Settings* settings = nullptr;
   if (SUCCEEDED(g_webview->get_Settings(&settings)) && settings) {
     settings->put_AreDevToolsEnabled(FALSE);
     settings->put_AreDefaultContextMenusEnabled(FALSE);
     settings->put_IsStatusBarEnabled(FALSE);
-    settings->put_IsZoomControlEnabled(FALSE);
     settings->Release();
   }
 
   EventRegistrationToken token;
-  g_webview->add_NavigationStarting(new NavigationHandler(), &token);
+  g_webview->add_NavigationStarting(new NavigationStartingHandler(), &token);
+  g_webview->add_NavigationCompleted(new NavigationCompletedHandler(), &token);
+  g_webview->add_ProcessFailed(new ProcessFailedHandler(), &token);
 
-  g_webview->Navigate(g_baseUrl.c_str());
+  hr = g_webview->Navigate(g_baseUrl.c_str());
+  LogHr(L"Navigate", hr);
+  if (FAILED(hr)) {
+    ShowFallbackPanel(L"WebView2 refused to navigate to the local service.");
+  }
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE EnvironmentHandler::Invoke(
     HRESULT result, ICoreWebView2Environment* environment) {
+  LogHr(L"environment Invoke", result);
   if (FAILED(result) || !environment) {
-    FailAndClose(
-        L"The WebView2 runtime is not available.\n\n"
-        L"VLCFlix uses the Edge WebView2 engine, which ships with Windows 10 and 11.\n"
-        L"If it is missing, install the Evergreen WebView2 Runtime from Microsoft.");
+    ShowFallbackPanel(
+        L"The Microsoft Edge WebView2 Runtime is not available.\r\n"
+        L"It normally ships with Windows 10 and 11.");
     return S_OK;
   }
-  environment->CreateCoreWebView2Controller(g_window, new ControllerHandler());
+  HRESULT hr = environment->CreateCoreWebView2Controller(g_window, new ControllerHandler());
+  LogHr(L"CreateCoreWebView2Controller", hr);
+  if (FAILED(hr)) {
+    ShowFallbackPanel(L"WebView2 could not create a browser controller.");
+  }
   return S_OK;
 }
 
 static void InitWebView2() {
-  std::wstring loadedFrom;
-  PFN_CreateEnvWithOptions create = LoadWebView2Loader(&loadedFrom);
-  Log(L"[webview2] loader = %ls", create ? loadedFrom.c_str() : L"(not found)");
+  if (g_fallbackShown) return;  // already degraded; the Retry button re-enters here
+
+  Log(L"[webview2] initialising");
+  PFN_CreateEnvWithOptions create = LoadWebView2Loader();
   if (!create) {
-    FailAndClose(
-        L"WebView2Loader.dll could not be loaded.\n\n"
-        L"It ships inside resources\\ in the install folder; if antivirus removed it, "
-        L"reinstall VLCFlix.");
+    ShowFallbackPanel(
+        L"WebView2Loader.dll was not found next to the application, or it is the "
+        L"wrong version.\r\nReinstalling VLCFlix may fix this.");
     return;
   }
+
   std::wstring dataDir = JoinPath(AppDataDir(), L"webview");
+  CreateDirectoryW(dataDir.c_str(), nullptr);
+
   HRESULT hr = create(nullptr, dataDir.c_str(), nullptr, new EnvironmentHandler());
+  LogHr(L"CreateCoreWebView2EnvironmentWithOptions", hr);
   if (FAILED(hr)) {
-    FailAndClose(L"WebView2 could not be initialised. The Evergreen WebView2 Runtime "
-                 L"may not be installed on this machine.");
+    // Some failures return synchronously without ever invoking the handler, so
+    // the panel has to be raised here too.
+    ShowFallbackPanel(
+        L"WebView2 could not be initialised.\r\n"
+        L"Install the Microsoft Edge WebView2 Runtime and press Retry.");
   }
 }
 
@@ -480,7 +644,49 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
   switch (message) {
     case WM_SIZE:
       ResizeWebView();
+      LayoutFallback();
       return 0;
+
+    case WM_ERASEBKGND: {
+      if (!g_fallbackShown) break;
+      RECT rc;
+      GetClientRect(window, &rc);
+      FillRect(reinterpret_cast<HDC>(wParam), &rc,
+               g_panelBrush ? g_panelBrush : reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
+      return 1;
+    }
+
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT: {
+      HDC dc = reinterpret_cast<HDC>(wParam);
+      SetTextColor(dc, RGB(236, 236, 240));
+      SetBkColor(dc, RGB(11, 11, 15));
+      return reinterpret_cast<LRESULT>(g_panelBrush);
+    }
+
+    case WM_COMMAND: {
+      int id = LOWORD(wParam);
+      if (id == IDC_FALLBACK_OPEN) {
+        ShellExecuteW(nullptr, L"open", g_baseUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return 0;
+      }
+      if (id == IDC_FALLBACK_RETRY) {
+        Log(L"[fallback] user pressed Retry");
+        for (int id : {IDC_FALLBACK_TITLE, IDC_FALLBACK_BODY, IDC_FALLBACK_OPEN,
+                       IDC_FALLBACK_RETRY}) {
+          HWND child = GetDlgItem(g_window, id);
+          if (child) DestroyWindow(child);
+        }
+        g_fallbackShown = false;
+        if (g_controller) { g_controller->Release(); g_controller = nullptr; }
+        if (g_webview) { g_webview->Release(); g_webview = nullptr; }
+        g_webviewAttached = false;
+        if (g_loading) ShowWindow(g_loading, SW_SHOW);
+        InitWebView2();
+        return 0;
+      }
+      break;
+    }
 
     case WM_APP_SERVER_READY:
       if (g_loading) ShowWindow(g_loading, SW_HIDE);
@@ -489,24 +695,22 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
 
     case WM_APP_SERVER_FAILED:
       MessageBoxW(window,
-                  L"The VLCFlix background service did not start.\n\n"
-                  L"This usually means node.exe was blocked, or a required file is "
-                  L"missing from the install folder.\nTry reinstalling, and check whether "
-                  L"antivirus quarantined files.",
+                  L"The VLCFlix background service did not start.\r\n\r\n"
+                  L"See server.log in %LOCALAPPDATA%\\VLCFlix for the reason.",
                   L"VLCFlix could not start", MB_ICONERROR | MB_OK);
       DestroyWindow(window);
       return 0;
 
     case WM_CLOSE:
+      Log(L"[window] WM_CLOSE received (origin: %ls)", g_closeReason);
       if (g_webview) {
-        // Let the page flush any in-flight progress save before teardown.
-        g_webview->ExecuteScript(L"window.dispatchEvent(new Event('beforeunload'));",
-                                 nullptr);
+        g_webview->ExecuteScript(L"window.dispatchEvent(new Event('beforeunload'));", nullptr);
       }
       DestroyWindow(window);
       return 0;
 
     case WM_DESTROY:
+      Log(L"[window] WM_DESTROY; webview attached was %d", g_webviewAttached ? 1 : 0);
       if (g_webview) { g_webview->Release(); g_webview = nullptr; }
       if (g_controller) { g_controller->Release(); g_controller = nullptr; }
       StopServer();
@@ -516,14 +720,21 @@ static LRESULT CALLBACK WndProc(HWND window, UINT message, WPARAM wParam, LPARAM
     default:
       return DefWindowProcW(window, message, wParam, lParam);
   }
+  return DefWindowProcW(window, message, wParam, lParam);
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   g_instance = instance;
 
-  // Focus the existing window instead of starting a second server.
+  // Logging first, before anything at all can fail. A previous build initialised
+  // the log after the window was created, so an early exit left no trace.
+  g_logPath = JoinPath(AppDataDir(), L"launcher.log");
+  Log(L"\n===== VLCFlix starting =====");
+  Log(L"[launch] exe = %ls", ExePath().c_str());
+
   HANDLE mutex = CreateMutexW(nullptr, TRUE, L"VLCFlix.SingleInstance");
   if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+    Log(L"[instance] already running; focusing the existing window");
     HWND existing = FindWindowW(L"VLCFlixMainWindow", nullptr);
     if (existing) {
       ShowWindow(existing, SW_RESTORE);
@@ -535,7 +746,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
   WSADATA wsa;
-  WSAStartup(MAKEWORD(2, 2), &wsa);
+  int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsa);
+  Log(L"[system] WSAStartup = %d", wsaResult);
 
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
@@ -544,9 +756,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
   wc.hIconSm = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
-  wc.hbrBackground = CreateSolidBrush(RGB(11, 11, 15));  // matches the app's --bg
+  wc.hbrBackground = CreateSolidBrush(RGB(11, 11, 15));
   wc.lpszClassName = L"VLCFlixMainWindow";
-  RegisterClassExW(&wc);
+  if (!RegisterClassExW(&wc)) {
+    Log(L"[system] RegisterClassEx failed, err %lu", GetLastError());
+  }
 
   RECT work{};
   SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
@@ -558,32 +772,33 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   g_window = CreateWindowExW(0, wc.lpszClassName, L"VLCFlix", WS_OVERLAPPEDWINDOW,
                              x, y, width, height, nullptr, nullptr, instance, nullptr);
   if (!g_window) {
-    MessageBoxW(nullptr, L"Could not create the application window.", L"VLCFlix",
-                MB_ICONERROR);
+    Log(L"[system] CreateWindowEx failed, err %lu", GetLastError());
+    MessageBoxW(nullptr, L"Could not create the application window.", L"VLCFlix", MB_ICONERROR);
     return 1;
   }
 
   g_loading = CreateWindowExW(0, L"STATIC", L"Starting VLCFlix\u2026",
-                              WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 0, width, 40,
-                              g_window, nullptr, instance, nullptr);
+                              WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 0, width, 40, g_window,
+                              nullptr, instance, nullptr);
   SendMessageW(g_loading, WM_SETFONT,
                reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
   RECT client;
   GetClientRect(g_window, &client);
-  SetWindowPos(g_loading, nullptr, 0, (client.bottom - 40) / 2, client.right, 40,
-               SWP_NOZORDER);
+  SetWindowPos(g_loading, nullptr, 0, (client.bottom - 40) / 2, client.right, 40, SWP_NOZORDER);
 
   ShowWindow(g_window, showCommand);
   UpdateWindow(g_window);
 
-  g_logPath = JoinPath(AppDataDir(), L"launcher.log");
-  Log(L"\n===== VLCFlix starting =====");
-  Log(L"[launch] exe = %ls", ExePath().c_str());
+  g_panelBrush = CreateSolidBrush(RGB(11, 11, 15));
+  Log(L"[launch] display = %dx%d", width, height);
 
   int port = FindFreePort();
+  Log(L"[launch] free port chosen = %d", port);
   g_baseUrl = L"http://127.0.0.1:" + std::to_wstring(port) + L"/";
   std::wstring error;
   if (port == 0 || !StartServer(port, &error)) {
+    Log(L"[launch] failed: %ls", error.c_str());
+    g_closeReason = L"server start failure";
     MessageBoxW(g_window,
                 error.empty() ? L"Could not start the background service." : error.c_str(),
                 L"VLCFlix could not start", MB_ICONERROR);

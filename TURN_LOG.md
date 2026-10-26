@@ -33,6 +33,8 @@
 ## 2026-10-26 — User authorizes initial push
 - User authorized pushing all current files except the token credential file and supplied author name `John Olowe` plus the instruction to use a generic email.
 - Retrieved the public GitHub account profile for `JohnOlowe`; its account ID is `121398818`. Configured the GitHub ID-based noreply address `121398818+JohnOlowe@users.noreply.github.com` as the generic author email.
-- Fetched `origin`; it has no refs/commits. Files approved for the initial commit are `.gitignore`, `AGENTS.md`, `CONTEXT.md`, `TURN_LOG.md`, and `checkpoint.json`; `.git-credentials` remains ignored.
 - Added ignore rules for the credential and common secret/build/cache paths before the first commit, per `AGENTS.md`.
-- Staged and checked the five approved paths. `git diff --cached --check` passed; `.git-credentials` is ignored and not staged. Next: commit, push to `main`, and verify the remote SHA.
+- Staged and checked `.gitignore`, `AGENTS.md`, `CONTEXT.md`, `TURN_LOG.md`, and `checkpoint.json`. `git diff --cached --check` passed; `.git-credentials` is ignored and was not staged.
+- Created root commit `913b93d8253e9a82335e5111ab37db3be4f456b8` (`chore: add repository agent setup`) and pushed `main` to `origin`.
+- Verified with `git ls-remote origin refs/heads/main` that the remote SHA exactly matched local HEAD: `913b93d8253e9a82335e5111ab37db3be4f456b8`.
+- No VLC source code was added; the commit contains only setup/state files and `.gitignore`. The credential file was not committed.

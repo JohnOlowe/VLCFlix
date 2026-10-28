@@ -351,6 +351,22 @@ void test_hover_preview() {
   CHECK(!app.preview_has_picture());
 }
 
+void test_player_empty_library() {
+  TEST("player: an empty library refuses to play and says why");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-player-empty");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1280, 720);
+  CHECK(!app.start_playback(0));
+  CHECK(!app.playing());
+  CHECK_STR_EQ(app.last_message(), "The library is empty");
+  // And an index past the end of a real catalog is refused with a message too.
+  app.set_catalog(catalog_for_samples());
+  const int past_end = static_cast<int>(app.catalog().items.size()) + 3;
+  CHECK(!app.start_playback(past_end));
+  CHECK(app.last_message().find("no longer in the library") != std::string::npos);
+}
+
 void test_player_missing_file() {
   TEST("player: a film whose file is gone says so instead of showing black");
   const std::string dir = join(temp_dir(), "vlcflix-studio-player-missing");
@@ -377,6 +393,7 @@ void run_player_tests() {
   test_engine_seeks_where_the_pipe_engine_could_not();
   test_app_player_journey();
   test_hover_preview();
+  test_player_empty_library();
   test_player_missing_file();
 }
 

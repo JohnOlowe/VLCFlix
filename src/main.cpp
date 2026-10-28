@@ -15,6 +15,7 @@
 #include "core/model.h"
 #include "core/naming.h"
 #include "core/paths.h"
+#include "core/sha1.h"
 #include "core/store.h"
 #include "core/sync.h"
 #include "library/artwork.h"
@@ -271,7 +272,10 @@ int command_play(const Args& args) {
       // Maybe it is a file path rather than an index.
       if (file_exists(target)) {
         Item item;
-        item.id = "id-cli";
+        // The same id the scanner would give this file, so its progress is the same
+        // progress: playing a sample from the CLI and then from the window continues
+        // where the other left off instead of starting two histories.
+        item.id = item_id_for_path(absolute_path(target));
         item.title = stem(target);
         item.path = absolute_path(target);
         item.filename = basename(target);
@@ -282,9 +286,18 @@ int command_play(const Args& args) {
       }
     }
   }
-  if (index < 0 && !app->catalog().items.empty()) index = 0;
-  if (index < 0) {
-    std::fprintf(stderr, "nothing to play: no catalog and no file given\n");
+  if (app->catalog().items.empty()) {
+    // Say what to do, not just that it failed: a fresh install has no library yet.
+    std::fprintf(stderr,
+                 "the library is empty, so there is nothing to play.\n"
+                 "  scan a folder first:  vlcflix scan --folders /path/to/movies\n"
+                 "  or name a file:       vlcflix play /path/to/film.mkv\n");
+    return 2;
+  }
+  if (index < 0) index = 0;
+  if (index >= static_cast<int>(app->catalog().items.size())) {
+    std::fprintf(stderr, "there is no film %d: the library has %zu.\n", index,
+                 app->catalog().items.size());
     return 2;
   }
 

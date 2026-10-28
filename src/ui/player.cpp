@@ -53,7 +53,12 @@ double App::clock_now() const {
 /* ------------------------------ starting it ------------------------------ */
 
 bool App::start_playback(int index) {
-  if (index < 0 || static_cast<std::size_t>(index) >= catalog_.items.size()) return false;
+  if (index < 0 || static_cast<std::size_t>(index) >= catalog_.items.size()) {
+    // Nothing to play. Saying so is better than opening a black window.
+    notify(catalog_.items.empty() ? std::string("The library is empty")
+                                  : std::string("That film is no longer in the library"));
+    return false;
+  }
   const Item& item = catalog_.items[static_cast<std::size_t>(index)];
   if (on_play_requested) on_play_requested(index);
 

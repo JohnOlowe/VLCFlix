@@ -122,6 +122,8 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         event->type = ui::InputEvent::Type::MouseMove;
         event->x = static_cast<float>(sdl_event.motion.x);
         event->y = static_cast<float>(sdl_event.motion.y);
+        last_mouse_x_ = event->x;
+        last_mouse_y_ = event->y;
         return true;
       case SDL_MOUSEBUTTONDOWN:
         if (sdl_event.button.button == SDL_BUTTON_LEFT) {
@@ -131,10 +133,37 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
           return true;
         }
         break;
-      case SDL_MOUSEWHEEL:
+      case SDL_MOUSEBUTTONUP:
+        // Released: this is what ends a scroll-bar drag. Without it a drag could only
+        // ever start, never stop.
+        if (sdl_event.button.button == SDL_BUTTON_LEFT) {
+          event->type = ui::InputEvent::Type::MouseUp;
+          event->x = static_cast<float>(sdl_event.button.x);
+          event->y = static_cast<float>(sdl_event.button.y);
+          return true;
+        }
+        break;
+      case SDL_MOUSEWHEEL: {
         event->type = ui::InputEvent::Type::Wheel;
-        event->wheel = static_cast<float>(sdl_event.wheel.y);
+        // Both axes, and both directions: a trackpad swipe is a horizontal wheel, and
+        // a "natural scrolling" device reports the opposite sign.
+        float y = static_cast<float>(sdl_event.wheel.y);
+        float x = static_cast<float>(sdl_event.wheel.x);
+        if (sdl_event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+          y = -y;
+          x = -x;
+        }
+        event->wheel = y;
+        event->wheel_x = x;
+        // Which rail the pointer is over decides whether the wheel goes sideways, so
+        // the event needs a position. SDL reports one from 2.26; older versions report
+        // 0,0, and the last motion position is the right fallback.
+        event->x = sdl_event.wheel.mouseX != 0 ? static_cast<float>(sdl_event.wheel.mouseX)
+                                               : last_mouse_x_;
+        event->y = sdl_event.wheel.mouseY != 0 ? static_cast<float>(sdl_event.wheel.mouseY)
+                                               : last_mouse_y_;
         return true;
+      }
       case SDL_KEYDOWN:
         event->type = ui::InputEvent::Type::Key;
         event->key = sdl_event.key.keysym.sym;

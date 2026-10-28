@@ -46,6 +46,67 @@ Catalog make_catalog() {
   return catalog;
 }
 
+// A library big enough to overflow any of the screens, and with one film whose
+// synopsis is longer than the detail sheet: both are needed to test scrolling at all,
+// because a screen that fits has nothing to scroll.
+Catalog make_big_catalog(std::size_t count) {
+  Catalog catalog;
+  catalog.scanned_at = 1;
+  for (std::size_t i = 0; i < count; ++i) {
+    Item item;
+    item.id = "id-" + std::to_string(i);
+    item.title = "Film " + std::to_string(i);
+    item.year = 2000 + static_cast<int>(i % 25);
+    item.genres = {"Drama"};
+    // Spaces matter: a synopsis is wrapped on word boundaries, so a single 1400-letter
+    // word would be one line and nothing would overflow.
+    item.synopsis = i == 0 ? std::string() : "Short synopsis.";
+    if (i == 0) {
+      for (int line = 0; line < 14; ++line) {
+        item.synopsis += "A late-night radio host takes a call from a listener who describes "
+                         "tomorrow's weather with impossible accuracy. ";
+      }
+    }
+    item.duration = 6000;
+    item.width = 1280;
+    item.height = 720;
+    item.path = "/movies/film" + std::to_string(i) + ".mkv";
+    item.filename = "film" + std::to_string(i) + ".mkv";
+    item.added_at = 5000 - static_cast<long long>(i);
+    catalog.items.push_back(item);
+  }
+  return catalog;
+}
+
+ui::InputEvent wheel_at(float x, float y, float notches) {
+  ui::InputEvent event;
+  event.type = ui::InputEvent::Type::Wheel;
+  event.x = x;
+  event.y = y;
+  event.wheel = notches;
+  return event;
+}
+
+ui::InputEvent key_event(int key) {
+  ui::InputEvent event;
+  event.type = ui::InputEvent::Type::Key;
+  event.key = key;
+  return event;
+}
+
+// The centre of the first *card* hit area (a poster, not a button): that is a point
+// the user's pointer would actually be over when they use the wheel on a rail.
+bool first_card_centre(const ui::App& app, float* x, float* y) {
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::OpenDetail) continue;
+    if (hit.first.w < 100 || hit.first.h < 100) continue;
+    *x = hit.first.x + hit.first.w / 2;
+    *y = hit.first.y + hit.first.h / 2;
+    return true;
+  }
+  return false;
+}
+
 double non_background_fraction(const Canvas& canvas) {
   const std::vector<uint8_t>& px = canvas.pixels();
   std::size_t count = 0;
@@ -264,6 +325,176 @@ void test_ui_keyboard() {
   CHECK_EQ(app.focus_item(), -1);
 }
 
+// ---------------------------------------------------------------- scrolling
+
+// The complaint this closes: "there are places where you are just unable to scroll as
+// you want". Each screen is driven the way a person would drive it - a wheel over the
+// thing, or a page key - and the measurement is the scroll offset the app itself
+// reports, not what a screenshot looks like.
+void test_ui_scrolling() {
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-scroll");
+  ensure_dir(dir);
+
+  TEST("ui: the wheel scrolls the page on all four list screens and stops at the end");
+  for (const char* screen : {"home", "browse", "search"}) {
+    ui::App app(dir, dir);
+    app.resize(1000, 600);
+    app.set_catalog(make_big_catalog(30));
+    CHECK(app.show_screen(screen, "film"));
+    draw_once(app);
+    CHECK(app.scroll_limit(ui::App::page_region()) > 0.0f);
+    for (int i = 0; i < 40; ++i) app.handle(wheel_at(500, 400, -1));
+    CHECK(app.scroll_offset(ui::App::page_region()) > 0.0f);
+    CHECK(app.scroll_offset(ui::App::page_region()) ==
+          app.scroll_limit(ui::App::page_region()));
+    // Scrolling back up returns to the top and does not go past it.
+    for (int i = 0; i < 40; ++i) app.handle(wheel_at(500, 400, 1));
+    CHECK_EQ(app.scroll_offset(ui::App::page_region()), 0.0f);
+  }
+
+  TEST("ui: a rail scrolls sideways, and the wheel over it does not jump the page");
+  {
+    ui::App app(dir, dir);
+    app.resize(1000, 600);
+    app.set_catalog(make_big_catalog(30));
+    draw_once(app);
+    float x = 0, y = 0;
+    CHECK(first_card_centre(app, &x, &y));
+    const std::string region = app.scroll_region_at(x, y);
+    CHECK(region.rfind("rail:", 0) == 0);
+    CHECK(app.scroll_limit(region) > 0.0f);
+    app.handle(wheel_at(x, y, -1));
+    CHECK(app.scroll_offset(region) > 0.0f);
+    CHECK_EQ(app.scroll_offset(ui::App::page_region()), 0.0f);
+    // Aimed at the rail one more time at its end: the wheel falls through to the page
+    // instead of doing nothing, so the user is never stuck.
+    for (int i = 0; i < 40; ++i) app.handle(wheel_at(x, y, -1));
+    CHECK(app.scroll_offset(region) == app.scroll_limit(region));
+    CHECK(app.scroll_offset(ui::App::page_region()) > 0.0f);
+  }
+
+  TEST("ui: the detail sheet scrolls to the end of a long synopsis");
+  {
+    ui::App app(dir, dir);
+    app.resize(900, 520);
+    app.set_catalog(make_big_catalog(6));
+    CHECK(app.show_screen("detail", "0"));
+    draw_once(app);
+    CHECK(app.scroll_limit("detail") > 0.0f);
+    // The sheet's own Play button, not the one the Home screen drew underneath it.
+    auto sheet_play_y = [&](ui::App& screen) {
+      float y = -1;
+      for (const auto& hit : screen.hit_rects()) {
+        if (hit.second.kind != ui::Action::Kind::Play) continue;
+        if (hit.first.x < 80) continue;  // the Home button sits at the gutter
+        y = hit.first.y;
+      }
+      return y;
+    };
+    const float play_before = sheet_play_y(app);
+    // At the top the buttons are below the fold, so they must NOT be clickable: an
+    // invisible target is the same bug as an unreachable one.
+    CHECK_EQ(play_before, -1.0f);
+    Canvas top(app.width(), app.height());
+    app.draw(top);
+    for (int i = 0; i < 40; ++i) app.handle(wheel_at(450, 260, -1));
+    CHECK(app.scroll_offset("detail") == app.scroll_limit("detail"));
+    Canvas end(app.width(), app.height());
+    app.draw(end);
+    // The picture changes: the sheet really scrolled rather than the wheel quietly
+    // doing nothing, which is the bug this test exists for.
+    std::size_t differing = 0;
+    for (std::size_t i = 0; i + 3 < top.pixels().size(); i += 4) {
+      if (top.pixels()[i] != end.pixels()[i]) ++differing;
+    }
+    CHECK(differing > top.pixels().size() / 4 / 20);
+    // And the buttons moved with the text, so they are reachable at the end.
+    const float play_after = sheet_play_y(app);
+    CHECK(play_after >= 0);
+  }
+
+  TEST("ui: the settings sheet scrolls down to the Scan button");
+  {
+    ui::App app(dir, dir);
+    app.resize(640, 420);
+    app.set_catalog(make_big_catalog(3));
+    Settings settings;
+    for (int i = 0; i < 8; ++i) settings.library_folders.push_back("/movies/folder" + std::to_string(i));
+    app.set_settings(settings);
+    CHECK(app.show_screen("settings", ""));
+    draw_once(app);
+    CHECK(app.scroll_limit("settings") > 0.0f);
+    for (int i = 0; i < 40; ++i) app.handle(wheel_at(320, 210, -1));
+    CHECK(app.scroll_offset("settings") == app.scroll_limit("settings"));
+    draw_once(app);
+    CHECK(has_action(app, ui::Action::Kind::ScanLibrary));
+  }
+
+  TEST("ui: Page Down, End and Home move the list; a sheet that fits does not scroll");
+  {
+    ui::App app(dir, dir);
+    app.resize(1000, 600);
+    app.set_catalog(make_big_catalog(30));
+    CHECK(app.show_screen("browse", ""));
+    draw_once(app);
+    CHECK(app.handle(key_event(1073741902)));  // Page Down
+    const float after_page = app.scroll_offset(ui::App::page_region());
+    CHECK(after_page > 0.0f);
+    CHECK(after_page < app.scroll_limit(ui::App::page_region()));
+    CHECK(app.handle(key_event(1073741901)));  // End
+    CHECK(app.scroll_offset(ui::App::page_region()) == app.scroll_limit(ui::App::page_region()));
+    CHECK(app.handle(key_event(1073741898)));  // Home
+    CHECK_EQ(app.scroll_offset(ui::App::page_region()), 0.0f);
+
+    // Negative control: a short synopsis in a big window has nothing to scroll, so the
+    // sheet must report no limit and the wheel must change nothing.
+    ui::App small(dir, dir);
+    small.resize(1600, 900);
+    small.set_catalog(make_catalog());
+    CHECK(small.show_screen("detail", "0"));
+    draw_once(small);
+    CHECK_EQ(small.scroll_limit("detail"), 0.0f);
+    small.handle(wheel_at(800, 450, -1));
+    CHECK_EQ(small.scroll_offset("detail"), 0.0f);
+  }
+
+  TEST("ui: clicking and dragging the bar scrolls, exactly like the wheel");
+  {
+    ui::App app(dir, dir);
+    app.resize(1000, 600);
+    app.set_catalog(make_big_catalog(30));
+    CHECK(app.show_screen("browse", ""));
+    draw_once(app);
+    // Find the bar's thumb: the only ScrollThumb hit area on the screen.
+    ui::InputEvent press;
+    press.type = ui::InputEvent::Type::MouseDown;
+    bool found = false;
+    for (const auto& hit : app.hit_rects()) {
+      if (hit.second.kind != ui::Action::Kind::ScrollThumb) continue;
+      press.x = hit.first.x + hit.first.w / 2;
+      press.y = hit.first.y + hit.first.h / 2;
+      found = true;
+      break;
+    }
+    CHECK(found);
+    CHECK(app.handle(press));
+    ui::InputEvent move = press;
+    move.type = ui::InputEvent::Type::MouseMove;
+    move.y += 120;
+    app.handle(move);
+    const float dragged = app.scroll_offset(ui::App::page_region());
+    CHECK(dragged > 0.0f);
+    ui::InputEvent release = move;
+    release.type = ui::InputEvent::Type::MouseUp;
+    app.handle(release);
+    // Released: further movement must not keep scrolling.
+    ui::InputEvent after = move;
+    after.y += 400;
+    app.handle(after);
+    CHECK_EQ(app.scroll_offset(ui::App::page_region()), dragged);
+  }
+}
+
 void test_ui_hit_areas_are_unique() {
   TEST("ui: hit areas do not overlap, so one click is one action");
   const std::string dir = join(temp_dir(), "vlcflix-studio-ui-hits");
@@ -313,6 +544,7 @@ void run_ui_tests(const std::string& out_dir) {
   test_ui_keyboard();
   test_ui_hit_areas_are_unique();
   test_ui_small_window();
+  test_ui_scrolling();
 }
 
 }  // namespace vf

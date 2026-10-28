@@ -219,6 +219,14 @@ if [ "$MODE" = "zip" ]; then
   ls -lsh "$DIST/VLCFlixStudio-win64.zip"
 fi
 
+# The handout copy: the exe on its own, in a git-ignored folder, so it can be picked
+# up and passed on without unzipping anything. It is the same bytes as the one in the
+# zip; the zip is what makes it *runnable* (SDL2, libVLC and its plugins ship beside
+# it), which is why both exist.
+mkdir -p "$ROOT/releases"
+cp "$PAYLOAD/VLCFlixStudio.exe" "$ROOT/releases/VLCFlixStudio.exe"
+
 printf '\nBuilt: %s\n' "$PAYLOAD/VLCFlixStudio.exe"
+printf 'Exe:   %s (git-ignored)\n' "$ROOT/releases/VLCFlixStudio.exe"
 printf 'This build has been RUN under Wine 11.19 (docs/TESTING.md section 11), which is\n'
 printf 'not Windows. Run scripts/windows-selfcheck.ps1 on a real machine for the last mile.\n'

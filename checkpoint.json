@@ -5,8 +5,8 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "cpp",
     "tracking_branch": "origin/cpp",
-    "local_head": "2876c06 (this checkpoint commit)",
-    "remote_sha": "2876c06",
+    "local_head": "e61546e",
+    "remote_sha": "e61546e",
     "pushed": true,
     "awaiting": "user runs tools/hwdecode-probe.cmd on the laptop and sends back vlcflix-hwdecode-report.txt; and confirms 1.2.0 still plays with the switch off",
     "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
@@ -16,7 +16,7 @@
     "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
     "base_commit": "d4606a7 (main, v1.2.0)",
     "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-    "remote_sha_note": "git ls-remote origin cpp returned 2876c0690d50fc237d58600f7103c13e5501d5f3 after the push; main is untouched at d4606a7"
+    "remote_sha_note": "git ls-remote origin cpp returned e61546e5f7184043df966279c0864d4907636e71 after the push; main is untouched at d4606a7. This checkpoint is the last commit of turn 1; the next turn updates it."
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

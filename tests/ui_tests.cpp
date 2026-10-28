@@ -15,6 +15,7 @@
 #include "render/canvas.h"
 #include "tests/harness.h"
 #include "library/fs_browse.h"
+#include "platform/render_driver.h"
 #include "platform/window_size.h"
 #include "ui/app.h"
 
@@ -902,6 +903,46 @@ void test_ui_folder_browser() {
   CHECK_EQ(app.settings().library_folders.size(), before + 1);
 }
 
+// The renderer policy: never SDL's own driver order, because that order crashed a real
+// machine inside the Intel Direct3D 9 driver before the first frame was drawn.
+void test_render_driver_policy() {
+  TEST("window: the renderer is chosen by name, and always ends in software");
+
+  // Nobody asked for anything: software, which is the one driver that cannot take the
+  // process down with it.
+  const vf::RenderDriverPlan plain = vf::render_driver_plan("");
+  CHECK_EQ(plain.order.size(), std::size_t(1));
+  CHECK_EQ(plain.order.front(), std::string("software"));
+  CHECK(!plain.from_environment);
+  CHECK(!plain.risky);
+
+  // An explicit request is honoured first, with software behind it as the net.
+  const vf::RenderDriverPlan asked = vf::render_driver_plan("direct3d11");
+  CHECK_EQ(asked.order.size(), std::size_t(2));
+  CHECK_EQ(asked.order[0], std::string("direct3d11"));
+  CHECK_EQ(asked.order[1], std::string("software"));
+  CHECK(asked.from_environment);
+  CHECK(!asked.risky);
+
+  // Asking for software is not a reason to try it twice.
+  const vf::RenderDriverPlan only_software = vf::render_driver_plan("software");
+  CHECK_EQ(only_software.order.size(), std::size_t(1));
+
+  // Stray whitespace in an environment variable is a typo, not a driver name.
+  const vf::RenderDriverPlan padded = vf::render_driver_plan("  opengl\t");
+  CHECK_EQ(padded.order[0], std::string("opengl"));
+
+  // Direct3D 9 is the driver that crashed; honoured if asked for, but flagged.
+  const vf::RenderDriverPlan risky = vf::render_driver_plan("direct3d9");
+  CHECK(risky.risky);
+  CHECK_EQ(risky.order.size(), std::size_t(2));
+  CHECK(vf::render_driver_description(risky).find("crashed") != std::string::npos);
+
+  // The description always names what will be tried, for `doctor` and the log.
+  CHECK(vf::render_driver_description(plain).find("VLCFLIX_RENDER_DRIVER") != std::string::npos);
+  CHECK(vf::render_driver_description(asked).find("software") != std::string::npos);
+}
+
 }  // namespace
 
 void run_ui_tests(const std::string& out_dir) {
@@ -918,6 +959,7 @@ void run_ui_tests(const std::string& out_dir) {
   test_window_fits_the_display();
   test_folder_browser();
   test_ui_folder_browser();
+  test_render_driver_policy();
 }
 
 }  // namespace vf

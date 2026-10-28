@@ -2,13 +2,17 @@
 
 #include <SDL.h>
 
+#include <cstdlib>
+
 #include "core/log.h"
+#include "platform/render_driver.h"
 #include "platform/window_size.h"
 
 namespace vf {
 
 struct Window::Impl {
   PointerCursor cursor = PointerCursor::Arrow;
+  std::string driver;  // what SDL actually gave us, for the log and for `doctor`
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
@@ -53,10 +57,31 @@ bool Window::open(int width, int height, const std::string& title) {
     impl_ = nullptr;
     return false;
   }
-  impl_->renderer = SDL_CreateRenderer(impl_->window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-  if (!impl_->renderer) {
-    LOG_WARN("accelerated renderer unavailable (%s); falling back to software", SDL_GetError());
-    impl_->renderer = SDL_CreateRenderer(impl_->window, -1, SDL_RENDERER_SOFTWARE);
+  // Ask for the renderer by name, in the order platform/render_driver.h decides - never
+  // SDL's "-1, whatever you think best". On a machine with an Intel GPU, SDL's own order
+  // fell through to Direct3D 9 and the D3D9-on-12 shim raised an access violation inside
+  // the driver, which killed the process before it could draw a single frame.
+  const char* requested = std::getenv("VLCFLIX_RENDER_DRIVER");
+  if (!requested || !*requested) requested = std::getenv("SDL_RENDER_DRIVER");
+  const RenderDriverPlan plan = render_driver_plan(requested ? requested : "");
+  // SDL 2 picks the renderer by hint and an index of -1, not by name, so each attempt
+  // sets the hint first. A driver that cannot be created returns null here - the crash
+  // this replaces happened *inside* the driver, which no return value can describe.
+  for (const std::string& driver : plan.order) {
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, driver.c_str());
+    const Uint32 flags = driver == "software" ? SDL_RENDERER_SOFTWARE
+                                              : SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC;
+    impl_->renderer = SDL_CreateRenderer(impl_->window, -1, flags);
+    if (impl_->renderer) {
+      impl_->driver = driver;
+      break;
+    }
+    LOG_WARN("renderer '%s' unavailable: %s", driver.c_str(), SDL_GetError());
+  }
+  if (impl_->renderer) {
+    SDL_RendererInfo info{};
+    if (SDL_GetRendererInfo(impl_->renderer, &info) == 0) impl_->driver = info.name;
+    LOG_INFO("renderer: %s (%s)", impl_->driver.c_str(), render_driver_description(plan).c_str());
   }
   if (!impl_->renderer) {
     LOG_ERROR("SDL_CreateRenderer failed: %s", SDL_GetError());
@@ -75,6 +100,12 @@ bool Window::open(int width, int height, const std::string& title) {
   height_ = height;
   LOG_INFO("window opened %dx%d (%s)", width, height, title.c_str());
   return true;
+}
+
+const std::string& Window::renderer_name() const {
+  static const std::string none = "none";
+  if (!impl_) return none;
+  return impl_->driver;
 }
 
 void Window::set_cursor(PointerCursor kind) {

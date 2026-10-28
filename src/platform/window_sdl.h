@@ -24,6 +24,8 @@ class Window {
   bool open(int width, int height, const std::string& title);
   void close();
   void present(const Canvas& canvas);
+  // The SDL renderer actually in use ("software", "direct3d11", ...). Empty before open.
+  const std::string& renderer_name() const;
   // Called from the event loop every frame; cheap and idempotent.
   void set_cursor(PointerCursor kind);
   // Waits up to `timeout_ms` for input. Returns false only when the window asked to

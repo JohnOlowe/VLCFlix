@@ -907,3 +907,18 @@ credential (`.secrets/github-token` is correctly git-ignored and absent), so the
 `cpp` branch exists locally only; `git ls-remote` still shows `main` alone. Asked
 the user for the three decisions the first line of code depends on (branch name,
 UI toolkit, whether to keep the external-VLC mode at all).
+
+## 2026-10-28 — Three-turn plan agreed; token requested
+
+User fixed the shape of the work: three turns, pushing to a second branch that
+this session creates. Answers to the decisions were not given, so they are taken
+and recorded in `docs/PLAN_3_TURNS.md` (branch `cpp`; code under `native/`, Node app
+left intact as the reference; SDL2 + own renderer; libVLC in-process only; CMake
+with a Makefile fallback; own test harness).
+
+Ask outstanding: a fine-grained PAT, Contents read/write on `JohnOlowe/VLCFlix`
+only. Nothing can be pushed until it arrives — this clone has no credential, which
+`git push --dry-run origin cpp` proved with
+`fatal: could not read Username for 'https://github.com'`. Dry run only: no refs,
+objects or branches were created and the remote still has `main` alone at
+`d4606a7`.

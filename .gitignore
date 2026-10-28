@@ -1,0 +1,30 @@
+# Credentials and private local configuration
+.secrets/
+.git-credentials
+.netrc
+.env
+.ssh/
+*.pem
+*.key
+id_ed25519*
+.gitconfig
+
+# Generated executables and installation bundles
+/releases/
+*.exe
+*.dll
+*.o
+*.res.o
+
+# Build products and caches
+.cache/
+.venv/
+dist/
+build/
+out/
+target/
+__pycache__/
+
+# Runtime state and generated artwork, not source files
+/data/
+/media/

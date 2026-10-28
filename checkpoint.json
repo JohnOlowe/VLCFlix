@@ -4,17 +4,18 @@
     "path": "/home/user/VLCFlix",
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "cpp",
-    "tracking_branch": "none \u2014 branch is local only",
-    "local_head": "e521d71",
-    "remote_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-    "pushed": false,
+    "tracking_branch": "origin/cpp",
+    "local_head": "ba31e15",
+    "remote_sha": "ba31e153049c04f070aeef6d4d0e48fc34507e38",
+    "pushed": true,
     "awaiting": "user runs tools/hwdecode-probe.cmd on the laptop and sends back vlcflix-hwdecode-report.txt; and confirms 1.2.0 still plays with the switch off",
-    "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
+    "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
     "remote_sha_verified_at": "2026-10-26",
     "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
-    "remote_sha_ref": "origin/main (ls-remote, 2026-10-28)",
+    "remote_sha_ref": "origin/cpp via git ls-remote, 2026-10-28",
     "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
-    "base_commit": "d4606a7 (main, v1.2.0)"
+    "base_commit": "d4606a7 (main, v1.2.0)",
+    "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75"
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -77,10 +78,9 @@
     ]
   },
   "next_steps": [
-    "get the three open decisions from the user (branch name, UI toolkit, external-VLC mode)",
-    "P0: cmake + Makefile skeleton and a make test harness that can fail",
-    "P1: json, store, naming (A1 fixed), subtitles, sync \u2014 with a regression test per bug and a negative control",
-    "a GitHub credential is needed before anything can be pushed"
+    "Turn 2: render/canvas (blend, clip, rounded rect, gradient, blit), FreeType text, JPEG/PNG load, SDL2 window, widget tree, then home/hero/rails/cards/browse/search/mylist/detail/settings, each rendered to a PNG and looked at",
+    "Turn 3: libVLC engine with set_callbacks frame sink, presenter queue for both-direction audio offset, subtitle overlay on the presentation clock, player chrome and gestures, docs, honest list of what is missing",
+    "Windows build is not verifiable here; it needs the user machine (P8)"
   ],
   "git_auth": {
     "token_location": ".secrets/github-token",
@@ -263,7 +263,7 @@
     "decision": "rewrite the whole product in pure C++; libVLC in-process, own renderer/input; no Node, no browser, no WebView2, no HTTP control of external vlc.exe",
     "decided_by_user": true,
     "branch": "cpp",
-    "status": "audit + plan complete, no C++ code yet",
+    "status": "turn 1 of 3 complete and pushed; window (turn 2) and player (turn 3) outstanding",
     "docs": [
       "docs/AUDIT.md",
       "docs/PORT_PLAN.md"
@@ -299,6 +299,50 @@
       "HTTP range streaming",
       "WebView2 shell",
       "transcode-for-playback"
+    ],
+    "product_name": "VLCFlix Studio 2.0.0 (slug VLCFlixStudio)",
+    "code_root": "native/",
+    "build_systems": [
+      "CMake",
+      "plain make (g++ only)"
+    ],
+    "tests": "132/132 checks, own harness",
+    "verified_from_clean_clone": true,
+    "windows_identity": {
+      "exe": "VLCFlixStudio.exe",
+      "data_dir": "%LOCALAPPDATA%\\VLCFlixStudio",
+      "uninstall_key": "...Uninstall\\VLCFlixStudio",
+      "mutex": "unique per product",
+      "must_not_overwrite": "VLCFlix 1.2.0"
+    },
+    "logging": {
+      "init": "first statement of main()",
+      "fallbacks": [
+        "user data",
+        "beside exe",
+        "temp"
+      ],
+      "flush": "per line",
+      "crash_handlers": [
+        "std::terminate",
+        "SIGSEGV/ABRT/FPE/ILL/BUS/INT",
+        "Win32 unhandled exception + first-chance vectored"
+      ],
+      "rotation": "5 x 2 MB",
+      "run_marker": "previous-run-crashed detection"
+    },
+    "bugs_fixed": [
+      "A1 year-titled films",
+      "A4 finished films leave progress",
+      "A5 nv12 is not 10-bit",
+      "A6 password must be a string",
+      "A9 still versioning",
+      "+ adoption of artwork files already on disk"
+    ],
+    "own_bugs_found_by_running": [
+      "scan phase 1 assigned each item twice, losing cached fields and re-rendering artwork every launch",
+      "ffprobe -of json reports numbers as strings, so durations/dimensions read 0",
+      "git .gitignore media/ rule silently swallowed native/src/media/ (renamed to native/src/library/)"
     ]
   },
   "bugs_verified_2026_10_28": [
@@ -312,5 +356,10 @@
   ],
   "withdrawn_claims": [
     "Suspected unit bug in subtitleClock(): noise \u2014 sub.audio is stored in seconds; arithmetic correct. Checked before reporting."
-  ]
+  ],
+  "identity": {
+    "name": "John Olowe",
+    "email": "121398818+JohnOlowe@users.noreply.github.com",
+    "as_instructed": true
+  }
 }

@@ -15,31 +15,38 @@ verified here, so every "it works" claim would have been unverifiable.
 The user chose **"Netflix front-end driving real VLC"** instead. VLC remains the
 playback engine; VLCFlix owns the entire browsing surface.
 
-## Current state (2026-10-28) — rewriting to pure C++ on branch `cpp`
+## Current state (2026-10-28) — native port, turn 1 of 3 done
 
-The product is being **rewritten from scratch in C++**: one native binary, libVLC
-in-process, our own renderer and input. No Node, no Express, no browser, no
-WebView2, no external `vlc.exe` driven over HTTP.
+Product: **VLCFlix Studio 2.0.0**. Branch **`cpp`** exists on GitHub (`origin/cpp`)
+and is the working branch. Turn 1 of the three-turn plan is committed, pushed and
+verified; turns 2 (window + browsing UI) and 3 (player, sync, finish) remain.
 
-- Branch **`cpp`**, created from `main` at `d4606a7`. **Local only — not pushed.**
-  A fresh clone contains no credential (`.secrets/github-token` is git-ignored and
-  absent), so there is nothing here that can authenticate a push. The user has to
-  supply a token before any push can happen.
-- `docs/AUDIT.md` — what `main` does, and six verified bugs with the commands that
-  show them (title/year parsing, unseekable ffmpeg copy streams, broken suffix
-  Range, films that never finish, `nv12` classified as 10-bit, unvalidated
-  `vlcPassword`).
-- `docs/PORT_PLAN.md` — architecture, JS→C++ module map, phases P0–P8 each with a
-  verification, deliberate differences, risks.
-- Verified spike: libVLC 3.0.24 `set_callbacks` delivers decoded frames into our
-  own buffer and seeks a file the ffmpeg pipe engine cannot seek. This is the
-  foundation of the rewrite.
-- **Nothing has been compiled for the new app yet**, and the desktop window/input
-  path is unverified (this sandbox has no display). Do not claim either.
-- The v1.2.0 Node application below still works and is still what `main` holds; it
-  is the reference behaviour for the port, not the deliverable.
+- **Code lives in `native/`.** The Node app (`server/`, `public/`, `src/win/`) is
+  untouched and still works; it is the reference behaviour for the port and is
+  deleted only when the rewrite is complete and the user approves it.
+- `native/` is C++17 with **no third-party headers**: `core/{json,log,paths,naming,
+  sha1,store,sync,catalog,brand}`, `library/{walk,probe,subtitles,artwork,scan}`,
+  `platform/proc`, a CLI (`scan/status/settings/naming/doctor/crash`) and a test
+  harness. Builds with CMake **and** with plain `make` (g++ only), because
+  installed tooling does not survive a snapshot.
+- **Verified from a clean clone on GitHub**: `make` builds, `make test` = 132/132,
+  `./build/vlcflix scan --folders ../samples` = 8 items, 0 errors, all artwork.
+- Identity/product rules: the Windows build must look like a new application
+  (`VLCFlix Studio`, its own data dir, uninstall key and mutex, never over 1.2.0) —
+  `docs/PORT_PLAN.md` §7.1, constant in `native/src/core/brand.h`.
+- Logging requirement: `log::init()` is the first statement of `main()`, three
+  directory fallbacks, per-line flush, crash handlers (exit 139 test leaves
+  `[CRASH] SIGSEGV` + 9 frames in the log), and a run marker so the next launch
+  reports an unexpected death — `docs/PORT_PLAN.md` §7.2, verified.
+- Bugs from `docs/AUDIT.md` fixed and covered by regression tests in the native
+  code: A1 (year-titled films), A4 (finished films), A5 (`nv12`), A6 (password
+  type), A9 (still versioning). A2/A3 die with the code that caused them
+  (transcoding by pipe; HTTP range serving).
+- **Not done:** no window, no player; **no Windows build exists**, so every
+  `_WIN32` branch is written but unexecuted. Do not claim otherwise.
 
-## Historical state (2026-10-26) — the Node/WebView2 application, v1.2.0
+## Historical state (2026-10-26)
+— the Node/WebView2 application, v1.2.0
 - Local clone at `/home/user/VLCFlix`, branch `main`, tracking `origin/main`.
 - Application is **complete, working and pushed**. Local HEAD = remote
   `origin/main` = `a53d691`, verified with `git ls-remote` and independently with

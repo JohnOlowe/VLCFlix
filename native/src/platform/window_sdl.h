@@ -34,6 +34,11 @@ class Window {
   void* window_ = nullptr;
   int width_ = 0;
   int height_ = 0;
+  // Last known pointer position. The wheel event carries its own position only from
+  // SDL 2.26, and the app needs it to scroll the rail under the pointer rather than
+  // always the page.
+  float last_mouse_x_ = 0;
+  float last_mouse_y_ = 0;
   bool fullscreen_ = false;
 };
 

@@ -23,7 +23,7 @@ current, and `../docs/TESTING.md` §10 is the checklist for the machine that can
 sudo apt install build-essential pkg-config libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev
 cd native
 make -j2          # build/vlcflix
-make verify       # the gate: static checks, 364 test checks, 15 journey steps
+make verify       # the gate: static checks, 412 test checks, 15 journey steps
 make test         # just the tests (unit, golden image, fault injection)
 make asan         # the same tests under AddressSanitizer
 make preflight    # just the static checks
@@ -72,15 +72,31 @@ by looking at a file rather than by describing it.
 | Screen | What it does |
 |---|---|
 | Home | Billboard of the newest film with its synopsis, Play / My List / Details, then rails: Continue Watching, Recently Added, My List, one per genre |
-| Browse All | Auto-filling grid, wheel and arrow-key scrolling |
+| Browse All | Auto-filling grid, wheel, drag and page-key scrolling, with a draggable bar |
 | Search | Opens on `/` or a click, filters on title, genre and year as you type |
 | My List | The saved films, from `myList.json` |
-| Detail sheet | Artwork, title, meta line, synopsis, Play, My List, progress |
+| Detail sheet | Artwork, title, meta line, the whole synopsis, Play, My List, progress - scrolls when the text is longer than the sheet |
 | Settings | Library folders (add by typing a path, remove, or take the bundled samples), the two toggles, and **Scan library**, which runs the real scan |
 
-Keyboard: `/` search, arrows move the card focus (Enter opens it), Escape backs out
-one layer at a time, Tab-free by design. Mouse: hover lifts a card and shows a preview
-panel with the still and the meta line.
+Keyboard: `/` search, arrows move the card focus (Enter opens it), Page Up / Page Down
+scroll a screen at a time, Home and End jump to the top and the bottom, Escape backs
+out one layer at a time, Tab-free by design. Mouse: hover lifts a card and shows a
+preview panel with the still and the meta line.
+
+**Scrolling is everywhere it can be needed**, because a place you cannot scroll is a
+place you cannot reach:
+
+| Where | How it moves |
+|---|---|
+| Home, Browse All, My List, Search | the wheel, Page keys, Home/End, or dragging the bar on the right edge |
+| Each rail on Home | the wheel over that rail moves it sideways; at its end the wheel carries on down the page instead of doing nothing. Arrow keys scroll the rail to keep the focused card visible |
+| Detail sheet | the wheel, the page keys or its own bar: a long synopsis scrolls instead of hiding the Play button |
+| Settings | the same - with many folders the Scan button is reachable by scrolling rather than being cut off |
+| Player | the wheel is volume, which is what a player is for |
+
+A bar is drawn only when there is something to scroll, and it is draggable: press it,
+move, release. Hit areas for anything that has scrolled out of view are dropped, so
+what is off-screen is never clickable.
 
 Every hit area is produced by the drawing pass that drew it, so a control cannot be
 painted somewhere it cannot be clicked. The UI tests use that list, not guessed
@@ -165,13 +181,13 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 ## What the tests prove
 
 `make verify` runs four things and they are not interchangeable:
-`../tools/preflight.sh` (28 static checks a compiler here cannot make), 364 test
-checks, and the 15-step journey through the real binary. `make asan` runs the same 364
+`../tools/preflight.sh` (28 static checks a compiler here cannot make), 412 test
+checks, and the 15-step journey through the real binary. `make asan` runs the same 412
 checks under AddressSanitizer. The reasoning behind each layer, the negative control
 for every layer, and the honest list of what none of them can reach are in
 `../docs/TESTING.md`.
 
-**364 checks** (unit + golden image + fault injection):
+**412 checks** (unit + golden image + fault injection):
 
 - every bug from `../docs/AUDIT.md` has a regression test: **A1** year-titled films,
   **A4** a film past 92 % leaves Continue Watching, **A5** `nv12` is not 10-bit,

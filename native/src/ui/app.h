@@ -30,7 +30,8 @@ enum class View { Home, Browse, MyList, Search };
 struct InputEvent {
   enum class Type { None, MouseMove, MouseDown, MouseUp, Wheel, Key, Text, Back, Resize } type = Type::None;
   float x = 0, y = 0;
-  float wheel = 0;
+  float wheel = 0;      // vertical: +1 per notch down-and-away from the user
+  float wheel_x = 0;    // horizontal wheel / trackpad swipe
   int key = 0;         // SDLK_* values, kept as int so this header stays toolkit-free
   std::string text;    // for Type::Text
   bool ctrl = false;
@@ -62,6 +63,8 @@ struct Action {
     NudgeSync,      // value = +/- ms
     RemoveFolder,   // value = the folder
     UseSampleFolder,
+    ScrollTo,       // value = scroll region; a click on the bar's track jumps there
+    ScrollThumb,    // value = scroll region; the thumb is dragged
   } kind = Kind::None;
   int index = -1;
   std::string value;
@@ -111,6 +114,15 @@ class App {
   bool settings_open() const { return settings_open_; }
   const std::string& last_message() const { return last_message_; }
   std::string screen_name() const;
+
+  // Scrolling. Every screen that can overflow declares a region while it draws; the
+  // input path and the tests use the same names, so "it scrolls" is measurable.
+  // Regions: "page" (Home, Browse, My List, Search), "detail", "settings", and
+  // "rail:<id>" for each row on Home.
+  float scroll_offset(const std::string& region) const;
+  float scroll_limit(const std::string& region) const;
+  std::string scroll_region_at(float x, float y) const;
+  static const char* page_region() { return "page"; }
 
   // The hit areas produced by the last draw. Used by tests so they click the real
   // geometry instead of guessed pixel coordinates.
@@ -217,6 +229,27 @@ class App {
 
   void add_hit(const Rect& rect, Action action);
   Action hit_test(float x, float y) const;
+
+  /* -------------------------------- scrolling ------------------------------ */
+  struct ScrollState {
+    float offset = 0;
+    float max = 0;
+    Rect viewport{0, 0, 0, 0};
+    Rect thumb{0, 0, 0, 0};
+    bool horizontal = false;
+  };
+  // Called by the drawing pass with what it just laid out, so the limit is never a
+  // guess: the same number drives the bar, the wheel and the tests.
+  void declare_scroll(const std::string& region, float max_offset, const Rect& viewport,
+                      bool horizontal);
+  void set_scroll(const std::string& region, float value);
+  bool scroll_by(const std::string& region, float delta);
+  // Draws a bar (only when the region actually overflows) and registers its hit areas.
+  void draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& region);
+  // Scrolls whatever contains `rect` just enough to show it - used when the keyboard
+  // moves focus, and when a rail is scrolled.
+  void reveal_rect(const Rect& rect);
+  const std::string& rail_at(float x, float y) const;
   void notify(const std::string& message);
   bool handle_player(const InputEvent& event);
   void draw_chrome(Canvas& canvas);
@@ -278,8 +311,11 @@ class App {
   bool search_focused_ = false;
   int open_item_ = -1;
   bool settings_open_ = false;
-  float home_scroll_ = 0;
-  float grid_scroll_ = 0;
+  std::map<std::string, ScrollState> scrolls_;
+  std::string drag_region_;      // the scroll bar being dragged, if any
+  float drag_grab_ = 0;          // pointer offset inside the thumb when the drag began
+  std::vector<std::pair<Rect, std::string>> rail_bands_;
+  std::vector<Rect> order_rects_;  // drawn position of each card in order_
   int hover_item_ = -1;
   int focus_item_ = -1;
   std::vector<int> order_;   // catalog indices in drawing order, rebuilt every frame

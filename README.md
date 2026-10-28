@@ -30,27 +30,25 @@ overwrites or migrates 1.x, and the two can be installed side by side.
 ```bash
 cd native
 make -j2          # build/vlcflix   (or: cmake -S . -B build && cmake --build build)
-make verify       # static checks + 364 tests + 15-step end-to-end journey
+make verify       # static checks + 412 tests + 15-step end-to-end journey
 make asan         # the same tests under AddressSanitizer
 ```
 
-**Windows:** `scripts/build-win-native.sh --zip` cross-compiles `VLCFlixStudio.exe`
-from this tree with llvm-mingw and packs a complete payload (libVLC, SDL2, FreeType,
-libpng, libjpeg) into `dist/win-native/VLCFlixStudio-win64.zip`. Build artifacts are
-git-ignored and are not published as releases; build your own from source. Unzip
-anywhere and run `VLCFlixStudio.exe` — nothing is installed and your data stays in
-`%LOCALAPPDATA%\VLCFlixStudio`, next to 1.x rather than over it.
+**Windows:** the executable is cross-compiled from this tree with llvm-mingw and left
+at **`native/releases/VLCFlixStudio.exe`** (git-ignored — a fresh clone builds it with
+`scripts/build-win-native.sh`). It needs the libraries that ship beside it in
+`dist/win-native/VLCFlixStudio-win64.zip`: `libvlc.dll`, `libvlccore.dll` and its
+`plugins/`, SDL2, libpng, zlib and libjpeg. Unzip those next to the exe and run it;
+nothing is installed and your data stays in `%LOCALAPPDATA%\VLCFlixStudio`, beside 1.x
+rather than over it. Put `ffmpeg.exe` and `ffprobe.exe` in the same folder (or on
+`PATH`) or the library scans without durations and artwork — `doctor` says so plainly.
 
-The Windows executable has been **executed** (under Wine 11.19, on this machine): it
-scans a real folder with correct durations and resolutions, draws all 8 artwork sets,
-renders all six screens, and plays a film — `state=playing … decoded=99 presented=99`.
-Running it is what found the four Windows-only bugs the cross build could not see
-(empty child-process output, children stealing each other's pipes, zero-byte PNG
-writes across a CRT boundary, and `have_binary` trusting a process that printed
-nothing). It has **not** run on Windows itself, which is why the zip ships
-`windows-selfcheck.ps1`: run it on a real machine and it writes a pass/fail report with
-screenshots. Everything proven, and everything not, is in
-[`docs/TESTING.md`](docs/TESTING.md) section 11.
+The Windows build has been **executed** (under Wine 11.19, on this machine): scanning,
+artwork, playback, all six screens, and the crash log. Running it is what found four
+Windows-only bugs the cross build could not see. What Wine cannot prove — a real
+display, real audio, and the installer — is listed in
+[`docs/TESTING.md`](docs/TESTING.md) §11, and the zip ships
+`windows-selfcheck.ps1` to run the same checks on real Windows.
 
 How it is tested — six layers, a regression test per known bug with its negative
 control, and the honest list of what could not be verified here — is

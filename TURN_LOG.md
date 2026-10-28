@@ -1296,3 +1296,41 @@ Suite size: 339 → **364 checks**; payload check 48 → **136 imports**, 0 miss
 
 Still open after this, and stated as such: Windows 10/11 itself, the window on a real
 display, real audio, and the installer side by side with 1.2.0.
+
+---
+
+## Follow-up, 2026-10-28: the exe on its own, and scrolling everywhere
+
+Two requests, both from the user:
+
+**1. "Just give me the exe itself, not the zip file."** The Windows executable is now
+written to `native/releases/VLCFlixStudio.exe` by `scripts/build-win-native.sh`, and
+that folder (plus `*.exe`, `*.dll`) is git-ignored, so it never reaches GitHub. The
+same build still packs `dist/win-native/VLCFlixStudio-win64.zip`, because the exe is
+5.6 MB and needs `libvlc.dll`, `libvlccore.dll`, its `plugins/`, SDL2, libpng, zlib and
+libjpeg beside it to start. Rebuilt and re-run under Wine 11.19 after the change:
+`version` OK, `scan` = 8 items / 0 errors, all six screens rendered
+(`docs/evidence/windows-home-scrolling.png`).
+
+**2. "Add scrolling to everywhere possible... make sure that scrolling exists anywhere
+they might be needed."** It did not, and not subtly:
+
+| Place | Before | Now |
+|---|---|---|
+| Detail sheet | the wheel was ignored outright (`return false` on any wheel while a sheet was open); a long synopsis put Play below the edge with no way to reach it | scrolls by wheel, Page keys, Home/End and its own draggable bar; the buttons move with the text, and are only clickable once they are on screen |
+| Settings sheet | same: the wheel was ignored, and eight folders pushed *Scan library* past the panel edge | scrolls the same way, Scan button included in the content |
+| Rails on Home | a rail stopped drawing at the right edge - films past the visible row could not be reached by any input at all | each rail scrolls sideways under the wheel, with its own bar in the heading line; at the end the wheel carries on down the page instead of doing nothing |
+| Browse / My List / Search | wheel and arrows only, with nothing on screen saying more existed | wheel, Page Up/Down, Home/End, and a draggable bar that appears only when it is needed |
+| Keyboard focus | scrolled the grid in a special case | `reveal_rect()` scrolls whatever holds the focused card - a rail sideways, a grid vertically - using the rectangles the last frame actually drew |
+
+The mechanism is one declaration per region (`page`, `detail`, `settings`, `rail:<id>`)
+made by the drawing pass, and every consumer - the bar, the wheel, the keys, the tests
+- reads that same number. Hit areas for anything scrolled out of view are dropped, so
+nothing invisible stays clickable.
+
+Writing the tests found two bugs in the new code: the detail sheet claimed ~90 px of
+scroll when it fitted (content height counted the art twice), and its buttons were
+pinned to a fixed height instead of moving with the text. Both are covered now.
+
+Suite: 364 → **412 checks**, `make verify` green (28 static + 412 + 15 journey steps),
+`make asan` clean, golden baselines regenerated for the two sheets that changed.

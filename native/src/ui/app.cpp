@@ -31,6 +31,13 @@ constexpr int kKeyUp = 1073741906;
 constexpr int kKeyDown = 1073741905;
 constexpr int kKeyRight = 1073741903;
 constexpr int kKeySlash = '/';
+constexpr int kKeyHome = 1073741898;
+constexpr int kKeyPageUp = 1073741899;
+constexpr int kKeyEnd = 1073741901;
+constexpr int kKeyPageDown = 1073741902;
+// One notch of the wheel, and one page of a keyboard scroll.
+constexpr float kWheelStep = 96.0f;
+constexpr float kRailStep = 140.0f;
 constexpr int kKeyF = 'f';
 
 constexpr float kPosterWidth = 156.0f;
@@ -83,6 +90,134 @@ Action App::hit_test(float x, float y) const {
     if (it->first.contains(x, y)) return it->second;
   }
   return Action{};
+}
+
+/* -------------------------------- scrolling ------------------------------ */
+
+// Everything that can be taller (or wider) than the space it is given declares a
+// scroll region while it draws. One name, "page", covers Home, Browse, My List and
+// Search because only one of them is on screen at a time; each rail on Home gets
+// "rail:<id>" for sideways movement; the two sheets get "detail" and "settings".
+//
+// This was a real hole, not a nicety: the wheel was ignored whenever the detail or
+// settings sheet was open, a rail past the first row of cards could not be reached at
+// all, and nothing on screen said whether more content existed. Each region now draws
+// its own bar when (and only when) it actually overflows, and the bar is draggable.
+
+float App::scroll_offset(const std::string& region) const {
+  const auto it = scrolls_.find(region);
+  return it == scrolls_.end() ? 0.0f : it->second.offset;
+}
+
+float App::scroll_limit(const std::string& region) const {
+  const auto it = scrolls_.find(region);
+  return it == scrolls_.end() ? 0.0f : it->second.max;
+}
+
+void App::declare_scroll(const std::string& region, float max_offset, const Rect& viewport,
+                         bool horizontal) {
+  ScrollState& state = scrolls_[region];
+  state.max = std::max(0.0f, max_offset);
+  state.viewport = viewport;
+  state.horizontal = horizontal;
+  state.offset = std::clamp(state.offset, 0.0f, state.max);
+}
+
+void App::set_scroll(const std::string& region, float value) {
+  ScrollState& state = scrolls_[region];
+  state.offset = std::clamp(value, 0.0f, std::max(0.0f, state.max));
+}
+
+bool App::scroll_by(const std::string& region, float delta) {
+  ScrollState& state = scrolls_[region];
+  const float before = state.offset;
+  state.offset = std::clamp(state.offset + delta, 0.0f, std::max(0.0f, state.max));
+  return state.offset != before;
+}
+
+const std::string& App::rail_at(float x, float y) const {
+  static const std::string none;
+  // Last drawn first, so a rail drawn over another one wins, exactly like hit_test.
+  for (auto it = rail_bands_.rbegin(); it != rail_bands_.rend(); ++it) {
+    if (it->first.contains(x, y)) return it->second;
+  }
+  return none;
+}
+
+std::string App::scroll_region_at(float x, float y) const {
+  if (open_item_ >= 0) return "detail";
+  if (settings_open_) return "settings";
+  const std::string& rail = rail_at(x, y);
+  if (!rail.empty() && scroll_limit("rail:" + rail) > 0.5f) return "rail:" + rail;
+  return "page";
+}
+
+void App::draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& region) {
+  ScrollState& state = scrolls_[region];
+  if (state.max <= 0.5f) {
+    state.thumb = Rect{0, 0, 0, 0};
+    return;
+  }
+  const bool horizontal = state.horizontal;
+  const float extent = horizontal ? track.w : track.h;
+  const float content = extent + state.max;
+  // A thumb never shrinks below 28 px, or a long library turns it into a hairline that
+  // cannot be grabbed.
+  const float thumb_len = std::min(extent, std::max(28.0f, extent * (extent / content)));
+  const float span = extent - thumb_len;
+  const float t = state.max > 0 ? std::clamp(state.offset / state.max, 0.0f, 1.0f) : 0.0f;
+  const Rect thumb = horizontal ? Rect{track.x + span * t, track.y, thumb_len, track.h}
+                                : Rect{track.x, track.y + span * t, track.w, thumb_len};
+  state.thumb = thumb;
+
+  const Color rail_color = rgba(0xffffff, 26);
+  const Color thumb_color = rgba(0xffffff, 96);
+  canvas.fill_round_rect(track, horizontal ? track.h / 2 : track.w / 2, rail_color);
+  canvas.fill_round_rect(thumb, horizontal ? thumb.h / 2 : thumb.w / 2, thumb_color);
+
+  // The track either side of the thumb jumps a page. Registering two rects rather
+  // than one that contains the thumb keeps "what is drawn is what is clickable"
+  // true - a click can only ever land on one action.
+  if (horizontal) {
+    if (thumb.x > track.x) {
+      add_hit(Rect{track.x, track.y, thumb.x - track.x, track.h},
+              Action{Action::Kind::ScrollTo, -1, region});
+    }
+    if (thumb.right() < track.right()) {
+      add_hit(Rect{thumb.right(), track.y, track.right() - thumb.right(), track.h},
+              Action{Action::Kind::ScrollTo, -1, region});
+    }
+  } else {
+    if (thumb.y > track.y) {
+      add_hit(Rect{track.x, track.y, track.w, thumb.y - track.y},
+              Action{Action::Kind::ScrollTo, -1, region});
+    }
+    if (thumb.bottom() < track.bottom()) {
+      add_hit(Rect{track.x, thumb.bottom(), track.w, track.bottom() - thumb.bottom()},
+              Action{Action::Kind::ScrollTo, -1, region});
+    }
+  }
+  add_hit(thumb, Action{Action::Kind::ScrollThumb, -1, region});
+}
+
+void App::reveal_rect(const Rect& rect) {
+  if (view_ == View::Home && open_item_ < 0 && !settings_open_) {
+    const std::string& rail = rail_at(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    if (rail.empty()) return;
+    const std::string region = "rail:" + rail;
+    const ScrollState& state = scrolls_[region];
+    const float left = state.viewport.x + 8;
+    const float right = state.viewport.right() - 8;
+    if (rect.x < left) set_scroll(region, state.offset - (left - rect.x));
+    else if (rect.right() > right) set_scroll(region, state.offset + (rect.right() - right));
+    return;
+  }
+  const std::string region = open_item_ >= 0 ? "detail" : settings_open_ ? "settings" : "page";
+  const ScrollState& state = scrolls_[region];
+  const float top = state.viewport.y + 8;
+  const float bottom = state.viewport.bottom() - 8;
+  if (rect.y < top) set_scroll(region, state.offset - (top - rect.y));
+  else if (rect.bottom() > bottom) set_scroll(region, state.offset + (rect.bottom() - bottom));
 }
 
 void App::notify(const std::string& message) {
@@ -154,6 +289,8 @@ void App::draw(Canvas& canvas) {
     return;
   }
   order_.clear();
+  order_rects_.clear();
+  rail_bands_.clear();
   // Home is a set of single-row rails, so vertical movement there has nowhere to go;
   // Browse and My List are grids and get their real column count below.
   order_columns_ = 1 << 20;
@@ -437,7 +574,7 @@ void App::draw_hover_preview(Canvas& canvas) {
 void App::draw_header(Canvas& canvas) {
   const float header_height = theme::kHeaderHeight;
   // A transparent header over the hero, solid elsewhere.
-  if (view_ == View::Home && home_scroll_ < 40) {
+  if (view_ == View::Home && scroll_offset("page") < 40) {
     canvas.fill_gradient_v(Rect{0, 0, float(width_), header_height + 60}, rgba(0x000000, 190),
                            rgba(0x000000, 0));
   } else {
@@ -506,7 +643,8 @@ void App::draw_header(Canvas& canvas) {
 }
 
 void App::draw_home(Canvas& canvas) {
-  const Rect hero = hero_rect(home_scroll_);
+  const float page = scroll_offset("page");
+  const Rect hero = hero_rect(page);
   const Item* featured = nullptr;
   if (!catalog_.items.empty()) {
     // The hero is the most recently added film, which is what the CSS version did.
@@ -569,13 +707,17 @@ void App::draw_home(Canvas& canvas) {
 
   /* --------------------------------- rails -------------------------------- */
   const std::vector<Rail> rails = build_rails(catalog_.items, progress_, my_list_);
-  float y = rails_rect(home_scroll_).y;
+  float y = rails_rect(page).y;
+  const Rect page_view{0, static_cast<float>(theme::kHeaderHeight), static_cast<float>(width_),
+                       static_cast<float>(height_) - theme::kHeaderHeight};
   canvas.push_clip(Rect{0, theme::kHeaderHeight, float(width_), float(height_) - theme::kHeaderHeight});
 
   for (const auto& rail : rails) {
     const bool wide = rail.id == "continue";
     const float card_width = wide ? kWideWidth : kPosterWidth;
     const float card_height = wide ? card_width / theme::kBackdropAspect : card_width / theme::kPosterAspect;
+    const float rail_gap = theme::kRailGap;
+    const std::string region = "rail:" + rail.id;
 
     if (y > -card_height && y < height_) {
       bold_.draw(canvas, rail.title, theme::kGutter, y, theme::kFontLabel, theme::text());
@@ -584,15 +726,44 @@ void App::draw_home(Canvas& canvas) {
                           theme::kFontTiny, theme::faint());
     }
     y += 30;
-    float x = theme::kGutter;
-    for (std::size_t index : rail.items) {
-      if (x + card_width > width_ - theme::kGutter / 2) break;  // one row, as the CSS rails do
-      if (x + card_width > 0 && x < width_) {
-        draw_poster_card(canvas, Rect{x, y, card_width, card_height}, catalog_.items[index], wide,
-                         home_scroll_);
-        order_.push_back(static_cast<int>(index));
+
+    // The rail's own bar sits in its heading line, left of the film count: it is the
+    // one place that is always on screen, where a bar under the cards is often below
+    // the fold. It is drawn only when the rail really overflows.
+    {
+      const float rail_view_width = static_cast<float>(width_) - 2 * theme::kGutter;
+      const float content_width = rail.items.empty()
+                                      ? 0.0f
+                                      : static_cast<float>(rail.items.size()) *
+                                                (card_width + theme::kRailGap) -
+                                            theme::kRailGap;
+      const Rect rail_view{theme::kGutter, y, rail_view_width, card_height};
+      declare_scroll(region, content_width - rail_view_width, rail_view, true);
+      if (y > theme::kHeaderHeight && y < height_ && scroll_limit(region) > 0.5f) {
+        draw_scrollbar(canvas,
+                       Rect{static_cast<float>(width_) - theme::kGutter - 210.0f, y - 22, 128, 3},
+                       region);
       }
-      x += card_width + theme::kRailGap;
+    }
+
+    // A rail scrolls sideways now. Before this it simply stopped drawing at the right
+    // edge, so a library of more than about eight films per row had films in it that
+    // could not be reached by any input at all.
+    const float rail_offset = scroll_offset(region);
+    if (y > -card_height && y < height_) {
+      rail_bands_.push_back({Rect{0, y, static_cast<float>(width_), card_height}, rail.id});
+    }
+
+    float x = theme::kGutter - rail_offset;
+    for (std::size_t index : rail.items) {
+      const Rect card{x, y, card_width, card_height};
+      if (card.x > width_) break;
+      if (card.right() > 0) {
+        draw_poster_card(canvas, card, catalog_.items[index], wide, page);
+        order_.push_back(static_cast<int>(index));
+        order_rects_.push_back(card);
+      }
+      x += card_width + rail_gap;
     }
     y += card_height + 48;
   }
@@ -600,12 +771,15 @@ void App::draw_home(Canvas& canvas) {
 
   // Scroll bounds, so the last rail can be reached but no further.
   const float content_height = y - rails_rect(0).y;
-  const float max_scroll = std::max(0.0f, content_height - (height_ - theme::kHeaderHeight) + 80);
-  if (home_scroll_ > max_scroll) home_scroll_ = max_scroll;
+  const float max_scroll = std::max(0.0f, content_height - page_view.h + 80);
+  declare_scroll("page", max_scroll, page_view, false);
+  draw_scrollbar(canvas, Rect{static_cast<float>(width_) - 9, page_view.y + 10, 4, page_view.h - 20},
+                 "page");
 
   if (rails.empty() && featured) {
     regular_.draw(canvas, "Nothing in progress yet — press Play to start a film.",
-                  theme::kGutter, rails_rect(home_scroll_).y, theme::kFontSmall, theme::faint());
+                  theme::kGutter, rails_rect(scroll_offset("page")).y, theme::kFontSmall,
+                  theme::faint());
   }
 }
 
@@ -616,6 +790,7 @@ void App::draw_grid_view(Canvas& canvas, const std::string& title,
   regular_.draw(canvas, subtitle, theme::kGutter, top + 44, theme::kFontSmall, theme::dim());
 
   const float grid_top = top + 84;
+  const float page_offset = scroll_offset("page");
   canvas.push_clip(Rect{0, grid_top - 8, float(width_), float(height_) - grid_top + 8});
 
   // Auto-fill, like the CSS grid this replaces: as many columns of at least
@@ -635,17 +810,21 @@ void App::draw_grid_view(Canvas& canvas, const std::string& title,
     const int column = static_cast<int>(i) % columns;
     const int row = static_cast<int>(i) / columns;
     const Rect card{theme::kGutter + column * (card_width + gap),
-                    grid_top + row * row_height - grid_scroll_, card_width, card_height};
+                    grid_top + row * row_height - page_offset, card_width, card_height};
     if (card.bottom() < grid_top - 40 || card.y > height_) continue;
-    draw_poster_card(canvas, card, catalog_.items[items[i]], false, grid_scroll_);
+    draw_poster_card(canvas, card, catalog_.items[items[i]], false, page_offset);
+    order_rects_.push_back(card);
   }
   canvas.pop_clip();
 
   const int rows_total = columns > 0 ? static_cast<int>((items.size() + columns - 1) / columns) : 0;
   const float content = rows_total * row_height;
   const float max_scroll = std::max(0.0f, content - (height_ - grid_top) + 40);
-  if (grid_scroll_ > max_scroll) grid_scroll_ = max_scroll;
-  if (grid_scroll_ < 0) grid_scroll_ = 0;
+  const Rect page_view{0, grid_top, static_cast<float>(width_), static_cast<float>(height_) - grid_top};
+  declare_scroll("page", max_scroll, page_view, false);
+  // The bar is drawn outside the clip so it does not scroll with the cards.
+  draw_scrollbar(canvas, Rect{static_cast<float>(width_) - 9, grid_top + 6, 4, page_view.h - 18},
+                 "page");
 
   if (items.empty()) {
     regular_.draw(canvas, "No films here.", theme::kGutter, grid_top, theme::kFontBody, theme::faint());
@@ -657,53 +836,91 @@ void App::draw_detail(Canvas& canvas, const Item& item) {
 
   const float panel_width = std::min(width_ - 120.0f, 980.0f);
   const float art_height = std::min(panel_width / 2.55f, 360.0f);
-  // The panel is as tall as its content: art, then title, meta, synopsis and the
-  // button row. A fixed height left a dead band in the middle of the sheet.
-  const float panel_height = std::min(height_ - 100.0f, art_height + 136.0f);
+  const float panel_height = std::min(static_cast<float>(height_) - 100.0f, art_height + 136.0f);
   const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
                    panel_height};
   canvas.fill_round_rect(panel, 14, theme::panel());
 
-  const Rect art{panel.x, panel.y, panel.w, art_height};
-  canvas.push_clip(panel);
+  // The sheet scrolls. Art, title, meta, the whole synopsis and the buttons are one
+  // column whose height is measured before anything is drawn, so a long synopsis or a
+  // short window no longer hides the buttons with no way to reach them.
+  const float text_width = panel.w - 72;
+  const float title_line = bold_.line_height(36);
+  const float small_line = regular_.line_height(theme::kFontSmall);
+  const std::vector<std::string> synopsis_lines =
+      item.synopsis.empty() ? std::vector<std::string>{}
+                            : regular_.wrap(item.synopsis, theme::kFontSmall, text_width);
+  const float synopsis_height =
+      item.synopsis.empty() ? small_line
+                            : static_cast<float>(synopsis_lines.size()) * small_line;
+  // The text block starts 96 px above the bottom of the art (the original design draws
+  // the title over the still), so the content is (art - 96) plus the text column. Using
+  // the full art height here made every sheet claim it could scroll by ~90 px when it
+  // fitted perfectly - a scroll bar that does nothing is its own bug.
+  const float content_height = (art_height - 96) + title_line + 8 + 30 + synopsis_height + 22 +
+                               42 + 24;
+  const Rect viewport{panel.x + 1, panel.y + 1, panel.w - 2, panel.h - 2};
+  declare_scroll("detail", content_height - panel.h, viewport, false);
+  const float scroll = scroll_offset("detail");
+
+  canvas.push_clip(viewport);
+  const Rect art{panel.x, panel.y - scroll, panel.w, art_height};
   draw_backdrop_or_fallback(canvas, art, item, 14);
   canvas.fill_gradient_v(Rect{art.x, art.bottom() - art.h * 0.7f, art.w, art.h * 0.7f},
                          rgba(theme::kPanel, 0), theme::panel());
-  canvas.pop_clip();
 
-  float x = panel.x + 36;
+  const float x = panel.x + 36;
   float y = art.bottom() - 96;
-  const float text_width = panel.w - 72;
   bold_.draw(canvas, bold_.ellipsize(item.title, 36, text_width), x, y, 36, theme::text());
-  y += bold_.line_height(36) + 8;
+  y += title_line + 8;
   regular_.draw(canvas, meta_line(item), x, y, theme::kFontSmall, theme::dim());
   y += 30;
-  if (!item.synopsis.empty()) {
-    regular_.draw_wrapped(canvas, item.synopsis, Rect{x, y, text_width, 80}, theme::kFontSmall,
-                          theme::text(), 4);
-  } else {
+  if (item.synopsis.empty()) {
     regular_.draw(canvas, "No synopsis. Drop a JSON file beside the film with the same name to add "
                           "one.",
                   x, y, theme::kFontSmall, theme::faint());
+  } else {
+    regular_.draw_wrapped(canvas, item.synopsis,
+                          Rect{x, y, text_width, synopsis_height + small_line * 0.5f},
+                          theme::kFontSmall, theme::text());
   }
-  y = panel.bottom() - 76;
-  const Rect play{ x, y, button_width("Play", true), 42 };
+  y += synopsis_height + 22;
+
+  const Rect play{x, y, button_width("Play", true), 42};
   draw_button(canvas, play, "Play", true, Action{Action::Kind::Play, open_item_, ""});
   const bool in_list = std::find(my_list_.begin(), my_list_.end(), item.id) != my_list_.end();
   const std::string list_label = in_list ? "In My List" : "My List";
-  draw_button(canvas, Rect{play.right() + 12, y, button_width(list_label, false), 42}, list_label,
-              false, Action{Action::Kind::ToggleMyList, open_item_, ""});
+  const Rect list{play.right() + 12, y, button_width(list_label, false), 42};
+  draw_button(canvas, list, list_label, false, Action{Action::Kind::ToggleMyList, open_item_, ""});
 
   const int percent = percent_for(item);
   if (percent > 0) {
     regular_.draw_right(canvas, std::to_string(percent) + "% watched",
                         Rect{x, y, text_width, 42}, theme::kFontSmall, theme::dim());
   }
+  canvas.pop_clip();
+
+  // Buttons that have scrolled out of the sheet must not stay clickable: what is not
+  // on screen is not a target. Their hit areas were added inside the clip, so drop the
+  // ones that ended up outside it.
+  std::vector<std::pair<Rect, Action>> kept;
+  kept.reserve(hits_.size());
+  for (const auto& hit : hits_) {
+    const bool is_sheet_action = hit.second.kind == Action::Kind::Play ||
+                                 hit.second.kind == Action::Kind::ToggleMyList;
+    if (is_sheet_action && (hit.first.bottom() < viewport.y || hit.first.y > viewport.bottom())) {
+      continue;
+    }
+    kept.push_back(hit);
+  }
+  hits_.swap(kept);
+
+  draw_scrollbar(canvas, Rect{panel.right() - 16, panel.y + 70, 4, panel.h - 92}, "detail");
 
   // Close.
   const Rect close{panel.right() - 52, panel.y + 18, 34, 34};
   canvas.fill_circle(close.x + 17, close.y + 17, 17, rgba(0x000000, 150));
-  regular_.draw_centered(canvas, "×", close, 20, theme::text());
+  regular_.draw_centered(canvas, "\u00d7", close, 20, theme::text());
   add_hit(close, Action{Action::Kind::CloseOverlay, -1, ""});
   // Clicking the scrim also closes.
   add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
@@ -806,7 +1023,8 @@ void App::draw_settings(Canvas& canvas) {
   const float samples_row =
       (!sample_folder_.empty() && settings_.library_folders.empty()) ? 38.0f : 0.0f;
   const float needed =
-      84 + 34 + folder_rows + 42 + samples_row + 8 + 34 * 3 + 44 /*toggle*/ + 34 /*latency*/ + 26 + 42 + 34;
+      84 + 34 + folder_rows + 42 + samples_row + 8 + 34 * 3 + 44 /*toggle*/ + 34 /*latency*/ +
+      26 + 42 + 34 + 78 /*scan button*/;
   const float panel_height = std::min(static_cast<float>(height_) - 100.0f, needed);
   const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
                    panel_height};
@@ -815,10 +1033,18 @@ void App::draw_settings(Canvas& canvas) {
   bold_.draw(canvas, "Settings", panel.x + 32, panel.y + 28, 24, theme::text());
   const Rect close{panel.right() - 54, panel.y + 22, 32, 32};
   canvas.fill_circle(close.x + 16, close.y + 16, 16, rgba(0xffffff, 18));
-  regular_.draw_centered(canvas, "×", close, 20, theme::text());
+  regular_.draw_centered(canvas, "\u00d7", close, 20, theme::text());
   add_hit(close, Action{Action::Kind::CloseOverlay, -1, ""});
 
-  float y = panel.y + 84;
+  // Scrollable body: everything below the title, above nothing - the Scan button is
+  // part of the content now, so it is reachable by scrolling instead of being pinned
+  // to a panel edge that may not exist.
+  const Rect viewport{panel.x + 1, panel.y + 66, panel.w - 2, panel.h - 78};
+  declare_scroll("settings", needed - viewport.h - 12, viewport, false);
+  const float scroll = scroll_offset("settings");
+  canvas.push_clip(viewport);
+
+  float y = panel.y + 84 - scroll;
   const float row_width = panel.w - 64;
   auto row = [&](const std::string& label, const std::string& value) {
     regular_.draw(canvas, label, panel.x + 32, y, theme::kFontBody, theme::dim());
@@ -885,15 +1111,19 @@ void App::draw_settings(Canvas& canvas) {
   // latency, so a switch would be a lie. The player's sync control is the real one.
   regular_.draw(canvas, "Device latency compensation",
                 panel.x + 32, y + 4, theme::kFontBody, theme::faint());
-  regular_.draw_right(canvas, "not available with libVLC 3 — use − / + in the player",
+  regular_.draw_right(canvas, "not available with libVLC 3 - use - / + in the player",
                       Rect{panel.x + 32, y + 4, row_width, 22}, theme::kFontTiny, theme::faint());
   y += 34;
 
   y += 6;
-  const Rect scan_button{panel.x + 32, panel.bottom() - 78, button_width("Scan library", true), 42};
-  draw_button(canvas, scan_button, "Scan library", true, Action{Action::Kind::ScanLibrary, -1, ""});
+  const Rect scan_button{panel.x + 32, y, button_width("Scan library", true), 42};
+  draw_button(canvas, scan_button, "Scan library", true,
+              Action{Action::Kind::ScanLibrary, -1, ""});
   regular_.draw(canvas, "Scans the folders above and draws missing artwork.",
                 scan_button.right() + 16, scan_button.y + 12, theme::kFontSmall, theme::faint());
+  canvas.pop_clip();
+
+  draw_scrollbar(canvas, Rect{panel.right() - 16, viewport.y + 4, 4, viewport.h - 8}, "settings");
 
   add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
   add_hit(panel, Action{});
@@ -935,16 +1165,11 @@ void App::move_focus(int dx, int dy) {
   const long long target = static_cast<long long>(position) + step;
   if (target < 0 || target >= static_cast<long long>(order_.size())) return;
   focus_item_ = order_[static_cast<std::size_t>(target)];
-  // Keep keyboard focus visible: scroll the card into view.
-  const int row = static_cast<int>(target) / columns;
-  const float row_height = order_row_height_ > 0 ? order_row_height_ : kGridWidth / theme::kPosterAspect + 44;
-  if (view_ != View::Home) {
-    const float visible = static_cast<float>(height_) - theme::kHeaderHeight - 118;
-    const float top_of_row = row * row_height;
-    if (top_of_row - grid_scroll_ < 0) grid_scroll_ = top_of_row;
-    if (top_of_row + row_height - grid_scroll_ > visible + 118) {
-      grid_scroll_ = std::max(0.0f, top_of_row + row_height - visible - 100);
-    }
+  // Keep keyboard focus visible: scroll whatever holds the card - a rail sideways, a
+  // grid or the page vertically - just far enough. The drawn rectangles come from the
+  // last frame, so this asks the same question the user's eye does.
+  if (static_cast<std::size_t>(target) < order_rects_.size()) {
+    reveal_rect(order_rects_[static_cast<std::size_t>(target)]);
   }
 }
 
@@ -972,6 +1197,19 @@ bool App::handle(const InputEvent& event) {
   ensure_layout();
   switch (event.type) {
     case InputEvent::Type::MouseMove: {
+      if (!drag_region_.empty()) {
+        ScrollState& state = scrolls_[drag_region_];
+        const bool horizontal = state.horizontal;
+        const float thumb_len = horizontal ? state.thumb.w : state.thumb.h;
+        const float extent = horizontal ? state.viewport.w : state.viewport.h;
+        const float span = std::max(1.0f, extent - thumb_len);
+        const float origin = horizontal ? state.viewport.x : state.viewport.y;
+        const float pointer = horizontal ? event.x : event.y;
+        const float t = std::clamp((pointer - origin - drag_grab_) / span, 0.0f, 1.0f);
+        const float before = state.offset;
+        state.offset = t * state.max;
+        return state.offset != before;
+      }
       const Action action = hit_test(event.x, event.y);
       int hover = -1;
       if (action.kind == Action::Kind::OpenDetail) hover = action.index;
@@ -984,6 +1222,28 @@ bool App::handle(const InputEvent& event) {
     }
     case InputEvent::Type::MouseDown: {
       const Action action = hit_test(event.x, event.y);
+      // A scroll bar takes the pointer until it is released, so dragging works even
+      // when the pointer leaves the bar.
+      if (action.kind == Action::Kind::ScrollThumb || action.kind == Action::Kind::ScrollTo) {
+        ScrollState& state = scrolls_[action.value];
+        const bool horizontal = state.horizontal;
+        const float pointer = horizontal ? event.x : event.y;
+        drag_region_ = action.value;
+        if (action.kind == Action::Kind::ScrollThumb) {
+          drag_grab_ = pointer - (horizontal ? state.thumb.x : state.thumb.y);
+        } else {
+          // Clicking the track centres the thumb on the pointer, which is what every
+          // scroll bar does.
+          const float thumb_len = horizontal ? state.thumb.w : state.thumb.h;
+          drag_grab_ = thumb_len / 2;
+          const float extent = horizontal ? state.viewport.w : state.viewport.h;
+          const float span = std::max(1.0f, extent - thumb_len);
+          const float origin = horizontal ? state.viewport.x : state.viewport.y;
+          const float t = std::clamp((pointer - origin - drag_grab_) / span, 0.0f, 1.0f);
+          state.offset = t * state.max;
+        }
+        return true;
+      }
       // A click anywhere but the folder field takes the caret out of it.
       if (action.kind != Action::Kind::AddFolder) folder_input_focused_ = false;
       switch (action.kind) {
@@ -994,8 +1254,8 @@ bool App::handle(const InputEvent& event) {
                   : action.value == "mylist" ? View::MyList
                                              : View::Home;
           search_focused_ = false;
-          grid_scroll_ = 0;
-          if (view_ != View::Home) home_scroll_ = 0;
+          // A new screen starts at the top; rails keep their own sideways position.
+          set_scroll("page", 0);
           LOG_INFO("ui: navigate to %s", action.value.c_str());
           return true;
         case Action::Kind::OpenDetail:
@@ -1058,6 +1318,11 @@ bool App::handle(const InputEvent& event) {
           folder_input_focused_ = true;
           return true;
         }
+        // Scroll bars are consumed above, before the switch; listing them here keeps
+        // the compiler's exhaustive-switch warning useful.
+        case Action::Kind::ScrollTo:
+        case Action::Kind::ScrollThumb:
+          return false;
         case Action::Kind::RemoveFolder: {
           std::string error;
           if (!remove_library_folder(action.value, &error)) notify(error);
@@ -1091,12 +1356,34 @@ bool App::handle(const InputEvent& event) {
       return false;
     }
     case InputEvent::Type::Wheel: {
-      if (open_item_ >= 0 || settings_open_) return false;
-      if (view_ == View::Home) {
-        home_scroll_ = std::max(0.0f, home_scroll_ - event.wheel * 90.0f);
-      } else {
-        grid_scroll_ = std::max(0.0f, grid_scroll_ - event.wheel * 90.0f);
+      // Everywhere the wheel is pointed at something that overflows, it scrolls that
+      // thing: the open sheet, the rail under the pointer, or the page. The sheets used
+      // to ignore the wheel completely, which is the "I cannot scroll where I want" bug.
+      const float vertical = event.wheel != 0 ? event.wheel : 0.0f;
+      const float horizontal = event.wheel_x;
+      if (open_item_ >= 0 || settings_open_) {
+        const std::string region = open_item_ >= 0 ? "detail" : "settings";
+        return scroll_by(region, -(vertical != 0 ? vertical : horizontal) * kWheelStep);
       }
+      if (horizontal != 0) {
+        const std::string& rail = rail_at(event.x, event.y);
+        if (!rail.empty()) {
+          if (scroll_by("rail:" + rail, -horizontal * kRailStep)) return true;
+        }
+      }
+      if (view_ == View::Home && vertical != 0) {
+        const std::string& rail = rail_at(event.x, event.y);
+        if (!rail.empty()) {
+          // Wheel over a rail scrolls it sideways while it still has somewhere to go,
+          // then falls through to the page rather than swallowing the input at the end.
+          if (scroll_by("rail:" + rail, -vertical * kRailStep)) return true;
+        }
+      }
+      return scroll_by("page", -(vertical != 0 ? vertical : horizontal) * kWheelStep);
+    }
+    case InputEvent::Type::MouseUp: {
+      if (drag_region_.empty()) return false;
+      drag_region_.clear();
       return true;
     }
     case InputEvent::Type::Key: {
@@ -1138,6 +1425,17 @@ bool App::handle(const InputEvent& event) {
           return true;
         }
         return false;
+      }
+      // Page keys scroll whatever is in front: a page at a time, or to the very end.
+      if (event.key == kKeyPageUp || event.key == kKeyPageDown || event.key == kKeyHome ||
+          event.key == kKeyEnd) {
+        const std::string region = open_item_ >= 0 ? "detail" : settings_open_ ? "settings" : "page";
+        const ScrollState& state = scrolls_[region];
+        const float page = std::max(80.0f, state.viewport.h - 80.0f);
+        if (event.key == kKeyPageDown) return scroll_by(region, page);
+        if (event.key == kKeyPageUp) return scroll_by(region, -page);
+        if (event.key == kKeyHome) return scroll_by(region, -state.max);
+        return scroll_by(region, state.max);
       }
       if (event.key == kKeySlash && !search_focused_) {
         search_focused_ = true;
@@ -1218,8 +1516,8 @@ bool App::handle(const InputEvent& event) {
 bool App::show_screen(const std::string& screen, const std::string& argument) {
   open_item_ = -1;
   settings_open_ = false;
-  home_scroll_ = 0;
-  grid_scroll_ = 0;
+  scrolls_.clear();
+  drag_region_.clear();
   if (screen == "home") {
     view_ = View::Home;
   } else if (screen == "browse") {

@@ -231,15 +231,36 @@ negative control is what was broken on purpose to see the test go red.
 | a crash left no log (requirement 2) | journey steps 12–14 | disable the crash handlers, or write the log after the window opens |
 | `--json` output polluted by the banner | journey step 4 (`{"` must be the first byte of stdout) | print the banner to stdout unconditionally |
 
+### Scrolling: the screen that fits is as important as the one that does not
+
+Scrolling is tested as a *state*, not as a picture, because "the wheel does nothing"
+looks exactly like "the wheel worked" in a screenshot. Six tests in
+`native/tests/ui_tests.cpp` drive the real input path and read back the offset the app
+itself reports:
+
+| Test | What it proves | Its negative control |
+|---|---|---|
+| the wheel scrolls the page on all four list screens | Home, Browse, My List and Search all move and stop exactly at their last pixel | scrolling back up returns to 0 and does not go negative |
+| a rail scrolls sideways | the wheel over a rail moves that rail and does **not** move the page | at the rail's end the same wheel moves the page, so the input is never swallowed |
+| the detail sheet scrolls to the end of a long synopsis | a 14-sentence synopsis scrolls, and the Play button is unreachable until it is on screen — then it appears and is clickable | the rendered frame before and after must differ in ≥5% of pixels |
+| the settings sheet scrolls to its Scan button | eight library folders push the button below the fold, and scrolling reaches it | the button has no hit area until it is visible |
+| Page Down / End / Home | keyboard scrolling moves a page, jumps to the end, returns to the top | a short synopsis in a large window reports **no** scroll limit and the wheel changes nothing |
+| clicking and dragging the bar | press, move, release scrolls; movement after release does not | offsets are compared before and after, so a stuck drag fails |
+
+Two layout bugs came out of writing these: the detail sheet claimed it could scroll by
+~90 px when it fitted perfectly (its content height counted the art twice), and its
+buttons were drawn at a fixed height instead of moving with the text — which is the
+difference between "the Play button exists" and "the Play button can be reached".
+
 ## 9. What is verified, and what is not
 
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
-* 364 checks across layers 1, 2 and 4 — `0 failure(s)`
+* 412 checks across layers 1, 2 and 4 — `0 failure(s)`
 * 28/28 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
-* `make asan`: 364 checks clean, and the pre-fix code failing under it
+* `make asan`: 412 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
@@ -374,6 +395,7 @@ two versions. A fixed `mmap` at both `0x7ffe0000` and `0x7ff000000000`, `mmap_mi
 | `play 1 --wait 4` | `state=playing time=3.15 s length=16.00 s decoded=99 presented=99 sync(video=0 audio=0)` |
 | `crash` | process dies with the deliberate access violation, **and the log has the `CRASH` record with a 21-frame stack** — the requirement that a crash still leaves a log, proved on Windows |
 | `ui --frames 3` | `could not create a window` → exit 5. Correct: Wine here has no display, and the app reports it instead of vanishing |
+| `render` ×6, rebuilt with the scrolling UI | all six screens still render; `docs/evidence/windows-home-scrolling.png` is the Windows binary drawing a rail with its own scroll bar |
 
 The rendered screens are the real UI, drawn by the Windows binary: real fonts from
 FreeType, real posters decoded from the JPEG/PNG files ffmpeg had just produced on
@@ -410,12 +432,27 @@ None of these could be seen from Linux, from the cross build, or from the tests:
 Bugs 1 and 3 were found only because the app's own log recorded the failure honestly
 (`ffprobe failed … : `, `cannot open … for writing`) instead of swallowing it.
 
+### The artifact, and the executable on its own
+
+`scripts/build-win-native.sh --zip` packs the whole runnable set into
+`dist/win-native/VLCFlixStudio-win64.zip` (69 MB: the exe, SDL2, libpng, zlib, libjpeg,
+libVLC 3.0.24 and its 29 plugin modules). Both the payload and the zip are git-ignored,
+and so is the copy kept for handing out: **`native/releases/VLCFlixStudio.exe`**,
+written by the same script on every build. The bare exe is 5.6 MB and is *not*
+self-contained - it needs the DLLs from the zip beside it - which is why the two exist
+together.
+
+`ffmpeg.exe` and `ffprobe.exe` are **not** bundled (166 MB each, and they are the
+user's choice of build). Without them the scan still runs and lists the films, but
+there are no durations and no artwork, and `doctor` says exactly that:
+`ffmpeg MISSING (no artwork)` / `ffprobe MISSING (no durations)`.
+
 ### Still not verified, and still not claimed
 
 | Area | Why not |
 |---|---|
 | Real Windows 10/11 itself | Wine is a very good impression of Windows, not Windows; `kernel32` behaviour under Wine is not proof about the real thing |
-| The window on screen | Wine here has no display; `ui` is exercised on Linux with SDL's dummy driver and the *drawing* is exercised by `render` on Windows |
+| The window on screen, and therefore *interactive* scrolling on Windows | Wine here has no display; `ui` is exercised on Linux with SDL's dummy driver, and the drawing is exercised by `render` on Windows. The wheel plumbing (`SDL_MOUSEWHEEL`, both axes, `MOUSEBUTTONUP` for drag release) compiles and is exercised on Linux, but a wheel turn on Windows has not been performed |
 | Audio output | no sound card under Wine (`ALSA lib … Unknown PCM default`); playback itself is verified (decoded/presented counters advance) |
 | Installer, side-by-side with 1.2.0, uninstall | needs NSIS and a real registry; `scripts/build-win-native.sh --check` names exactly what is missing and exits 3 |
 | Code signing, SmartScreen | out of scope, and stated on the download page |

@@ -9,8 +9,13 @@
 id_ed25519*
 .gitconfig
 
-# Built binaries are published as release assets, not committed
+# Built binaries are never committed. The Windows executable is cross-compiled by
+# scripts/build-win-native.sh and left in native/releases/ for handing out; it is
+# 5.5 MB of machine code that a fresh clone should build rather than receive.
 release/
+native/releases/
+*.exe
+*.dll
 *.o
 *.res.o
 

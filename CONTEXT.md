@@ -41,8 +41,8 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 28 static checks + 364
-  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 364
+- **Verified from a clean clone on GitHub**: `make verify` = 28 static checks + 412
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 412
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
@@ -70,6 +70,16 @@ pushed and verified from a clean clone.
   block had closed, so roughly half of all scans drew no preview at all (ffmpeg got an
   absurd `-t`). All three have regression tests; the third is proved by ASan reporting
   `stack-use-after-scope` on the old code and nothing on the new.
+- **Scrolling is now everywhere it can be needed** (the user's report: places where you
+  simply cannot scroll). Every screen declares its own scroll region while it draws -
+  `page`, `detail`, `settings`, `rail:<id>` - and the same declaration drives the bar,
+  the wheel, the keyboard and the tests, so a limit can never be a guess. The wheel
+  works over the open sheets (it used to be ignored there), over a rail it moves the
+  rail sideways and then falls through to the page instead of doing nothing, Page
+  Up/Down/Home/End scroll whatever is in front, bars are draggable, and hit areas for
+  anything scrolled out of view are dropped so nothing invisible is clickable. Six new
+  UI tests cover it, including a negative control (a sheet that fits must report no
+  limit) and a pixel-diff proof that the sheet really moved.
 - **The Windows build has now been RUN**, under Wine 11.19 (Wine 11.20 and
   11.20-staging are broken upstream: `create_view`/`virtual_alloc_first_thread_data`
   SEGV before a prefix exists). Executed and captured: `version`, `doctor`, `status`,

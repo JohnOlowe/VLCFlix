@@ -299,6 +299,7 @@ void App::draw(Canvas& canvas) {
   // Home is a set of single-row rails, so vertical movement there has nowhere to go;
   // Browse and My List are grids and get their real column count below.
   order_columns_ = 1 << 20;
+  hover_card_valid_ = false;
   canvas.clear(theme::bg());
 
   if (view_ == View::Home) {
@@ -354,7 +355,11 @@ Rect App::hero_rect(float scroll) const {
 
 Rect App::rails_rect(float scroll) const {
   const float hero_height = hero_rect(0).h;
-  const float top = hero_height + kRailsGap + scroll;
+  // Everything on the page moves the same way. This used to be `+ scroll` while the
+  // hero was `- scroll`, so dragging the page bar *opened a gap* between the hero and
+  // the rails instead of scrolling: the two sections moved apart until both were off
+  // the screen, and dragging back closed it again.
+  const float top = hero_height + kRailsGap - scroll;
   return Rect{0, top, static_cast<float>(width_), static_cast<float>(height_) - top};
 }
 
@@ -482,6 +487,15 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   action.kind = Action::Kind::OpenDetail;
   action.index = static_cast<int>(&item - catalog_.items.data());
   add_hit(card, action);
+
+  // Remember where this card actually is, so the hover can grow it in place. Looking the
+  // rectangle up in the hit list afterwards found the wrong thing (the hero has clickable
+  // areas for the same film), which drew the enlarged card over the buttons instead of
+  // over the poster the pointer is on.
+  if (hovered && pointer_known_ && card.contains(pointer_x_, pointer_y_)) {
+    hover_card_rect_ = card;
+    hover_card_valid_ = true;
+  }
 }
 
 void App::set_hover_preview(int index) {
@@ -507,75 +521,110 @@ void App::set_hover_preview(int index) {
   }
   preview_engine_.set_muted(true);
   preview_engine_.play();
-  if (item.duration > 10) preview_engine_.seek(item.duration * 0.2);
+  // Do not seek here. libVLC answers "no length yet" for the first moments after a file
+  // is opened, and a seek into that goes nowhere: on the Windows machine the preview
+  // opened, reported "playing", and never produced a picture, so the card fell back to
+  // the artwork and looked like the preview was simply broken. The seek is queued and
+  // performed by tick() as soon as the demuxer reports the length.
+  preview_seek_at_ = item.duration > 10 ? item.duration * 0.2 : -1;
+  preview_warned_ = false;
   preview_started_ = clock_now();
   LOG_INFO("preview: playing %s", path.c_str());
 }
 
-void App::draw_hover_preview(Canvas& canvas) {
+// Hovering grows the card under the pointer, in place. The earlier version drew a
+// separate panel above (or below) the card, which had two problems the user named: the
+// panel covered whatever was in that direction, and it was not what the web version did
+// - there the selected card itself got bigger and nothing else moved.
+void App::draw_hover_card(Canvas& canvas) {
   if (view_ == View::Search && query_.empty()) return;
-  if (open_item_ >= 0 || settings_open_) return;
+  if (open_item_ >= 0 || settings_open_ || browser_open_ || player_open_) return;
   if (hover_item_ < 0 || static_cast<std::size_t>(hover_item_) >= catalog_.items.size()) return;
-  // Which card is hovered, and where was it drawn? The hit areas were recorded while
-  // drawing, so this uses the same geometry the mouse is being tested against.
-  const Rect* card = nullptr;
-  for (const auto& hit : hits_) {
-    if (hit.second.kind == Action::Kind::OpenDetail && hit.second.index == hover_item_) {
-      card = &hit.first;
-      break;
-    }
-  }
-  if (!card) return;
+
+  // Where the hovered card was drawn, recorded by draw_poster_card in this same pass.
+  if (!hover_card_valid_) return;
+  const Rect* card = &hover_card_rect_;
   const Item& item = catalog_.items[static_cast<std::size_t>(hover_item_)];
+  const bool wide = card->w > card->h * 1.2f;  // "Continue Watching" cards are 16:9
 
-  const float width = 336;
-  const float media_height = width / theme::kBackdropAspect;
-  const float height = media_height + 104;
-  float x = card->x + card->w / 2 - width / 2;
-  x = std::max(static_cast<float>(theme::kGutter),
-               std::min(x, static_cast<float>(width_) - theme::kGutter - width));
-  // Above the card when there is room, below it otherwise: never over the card the
-  // mouse is actually on.
-  float y = card->y - height - 12;
-  if (y < theme::kHeaderHeight + 8) y = card->bottom() + 44;
+  // Grow around the card's own centre, so it looks like the card rising towards the
+  // pointer rather than sliding away from it.
+  const float scale = wide ? 1.12f : 1.24f;
+  float w = card->w * scale;
+  float h = card->h * scale;
+  float x = card->x + card->w / 2 - w / 2;
+  float y = card->y + card->h / 2 - h / 2;
 
-  canvas.push_clip(Rect{0, static_cast<float>(theme::kHeaderHeight), static_cast<float>(width_),
-                        static_cast<float>(height_) - theme::kHeaderHeight});
-  const Rect panel{x, y, width, height};
-  canvas.fill_round_rect(Rect{panel.x - 2, panel.y + 6, panel.w + 4, panel.h}, 12, rgba(0x000000, 130));
-  canvas.fill_round_rect(panel, 12, theme::panel());
-  canvas.stroke_round_rect(panel, 12, 1.0f, rgba(0xffffff, 40));
+  // Keep the grown card on screen and below the header; a hover that leaves the window
+  // is no better than the panel this replaces.
+  const float top_limit = theme::kHeaderHeight + 8.0f;
+  const float bottom_limit = static_cast<float>(height_) - 8.0f;
+  x = std::max(static_cast<float>(theme::kGutter) - 12.0f,
+               std::min(x, static_cast<float>(width_) - theme::kGutter - w + 12.0f));
+  if (y + h > bottom_limit) y = bottom_limit - h;
+  if (y < top_limit) y = top_limit;
+  h = std::min(h, bottom_limit - y);
+  if (w <= 0 || h <= 0) return;
 
-  const Rect media{panel.x, panel.y, width, media_height};
-  canvas.push_clip(media);
-  const Image* preview = backdrop_for(item);
+  const Rect grown{x, y, w, h};
+  const float radius = theme::kCardRadius + 4;
+
+  // It sits above the rails, so it is drawn after them - and its hit area is registered
+  // now, on top, so a click anywhere on the grown card opens the film it shows.
+  canvas.fill_round_rect(Rect{grown.x - 3, grown.y + 6, grown.w + 6, grown.h + 6}, radius,
+                         rgba(0x000000, 150));
+  canvas.fill_round_rect(grown, radius, theme::panel());
+
+  const Rect media = grown;
+  canvas.push_clip(Rect{grown.x + 2, grown.y + 2, grown.w - 4, grown.h - 4});
+  const Image* still = wide ? backdrop_for(item) : poster_for(item);
   if (preview_has_frame_ && preview_frame_.width > 0 && preview_index_ == hover_item_) {
-    // A real decoded frame from the preview montage, played muted while the pointer
-    // rests on the card - this is the motion the web build had.
+    // The preview itself, from the film: the montage when the scan made one, otherwise
+    // the film playing from a fifth of the way in. This is the motion the web build had.
     canvas.blit_raw(preview_frame_.pixels.data(), preview_frame_.width, preview_frame_.height,
                     media, true);
-  } else if (preview) {
-    canvas.blit(*preview, media, false);
+  } else if (still) {
+    canvas.blit(*still, media, false);
+    // "Preview starting" is worth saying only while it is true: a card that silently
+    // shows a still looks broken on a machine where the preview cannot start.
+    if (preview_index_ == hover_item_) {
+      const std::string waiting = "preview starting...";
+      const float badge_width = regular_.measure(waiting, theme::kFontTiny).width + 18;
+      const Rect badge{grown.x + 10, grown.y + 10, badge_width, 20};
+      canvas.fill_round_rect(badge, 10, rgba(0x000000, 170));
+      regular_.draw_centered(canvas, waiting, badge, theme::kFontTiny, rgba(0xffffff, 210));
+    }
   } else {
-    Color base = theme::poster_fallback(item.title, true);
-    canvas.fill_gradient_v(media, base, rgba(theme::kBg, 255));
+    canvas.fill_gradient_v(media, theme::poster_fallback(item.title, wide), rgba(theme::kBg, 255));
   }
   canvas.pop_clip();
 
-  bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontBody, panel.w - 32), panel.x + 16,
-             panel.y + media_height + 14, theme::kFontBody, theme::text());
-  regular_.draw(canvas, regular_.ellipsize(meta_line(item), theme::kFontTiny, panel.w - 32),
-                panel.x + 16, panel.y + media_height + 40, theme::kFontTiny, theme::dim());
-  // A compact hint instead of a full button: the card underneath is still the click
-  // target, and a second Play button here would mean two ways to do one thing.
-  const Rect play_icon{panel.x + 16, panel.bottom() - 34, 18, 18};
-  canvas.fill_circle(play_icon.x + 9, play_icon.y + 9, 9, theme::accent());
-  draw_triangle_right(canvas, Rect{play_icon.x + 6, play_icon.y + 4, 7, 10},
-                      rgba(0x1a0d00, 255));
-  regular_.draw(canvas, "Click to open, Enter to play", play_icon.right() + 8,
-                panel.y + media_height + 62, theme::kFontTiny, theme::faint());
+  // The bottom of the card carries the title, the meta line and the progress, exactly as
+  // the web version did when it grew.
+  const float text_block = 62.0f;
+  canvas.push_clip(grown);
+  canvas.fill_gradient_v(Rect{grown.x, grown.bottom() - text_block - 26, grown.w, text_block + 26},
+                         rgba(0x000000, 0), rgba(0x000000, 215));
+  bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontBody, grown.w - 24), grown.x + 12,
+             grown.bottom() - text_block + 6, theme::kFontBody, theme::text());
+  regular_.draw(canvas, regular_.ellipsize(meta_line(item), theme::kFontTiny, grown.w - 24),
+                grown.x + 12, grown.bottom() - text_block + 32, theme::kFontTiny,
+                rgba(0xffffff, 200));
+  if (const int percent = percent_for(item); percent > 0) {
+    const float bar_height = 4;
+    const float bar_y = grown.bottom() - text_block + 50;
+    canvas.fill_round_rect(Rect{grown.x + 12, bar_y, grown.w - 24, bar_height}, bar_height / 2,
+                           rgba(0xffffff, 70));
+    canvas.fill_round_rect(Rect{grown.x + 12, bar_y, (grown.w - 24) * percent / 100.0f, bar_height},
+                           bar_height / 2, theme::accent());
+  }
+  canvas.stroke_round_rect(grown, radius, 2.0f, rgba(theme::kAccent, 235));
   canvas.pop_clip();
+
+  add_hit(grown, Action{Action::Kind::OpenDetail, hover_item_, ""});
 }
+
+void App::draw_hover_preview(Canvas& canvas) { draw_hover_card(canvas); }
 
 void App::draw_header(Canvas& canvas) {
   const float header_height = theme::kHeaderHeight;

@@ -41,8 +41,8 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 529
-  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 529
+- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 590
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 590
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
@@ -114,6 +114,20 @@ pushed and verified from a clean clone.
   flags `direct3d9` as the driver that crashed, and is reported by `doctor`. Tested live on
   Xvfb: `renderer: software`, identical pixels. The crash itself cannot be reproduced on
   this machine (no Intel GPU) and is not claimed to be.
+- **2.0.4 is the Home screen, three times.** (a) Two-finger scrolling did nothing at all:
+  a precision touchpad sends fractional deltas, SDL 2.26+ keeps them in `preciseY` and
+  rounds the integer field to zero, and the handler read the integer field — so every
+  touchpad swipe arrived as `0`. `platform/wheel.h` now carries the arithmetic (precise
+  value, direction flip, fractions accumulated) as a pure, tested function.
+  (b) Dragging the page bar "opened a gap" between the hero and the rails rather than
+  scrolling: `hero_rect()` used `y = -scroll` while `rails_rect()` used `+scroll`, so the
+  two halves of the page travelled in opposite directions. One sign, and a test that the
+  gap is identical at 0/20/180/480 px of scroll and every card moves by exactly the scroll.
+  (c) The hover preview showed artwork because it seeked to 20 % before libVLC knew the
+  length (the seek is now queued until `length > 0`), and it drew a *second panel* over its
+  neighbours instead of growing the card: the card itself now scales in place, with its
+  rectangle recorded during the draw pass (looking it up in the hit list found the hero's
+  clickable area and drew the card over the Play button).
 - **The Windows build has now been RUN**, under Wine 11.19 (Wine 11.20 and
   11.20-staging are broken upstream: `create_view`/`virtual_alloc_first_thread_data`
   SEGV before a prefix exists). Executed and captured: `version`, `doctor`, `status`,

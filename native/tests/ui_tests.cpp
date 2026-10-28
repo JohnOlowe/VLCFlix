@@ -16,6 +16,7 @@
 #include "tests/harness.h"
 #include "library/fs_browse.h"
 #include "platform/render_driver.h"
+#include "platform/wheel.h"
 #include "platform/window_size.h"
 #include "ui/app.h"
 
@@ -945,6 +946,247 @@ void test_render_driver_policy() {
   CHECK(vf::render_driver_description(asked).find("software") != std::string::npos);
 }
 
+
+// Scrolling has to move content. On Home the hero and the rails used to scroll in
+// opposite directions (`y = -scroll` for the hero, `top = hero.h + gap + scroll` for the
+// rails), so the wheel and the page bar *opened a gap* between them instead of scrolling,
+// and the page never left the screen. These are the two rects the whole screen is laid
+// out from, so measuring them measures the bug.
+void test_ui_home_scroll_moves_content() {
+  TEST("ui: scrolling Home moves the hero and the rails together, at a fixed spacing");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-home-scroll");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_big_catalog(24));
+  draw_once(app);
+
+  const vf::Rect hero0 = app.hero_rect(0);
+  const vf::Rect rails0 = app.rails_rect(0);
+  const float gap0 = rails0.y - (hero0.y + hero0.h);
+  CHECK(hero0.y == 0);
+
+  // Every part of the page moves up by exactly the scroll, and nothing changes size: the
+  // gap between the hero and "Recently Added" is the same at every offset.
+  for (const float scroll : {20.0f, 180.0f, 480.0f}) {
+    const vf::Rect hero = app.hero_rect(scroll);
+    const vf::Rect rails = app.rails_rect(scroll);
+    CHECK_NEAR(hero.y, -scroll, 0.01);
+    CHECK_NEAR(rails.y, rails0.y - scroll, 0.01);
+    CHECK_NEAR(hero.h, hero0.h, 0.01);           // the hero does not stretch
+    CHECK_NEAR(rails.y - (hero.y + hero.h), gap0, 0.01);  // the gap never grows
+  }
+
+  // A point on Home where the wheel reaches the page rather than a rail (over a rail the
+  // wheel goes sideways by design, which is its own test).
+  auto find_page_point = [&app](float* ox, float* oy) {
+    for (float y = 80; y < app.height() - 10; y += 10) {
+      for (const float x : {4.0f, 800.0f, static_cast<float>(app.width()) - 4}) {
+        if (app.scroll_region_at(x, y) == ui::App::page_region()) {
+          *ox = x;
+          *oy = y;
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  float px = -1, py = -1;
+  CHECK(find_page_point(&px, &py));  // the page is reachable with the pointer
+
+  // The poster cards on the page, as drawn.
+  auto poster_cards = [&app]() {
+    std::vector<vf::Rect> cards;
+    for (const auto& hit : app.hit_rects()) {
+      if (hit.second.kind != ui::Action::Kind::OpenDetail) continue;
+      if (hit.first.w < 100 || hit.first.w > 420 || hit.first.h < 100) continue;
+      cards.push_back(hit.first);
+    }
+    return cards;
+  };
+  draw_once(app);
+  const std::vector<vf::Rect> before_cards = poster_cards();
+  CHECK(!before_cards.empty());
+
+  // And through the real input path: a wheel notch on the page moves the whole page.
+  const float offset0 = app.scroll_offset(ui::App::page_region());
+  CHECK(find_page_point(&px, &py));
+  app.handle(wheel_at(px, py, -1));  // wheel down = scroll down = content up
+  const float offset1 = app.scroll_offset(ui::App::page_region());
+  CHECK(offset1 > offset0);
+  const float moved = offset1 - offset0;
+  CHECK_NEAR(app.hero_rect(offset1).y, app.hero_rect(offset0).y - moved, 0.01);
+  CHECK_NEAR(app.rails_rect(offset1).y, app.rails_rect(offset0).y - moved, 0.01);
+  CHECK_NEAR(app.rails_rect(offset1).y - (app.hero_rect(offset1).y + app.hero_rect(offset1).h),
+             gap0, 0.01);
+
+  // The cards really moved up by that much. Every card still on screen has a counterpart
+  // exactly `moved` higher; not one of them stayed where it was.
+  draw_once(app);
+  const std::vector<vf::Rect> after_cards = poster_cards();
+  int shifted = 0;
+  int stuck = 0;
+  for (const vf::Rect& old_rect : before_cards) {
+    for (const vf::Rect& new_rect : after_cards) {
+      if (new_rect.w != old_rect.w || new_rect.h != old_rect.h) continue;
+      if (new_rect.x != old_rect.x) continue;
+      if (std::fabs(new_rect.y - (old_rect.y - moved)) < 0.5f) ++shifted;
+      if (new_rect.y == old_rect.y) ++stuck;
+    }
+  }
+  CHECK(shifted > 0);
+  CHECK_EQ(stuck, 0);
+}
+
+// The hover preview: the card under the pointer grows where it is. It used to be a second
+// panel drawn above or below the card, which covered its neighbours and pushed nothing -
+// the user's words were "it should scale up like the web version", and the web version
+// grew the card itself.
+void test_ui_hover_grows_in_place() {
+  TEST("ui: the hovered card grows in place, stays on screen, and moves nothing else");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-hover");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_big_catalog(30));
+  draw_once(app);
+
+  // A poster with room around it: the second card, so growing it cannot reach a corner.
+  std::vector<std::pair<vf::Rect, int>> cards;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::OpenDetail) continue;
+    if (hit.first.w < 100 || hit.first.h < 100) continue;
+    cards.emplace_back(hit.first, hit.second.index);
+  }
+  CHECK(cards.size() >= 3);
+  const vf::Rect rest = cards[1].first;
+  const int index = cards[1].second;
+  const std::size_t hits_before = app.hit_rects().size();
+
+  // Remember every other card's geometry, to prove hovering does not re-lay-out the page.
+  std::vector<vf::Rect> others;
+  for (const auto& card : cards) {
+    if (card.second != index) others.push_back(card.first);
+  }
+
+  app.handle(move_to(rest.x + rest.w / 2, rest.y + rest.h / 2));
+  draw_once(app);
+
+  // The grown card: the last hit area for this film is the one drawn on top, and it is
+  // bigger than the card at rest - the whole point of the change.
+  bool found_grown = false;
+  vf::Rect grown{};
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::OpenDetail || hit.second.index != index) continue;
+    if (hit.first.w <= rest.w) continue;
+    found_grown = true;
+    grown = hit.first;
+  }
+  CHECK(found_grown);
+  CHECK(grown.h > rest.h);
+
+  // In place: the same centre as the card at rest, not a panel somewhere else.
+  CHECK_NEAR(grown.x + grown.w / 2, rest.x + rest.w / 2, 1.0);
+  CHECK_NEAR(grown.y + grown.h / 2, rest.y + rest.h / 2, 1.0);
+
+  // On screen, and below the header rather than over it.
+  CHECK(grown.x >= -1);
+  CHECK(grown.y >= theme::kHeaderHeight);
+  CHECK(grown.x + grown.w <= 1601);
+  CHECK(grown.y + grown.h <= 901);
+
+  // Nothing else moved: every other card is exactly where it was, so the grown card
+  // covers its neighbours instead of pushing them, and nothing was added above or below.
+  std::vector<vf::Rect> still;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::OpenDetail) continue;
+    if (hit.first.w < 100 || hit.first.h < 100) continue;
+    if (hit.second.index == index) continue;
+    still.push_back(hit.first);
+  }
+  CHECK_EQ(still.size(), others.size());
+  bool same = true;
+  for (std::size_t i = 0; i < std::min(still.size(), others.size()); ++i) {
+    if (still[i].x != others[i].x || still[i].y != others[i].y || still[i].w != others[i].w ||
+        still[i].h != others[i].h) {
+      same = false;
+    }
+  }
+  CHECK(same);
+
+  // One new hit area - the grown card - and no panel's worth of extra ones.
+  CHECK(app.hit_rects().size() >= hits_before);
+  CHECK(app.hit_rects().size() <= hits_before + 1);
+
+  // A click on the grown card opens that film: growth must not cost the click.
+  const ui::Action top = top_action_at(app, grown.x + grown.w / 2, grown.y + grown.h / 2);
+  CHECK_EQ(top.kind, ui::Action::Kind::OpenDetail);
+  CHECK_EQ(top.index, index);
+
+  // Moving off the card puts everything back the way it was.
+  app.handle(move_to(2, 899));
+  draw_once(app);
+  bool back = false;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind == ui::Action::Kind::OpenDetail && hit.second.index == index) {
+      back = back || (hit.first.w == rest.w && hit.first.y == rest.y);
+    }
+  }
+  CHECK(back);
+}
+
+// Two-finger scrolling on a touchpad: Windows sends fractional deltas that SDL rounds to
+// zero in the integer fields, so a build reading only wheel.y feels nothing at all. The
+// arithmetic is in platform/wheel.h so it can be checked without a touchpad.
+void test_touchpad_wheel_input() {
+  TEST("input: a touchpad's fractional wheel deltas add up to real scrolling");
+
+  // The precise value wins over the integer field, which SDL has rounded to zero.
+  CHECK_NEAR(vf::wheel_axis(0.06f, 0.0f), 0.06f, 1e-6);
+  CHECK_NEAR(vf::wheel_axis(0.0f, 1.0f), 1.0f, 1e-6);  // no precise value: a real wheel
+  CHECK_NEAR(vf::wheel_axis(0.0f, 0.0f), 0.0f, 1e-6);
+
+  // Natural scrolling: the sign is the user's choice, and both axes follow it.
+  CHECK_NEAR(vf::wheel_direction(0.5f, true), -0.5f, 1e-6);
+  CHECK_NEAR(vf::wheel_direction(0.5f, false), 0.5f, 1e-6);
+
+  // A single tiny delta is not worth a scroll event, nor are four of them...
+  vf::WheelAccumulator acc;
+  float out_x = 9.0f, out_y = 9.0f;
+  for (int i = 0; i < 4; ++i) CHECK(!acc.push(0.0f, 0.01f, &out_x, &out_y));
+  // ...but they are kept, so the fifth is the one that moves the page.
+  CHECK(acc.push(0.0f, 0.01f, &out_x, &out_y));
+  CHECK_NEAR(out_y, 0.05f, 1e-6);
+  // The leftover is carried, not rounded away: 0.01 alone is 0.04 in the tank and 0.01
+  // over the step the last push flushed.
+  CHECK(!acc.push(0.0f, 0.04f, &out_x, &out_y));
+  CHECK(acc.push(0.0f, 0.04f, &out_x, &out_y));
+  CHECK_NEAR(out_y, 0.05f, 1e-6);
+
+  // A long swipe of small deltas adds up to all of it, and loses nothing.
+  acc.reset();
+  float total = 0.0f;
+  for (int i = 0; i < 500; ++i) {
+    float ex = 0.0f, ey = 0.0f;
+    if (acc.push(0.0f, 0.01f, &ex, &ey)) total += ey;
+  }
+  CHECK_NEAR(total, 5.0f, 0.06);
+
+  // A whole mouse notch still goes straight through, every time.
+  acc.reset();
+  CHECK(acc.push(0.0f, 1.0f, &out_x, &out_y));
+  CHECK_NEAR(out_y, 1.0f, 1e-6);
+  CHECK(acc.push(0.0f, 1.0f, &out_x, &out_y));
+  CHECK_NEAR(out_y, 1.0f, 1e-6);
+
+  // And the opposite direction cancels, rather than sticking.
+  acc.reset();
+  CHECK(!acc.push(0.0f, 0.03f, &out_x, &out_y));
+  CHECK(!acc.push(0.0f, -0.03f, &out_x, &out_y));
+  CHECK(acc.push(0.0f, 0.05f, &out_x, &out_y));
+  CHECK_NEAR(out_y, 0.05f, 1e-6);
+}
+
 }  // namespace
 
 void run_ui_tests(const std::string& out_dir) {
@@ -962,6 +1204,9 @@ void run_ui_tests(const std::string& out_dir) {
   test_folder_browser();
   test_ui_folder_browser();
   test_render_driver_policy();
+  test_ui_home_scroll_moves_content();
+  test_ui_hover_grows_in_place();
+  test_touchpad_wheel_input();
 }
 
 }  // namespace vf

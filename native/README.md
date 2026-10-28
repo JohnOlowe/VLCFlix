@@ -23,7 +23,7 @@ current, and `../docs/TESTING.md` §10 is the checklist for the machine that can
 sudo apt install build-essential pkg-config libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev
 cd native
 make -j2          # build/vlcflix
-make verify       # the gate: static checks, 529 test checks, 15 journey steps
+make verify       # the gate: static checks, 590 test checks, 15 journey steps
 make test         # just the tests (unit, golden image, fault injection)
 make asan         # the same tests under AddressSanitizer
 make preflight    # just the static checks
@@ -240,13 +240,13 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 ## What the tests prove
 
 `make verify` runs four things and they are not interchangeable:
-`../tools/preflight.sh` (33 static checks a compiler here cannot make), 529 test
-checks, and the 15-step journey through the real binary. `make asan` runs the same 529
+`../tools/preflight.sh` (33 static checks a compiler here cannot make), 590 test
+checks, and the 15-step journey through the real binary. `make asan` runs the same 590
 checks under AddressSanitizer. The reasoning behind each layer, the negative control
 for every layer, and the honest list of what none of them can reach are in
 `../docs/TESTING.md`.
 
-**529 checks** (unit + golden image + fault injection):
+**590 checks** (unit + golden image + fault injection):
 
 - every bug from `../docs/AUDIT.md` has a regression test: **A1** year-titled films,
   **A4** a film past 92 % leaves Continue Watching, **A5** `nv12` is not 10-bit,

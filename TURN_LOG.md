@@ -1542,3 +1542,60 @@ here). What is proved is that the driver that crashed is no longer selected.
 Installer rebuilt as **2.0.3**, installed and verified under Wine 11.19 (372 files,
 `version` → 2.0.3, `doctor` prints the renderer policy, scan 8 items / 0 errors, playback
 decoded=80 presented=78).
+
+## Turn 10 — the Home screen: scrolling, and a hover that grows
+
+2.0.3 opened, and the Home screen turned out to have three things wrong on it. Each one
+looked like something else from the outside.
+
+**Two-finger scrolling did nothing.** The mouse wheel scrolled; a touchpad did not. That
+is not a Home bug — a precision touchpad sends fractional deltas (`0.03`, `0.07`, ...),
+SDL 2.26+ stores them in `preciseX`/`preciseY` and **rounds the integer fields to zero**,
+and the event handler read `wheel.y`. Every swipe therefore arrived as `0` and was
+silently discarded, on every screen. The arithmetic is now a pure, tested function
+(`platform/wheel.h`): take the precise value when there is one, honour the direction flip,
+and carry the fractions until they are worth a scroll event, so a swipe is a handful of
+smooth movements rather than a hundred redraws or none at all.
+
+**Dragging the page bar "zoomed" the layout.** The page bar worked; the page did not. On
+Home the hero is placed with `y = -scroll` and the rails with `top = hero.h + gap + scroll`
+— the two halves of the page travelled in *opposite directions*, so every scroll opened the
+gap between the hero and *Recently Added* until both were off the screen. One sign. The
+test now measures what the user saw: the hero-to-rails gap is identical at 0, 20, 180 and
+480 px of scroll, the hero does not change height, and every poster card on the page ends
+up exactly `moved` pixels higher with not one card left behind.
+
+**The hover preview showed artwork over the neighbours.** Two faults:
+
+* it seeked to 20 % of the film immediately after `open()`, when libVLC does not yet know
+  the length — the seek went nowhere and the card sat on the artwork for ever. The seek is
+  now queued and performed by `tick()` as soon as `length > 0` (`preview: seeked to 3.2 s
+  of 10.0 s`). A preview that still produces nothing after four seconds now says so in the
+  log rather than looking like a dead feature;
+* it drew a **second 336-px panel** above or below the card. It now grows the card itself —
+  1.24× for posters, 1.12× for the 16:9 cards — centred on the card's own centre, clamped
+  below the header and inside the window, with the title, meta and progress on it, and
+  every other card left exactly where it was.
+
+The enlarged card is drawn from a rectangle recorded during the draw pass, because looking
+the card up in the hit list afterwards found the *hero's* clickable area for the same film
+and drew the enlarged card across the Play and My List buttons. That was only visible in a
+screenshot of the running window, not in a test.
+
+Verified on the running window: hovering a poster for 3 s and then 6 s leaves **96 % of the
+pixels inside the card different** between two captures (a still cannot do that), the card
+is visibly larger with its text on it, and dragging the page bar from y=300 to y=600 brings
+*Recently Added*, *Drama* and *Documentary* up with the hero gone off the top and no gap
+anywhere. Suite 529 → **590 checks**; `make verify` (33 static + 590 + 15 journey) and
+`make asan` green.
+
+Installer rebuilt as **2.0.4** and exercised under Wine 11.19: 372 files installed,
+`--verify` clean, `version` → 2.0.4, `doctor` prints the renderer policy, a scan of the
+samples gives 8 items / 0 errors, and playback decodes and presents (decoded=64
+presented=62 at 3 s).
+
+**Not claimed:** the touchpad itself — there is no precision touchpad here and X11 cannot
+synthesise `preciseY`, so the fractional path is proved by the pure function and by a build
+that reads the field, not by a finger. Wine still shows no window, so hover cannot be driven
+there either; the hover evidence is from the virtual display, and the real machine remains
+the last mile.

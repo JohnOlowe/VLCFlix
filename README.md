@@ -30,7 +30,7 @@ overwrites or migrates 1.x, and the two can be installed side by side.
 ```bash
 cd native
 make -j2          # build/vlcflix   (or: cmake -S . -B build && cmake --build build)
-make verify       # static checks + 529 tests + 15-step end-to-end journey
+make verify       # static checks + 590 tests + 15-step end-to-end journey
 make asan         # the same tests under AddressSanitizer
 ```
 
@@ -59,13 +59,14 @@ is fixed — the manifest is now schema-checked and has no dependent assemblies 
 and `scripts/check-win-manifest.py` runs inside `make verify` and inside every Windows
 build so it cannot come back.
 
-The current build is **2.0.3** (installer sha256
-`5eadb2505cf1c59919a2a8fce74c5826fdcc8c853faf1442bb171713812c53e4`): the window shrinks
-to fit the screen it opens on, the detail and settings sheets are clickable, the cursor
-turns into a hand over anything clickable **on every screen**, a library folder can be
-chosen with a folder browser instead of being typed, and the window no longer asks a
-Direct3D 9 driver for anything — that was crashing 2.0.2 inside the Intel graphics driver
-before the first frame.
+The current build is **2.0.4** (installer sha256 `e34ff37b987e117502f15c55aa708eec010d319816232d5e64741ea60b38c1fb`): the window shrinks to fit
+the screen it opens on, the detail and settings sheets are clickable, the cursor turns into
+a hand over anything clickable **on every screen**, a library folder can be chosen with a
+folder browser instead of being typed, the window no longer asks a Direct3D 9 driver for
+anything (that was crashing 2.0.2 inside the Intel graphics driver before the first frame),
+**two-finger touchpad scrolling works**, scrolling moves the page instead of opening a gap
+between the hero and the rails, and the hover preview plays the film's preview video with
+the card **growing in place** instead of drawing a panel over its neighbours.
 
 **If 2.0.2 crashed instantly** with `code=0xc0000005` in a stack full of `igdumdim64` and
 `D3D9`, that is the driver path described above and 2.0.3 is the fix: the renderer is now

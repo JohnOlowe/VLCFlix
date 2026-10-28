@@ -256,11 +256,11 @@ difference between "the Play button exists" and "the Play button can be reached"
 
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
-* 529 checks across layers 1, 2 and 4 — `0 failure(s)`
+* 590 checks across layers 1, 2 and 4 — `0 failure(s)`
 * 33/33 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
-* `make asan`: 529 checks clean, and the pre-fix code failing under it
+* `make asan`: 590 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
@@ -494,6 +494,62 @@ become "the thing under the pointer is the thing that was drawn there".
 Both halves were confirmed by re-breaking them: with the scrim and swallow moved back to
 the end, six checks fail; with `swallow()` replaced by `add_hit(panel, Action{})`, the
 two new sheet/cursor tests fail.
+
+### Three things the Home screen got wrong: 2.0.4
+
+2.0.3 opened, and then the Home screen turned out to be the screen with the most wrong
+things on it. All three reports were real, all three had a different cause, and none of
+them was what the symptom looked like from outside.
+
+**1. Two-finger scrolling did nothing at all.** A precision touchpad does not scroll in
+notches: Windows sends hundreds of fractional deltas (`0.03`, `0.07`, ...), SDL 2.26+
+stores them in `preciseX`/`preciseY` and **rounds the integer fields to zero**. The event
+handler read `wheel.y`, so every touchpad swipe arrived as `0` and was correctly ignored —
+on every screen, not just Home. The mouse wheel worked, which is what made it look like a
+Home bug. The arithmetic now lives in `platform/wheel.h` as a pure `WheelAccumulator`
+(precise value when present, direction flip, fractions carried until they are worth an
+event), so it is testable without a touchpad: four deltas of `0.01` emit nothing, the
+fifth emits one step, a 500-delta swipe loses nothing, a real wheel notch passes straight
+through, and opposite directions cancel.
+
+**2. Dragging the page bar "zoomed" the layout.** Not a scrollbar bug at all. `hero_rect()`
+moved the hero **up** (`y = -scroll`) while `rails_rect()` moved the rails **down**
+(`top = hero.h + gap + scroll`): the two halves of the page scrolled in opposite
+directions, so every scroll opened the gap between the hero and *Recently Added* until
+both were off the screen, and scrolling back closed it again. It looked like the page was
+being stretched. The sign is one character; the test measures the thing the user saw — the
+gap between the hero's bottom and the rails' top must be the same at 0, 20, 180 and 480 px
+of scroll, the hero must not change height, and every poster card on the page must be
+exactly `moved` pixels higher with **no card left where it was**.
+
+**3. The hover preview showed artwork, and a panel instead of a card.** Two separate
+faults in the same feature:
+
+| Fault | What it looked like | Fix |
+|---|---|---|
+| the preview seeked to 20 % immediately after `open()` | libVLC has no length for the first moments, a seek into that goes nowhere, and the card sat on the artwork forever | queue the seek; `App::tick()` performs it as soon as the demuxer reports a length (`preview: seeked to 3.2 s of 10.0 s` in the log) |
+| the hover drew a **second 336-px panel** above or below the card | it covered the neighbours, and it was not what the web version did | the card itself now grows in place (1.24× posters, 1.12× the 16:9 cards), centred on the card's own centre, clamped below the header and inside the window, with the title/meta/progress on top |
+
+The in-place growth records the hovered card's rectangle in `draw_poster_card()`, because
+looking it up in the hit list afterwards found the *hero's* clickable area for the same
+film and drew the enlarged card over the Play/My List buttons — a bug I only saw in a
+screenshot of the running window. The test pins every part of the requirement: the grown
+rectangle has the same centre as the card at rest, is bigger in both directions, stays on
+screen and below the header, every other card keeps its exact geometry (nothing is pushed),
+the hit list grows by at most one entry (no panel), the grown card still opens the film it
+shows, and moving off it puts the card back.
+
+Verified on the running window: hover dwelled for 3 s and 6 s — **96 % of the pixels inside
+the card differ** between two captures 3 s apart (a still image cannot do that), the card
+is drawn larger with its title and meta on it, and a scrollbar drag from y=300 to y=600
+moves the hero off the top and brings *Recently Added*, *Drama* and *Documentary* up
+without opening a gap. Suite 529 → **590 checks**, `make verify` and `make asan` green.
+
+**What is not claimed:** the touchpad itself. There is no precision touchpad on this
+machine and X11 cannot synthesise `preciseY`, so the fractional-input path is proved by the
+pure function and by a build that reads the field — not by a finger. A preview that still
+fails on the real machine now says so in `vlcflix-studio.log`
+(`preview: no picture after 4 s of …`) instead of silently showing artwork.
 
 ### The crash in the Intel graphics driver: 2.0.3
 

@@ -5,10 +5,10 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "e4809ae",
-  "remote_sha": "e4809ae9ba319f6ade8ee56fdab0bc0bd3d138df",
+  "local_head": "NEWHEAD",
+  "remote_sha": "NEWSHA",
   "pushed": true,
-  "awaiting": "nothing on cpp. Outstanding: the user runs 2.0.3 on the real machine - it must now open (software renderer), then the hand cursor on Home and Browse... in Settings. A real Windows run stays the last mile for audio, the desktop icon and Add/Remove Programs.",
+  "awaiting": "nothing on cpp. Outstanding: the user runs 2.0.4 on the real machine - it opens (software renderer), then: two-finger scrolling on Home, dragging the page bar (content must move, not the gap), and hovering a poster (the card must grow in place and play the preview). A real Windows run stays the last mile for audio, the desktop icon and Add/Remove Programs.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-28",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned e4809ae9ba319f6ade8ee56fdab0bc0bd3d138df (2026-10-28): 2.0.3 - the renderer is chosen by name and defaults to software, which removes the Direct3D 9 driver crash that killed 2.0.2. On top of 5a3bab3 (2.0.2: pointer coordinates + folder browser), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 529 test checks + 15 journey steps), make asan 529/529, a live Xvfb/xdotool run, and the 2.0.3 installer installed + verified under Wine 11.19."
+  "remote_sha_note": "git ls-remote origin cpp returned NEWSHA (2026-10-28): 2.0.4 - Home scrolls (touchpad fractional deltas, and the hero/rails no longer move in opposite directions) and the hover preview grows the card in place and plays the video. On top of 1ecb261 (2.0.3 checkpoint), a5c0d1b (2.0.3: software renderer, the D3D9 crash), 5a3bab3 (2.0.2), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 590 test checks + 15 journey steps), make asan 590/590, a live Xvfb/xdotool run (preview frames differ inside the grown card; a page-bar drag moves content), and the 2.0.4 installer installed + verified under Wine 11.19 (372 files, version 2.0.4, scan 8/0, playback decoded=64 presented=62)."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -403,7 +403,15 @@
     "not_proven": "Microsoft's own parser cannot be run here; sxstrace.exe on the target machine is the arbiter"
    }
   },
-  "version": "2.0.3 (software renderer by default: the D3D9 driver crash is gone)",
+  "version": "2.0.4 (Home scrolls with a touchpad, the page really scrolls, and the hover preview grows the card and plays the video)",
+  "home_screen_bugs_2026_10_28": {
+   "touchpad_did_nothing": "a precision touchpad sends fractional deltas; SDL 2.26+ keeps them in preciseX/preciseY and rounds the integer fields to zero, and the handler read wheel.y - so every swipe arrived as 0 and was ignored on every screen. platform/wheel.h (pure, tested: WheelAccumulator, wheel_axis, wheel_direction) takes the precise value and accumulates the fractions.",
+   "page_bar_opened_a_gap": "hero_rect() placed the hero at y=-scroll while rails_rect() placed the rails at hero.h+gap+scroll: the two halves of the page travelled in opposite directions, so scrolling opened the gap instead of moving the page. One sign; the test asserts the gap is identical at 0/20/180/480 px and every card moves by exactly the scroll.",
+   "hover_preview_showed_artwork": "the preview seeked to 20% immediately after open(), when libVLC has no length yet; the seek went nowhere and the card stayed on the artwork. The seek is queued and applied by tick() once length > 0, and a preview with no picture after 4 s now logs why (preview: no picture after 4 s of ...).",
+   "hover_drew_a_panel": "draw_hover_preview() drew a second 336-px panel above or below the card. The card itself now grows in place (1.24x posters, 1.12x 16:9 cards) from a rectangle recorded in draw_poster_card() - looking the card up in the hit list afterwards found the hero's clickable area and drew it over the Play button.",
+   "evidence": "live Xvfb: 96% of the pixels inside the hovered card differ between captures 3 s apart; a page-bar drag from y=300 to y=600 moves the hero off the top and brings Recently Added/Drama/Documentary up with no gap; suite 529 -> 590 checks, make verify and make asan green.",
+   "not_proven": "no precision touchpad here and X11 cannot synthesise preciseY; Wine still shows no window, so hover is evidenced on the virtual display only. 2.0.4 is built and exercised under Wine but not run on real Windows."
+  },
   "real_screen_bugs_2026_10_28": {
    "window_too_wide": "opened at the 1600x900 default on any display, putting the title bar (and minimise/maximise/close) off-screen; fit_window_to_display() now clamps to 96%/90% of the usable desktop with a 640x420 floor, plus SDL_SetWindowMinimumSize",
    "sheet_controls_dead": "two bugs: the scrim + click-swallow panel were registered last (hit testing takes the last match) so they covered every control, and add_hit() silently drops Action::Kind::None so the swallow was never registered at all; clicks that missed a control hit the scrim and closed the sheet",

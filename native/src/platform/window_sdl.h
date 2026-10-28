@@ -6,6 +6,7 @@
 #pragma once
 #include <string>
 
+#include "platform/wheel.h"
 #include "render/canvas.h"
 #include "ui/app.h"
 
@@ -53,6 +54,8 @@ class Window {
   float last_mouse_x_ = 0;
   float last_mouse_y_ = 0;
   bool fullscreen_ = false;
+  // Fractional wheel input from a precision touchpad, waiting to add up to a scroll.
+  WheelAccumulator wheel_;
 };
 
 }  // namespace vf

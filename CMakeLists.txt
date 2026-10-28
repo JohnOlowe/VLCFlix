@@ -33,6 +33,7 @@ add_library(vlcflix_core STATIC
   src/library/subtitles.cpp
   src/library/artwork.cpp
   src/library/scan.cpp
+  src/library/fs_browse.cpp
   src/platform/proc.cpp
   src/render/canvas.cpp
   src/render/font.cpp

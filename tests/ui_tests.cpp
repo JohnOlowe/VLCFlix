@@ -6,6 +6,7 @@
 // pass produced, so a test cannot pass by clicking a coordinate the app no longer
 // uses.
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "core/paths.h"
 #include "render/canvas.h"
 #include "tests/harness.h"
+#include "library/fs_browse.h"
 #include "platform/window_size.h"
 #include "ui/app.h"
 
@@ -742,6 +744,164 @@ void test_window_fits_the_display() {
   CHECK(unknown.width == 1600 && unknown.height == 900);
 }
 
+// The folder picker: listing, going up, going in, and adding. All of it is exercised
+// against a real tree made in the temp directory, because "it can browse" is only true
+// if it can browse a filesystem that has folders in it.
+void test_folder_browser() {
+  TEST("fs: folders list, sort, skip files and dot names, and walk up");
+  const std::string root = join(temp_dir(), "vlcflix-studio-browse-tree");
+  ensure_dir(join(root, "Movies/Anniversary"));
+  ensure_dir(join(root, "Movies/Zebra"));
+  ensure_dir(join(root, "Music"));
+  ensure_dir(join(root, ".hidden"));
+  {
+    // A file in the same directory must not be offered as a folder.
+    std::FILE* file = std::fopen(join(root, "notes.txt").c_str(), "wb");
+    if (file) {
+      std::fputs("not a folder", file);
+      std::fclose(file);
+    }
+  }
+
+  const vf::FolderListing listing = vf::list_folders(root);
+  CHECK(listing.ok());
+  CHECK_EQ(listing.error, std::string());
+  CHECK(listing.path == root || listing.path == join(root, ""));
+  CHECK_EQ(listing.folders.size(), std::size_t(2));  // Movies, Music - not .hidden, not notes.txt
+  CHECK_EQ(listing.folders[0], std::string("Movies"));  // sorted, not in creation order
+  CHECK_EQ(listing.folders[1], std::string("Music"));
+
+  const vf::FolderListing inner = vf::list_folders(join(root, "Movies"));
+  CHECK_EQ(inner.folders.size(), std::size_t(2));
+  CHECK_EQ(inner.folders[0], std::string("Anniversary"));
+  CHECK_EQ(inner.folders[1], std::string("Zebra"));
+
+  // A file is not a folder, and a name that is not there says so instead of throwing.
+  CHECK(!vf::list_folders(join(root, "notes.txt")).ok());
+  CHECK(!vf::list_folders(join(root, "does-not-exist")).ok());
+  CHECK(!vf::is_folder(join(root, "notes.txt")));
+  CHECK(vf::is_folder(join(root, "Music")));
+
+  CHECK_EQ(vf::join_folder(join(root, "Music"), "Albums"), join(root, "Music/Albums"));
+  CHECK_EQ(vf::parent_folder(join(root, "Music")), root);
+  CHECK_EQ(vf::parent_folder("/").empty(), true);  // a root has no parent
+  CHECK(vf::folder_roots().size() >= 1);
+
+  // Where a browse starts: the first library folder that still exists, else home.
+  CHECK_EQ(vf::browse_start({"/definitely/not/here", join(root, "Music")}),
+           join(root, "Music"));
+  CHECK(!vf::browse_start({}).empty());
+}
+
+void test_ui_folder_browser() {
+  TEST("ui: the settings sheet can browse to a folder instead of typing a path");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-browser");
+  ensure_dir(dir);
+  const std::string tree = join(dir, "library");
+  ensure_dir(join(tree, "Films"));
+  ensure_dir(join(tree, "Series"));
+
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_catalog());
+  draw_once(app);
+  CHECK(click_action(app, ui::Action::Kind::OpenSettings));
+  CHECK(app.settings_open());
+  draw_once(app);
+
+  // The Browse button is there, in the settings sheet, and it opens the picker.
+  float bx = 0, by = 0;
+  CHECK(find_clickable(app, ui::Action::Kind::BrowseForFolder, &bx, &by));
+  CHECK(app.handle(click_at(bx, by)));
+  CHECK(app.browser_open());
+  CHECK_STR_EQ(app.screen_name(), "browser");
+  CHECK(!app.browser_path().empty());
+  CHECK(app.hit_rects().size() > 3);
+
+  // Opened deliberately at the tree: two folders, and "up one level".
+  app.open_folder_browser(tree);
+  draw_once(app);
+  CHECK_STR_EQ(app.browser_path(), tree);
+  CHECK_EQ(app.browser_folders().size(), std::size_t(2));
+
+  // Going into a folder lists what is inside it. The first BrowseInto row is always
+  // "..", so the folder rows are found by their action value.
+  float fx = 0, fy = 0;
+  bool found_child = false;
+  std::string child_name;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::BrowseInto) continue;
+    const float cx = hit.first.x + hit.first.w / 2;
+    const float cy = hit.first.y + hit.first.h / 2;
+    if (top_action_at(app, cx, cy).kind != ui::Action::Kind::BrowseInto) continue;
+    if (hit.second.value == vf::parent_folder(tree)) continue;  // the ".." row
+    fx = cx;
+    fy = cy;
+    child_name = hit.second.value;
+    found_child = true;
+    break;
+  }
+  CHECK(found_child);
+  CHECK(app.handle(click_at(fx, fy)));
+  draw_once(app);
+  CHECK_STR_EQ(app.browser_path(), join(tree, child_name));
+
+  // ".." goes back up; the row is still there at the top of the list.
+  const std::string child = app.browser_path();
+  CHECK(child != tree);
+  CHECK(app.handle(ui::InputEvent{ui::InputEvent::Type::Key, 0, 0, 0, 0, 27, "", false}));
+  CHECK(!app.browser_open());  // Escape closes the picker, not the settings sheet
+  CHECK(app.settings_open());
+  draw_once(app);
+  CHECK(find_clickable(app, ui::Action::Kind::BrowseForFolder, &bx, &by));
+  app.handle(click_at(bx, by));
+  app.open_folder_browser(child);
+  draw_once(app);
+  float ux = 0, uy = 0;
+  bool found_up = false;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::BrowseInto) continue;
+    if (hit.second.value != tree) continue;  // ".." carries the parent it goes to
+    const float cx = hit.first.x + hit.first.w / 2;
+    const float cy = hit.first.y + hit.first.h / 2;
+    if (top_action_at(app, cx, cy).kind != ui::Action::Kind::BrowseInto) continue;
+    ux = cx;
+    uy = cy;
+    found_up = true;
+    break;
+  }
+  CHECK(found_up);
+  app.handle(click_at(ux, uy));
+  CHECK(app.browser_path() == tree);
+
+  // "Use this folder" really adds it, through the same validation as a typed path.
+  draw_once(app);
+  float ux2 = 0, uy2 = 0;
+  CHECK(find_clickable(app, ui::Action::Kind::BrowseUse, &ux2, &uy2));
+  const std::size_t before = app.settings().library_folders.size();
+  CHECK(app.handle(click_at(ux2, uy2)));
+  CHECK_EQ(app.settings().library_folders.size(), before + 1);
+  CHECK(app.settings().library_folders.back() == tree);
+  CHECK(!app.browser_open());  // the picker closes once the folder is added
+  CHECK(app.settings_open());  // the settings sheet stays, showing the new folder
+
+  // Adding the same folder again is refused with a message rather than duplicated.
+  app.open_folder_browser(tree);
+  draw_once(app);
+  CHECK(find_clickable(app, ui::Action::Kind::BrowseUse, &ux2, &uy2));
+  CHECK(app.handle(click_at(ux2, uy2)));
+  CHECK_EQ(app.settings().library_folders.size(), before + 1);
+  CHECK(app.last_message().find("already") != std::string::npos);
+
+  // Cancel closes the picker and changes nothing.
+  draw_once(app);
+  float cx = 0, cy = 0;
+  CHECK(find_clickable(app, ui::Action::Kind::BrowseClose, &cx, &cy));
+  app.handle(click_at(cx, cy));
+  CHECK(!app.browser_open());
+  CHECK_EQ(app.settings().library_folders.size(), before + 1);
+}
+
 }  // namespace
 
 void run_ui_tests(const std::string& out_dir) {
@@ -756,6 +916,8 @@ void run_ui_tests(const std::string& out_dir) {
   test_ui_sheets_are_clickable();
   test_ui_pointer_cursor();
   test_window_fits_the_display();
+  test_folder_browser();
+  test_ui_folder_browser();
 }
 
 }  // namespace vf

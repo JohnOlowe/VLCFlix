@@ -5,10 +5,10 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "de10fc5",
-  "remote_sha": "de10fc5c85cdd15ce7d2096bae3016a836eb211c",
+  "local_head": "1d2cadf",
+  "remote_sha": "1d2cadfda38090027713a3ef6552e0f832b62d17",
   "pushed": true,
-  "awaiting": "nothing on cpp: all four turns are complete. The Windows exe has been executed under Wine 11.19; the last mile is windows-selfcheck.ps1 on a real Windows machine (installer, display, audio).",
+  "awaiting": "nothing on cpp: turns 1-4 plus the scrolling and installer follow-ups are pushed. The last mile is windows-selfcheck.ps1 on a real Windows machine (desktop icon, display, audio, Add/Remove Programs, side by side with 1.2.0).",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-28",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned de10fc5c85cdd15ce7d2096bae3016a836eb211c (2026-10-28): the scrolling commit, on top of 9f0637a (Windows exe executed under Wine 11.19, four Windows-only bugs fixed). main is untouched at d4606a7. Verified: make verify (28 static + 412 test checks + 15 journey steps), make asan 412/412, and the rebuilt Windows exe re-run under Wine 11.19."
+  "remote_sha_note": "git ls-remote origin cpp returned 1d2cadfda38090027713a3ef6552e0f832b62d17 (2026-10-28): the one-file installer commit, on top of de10fc5 (scrolling everywhere) and 9f0637a (Windows exe executed under Wine 11.19). main is untouched at d4606a7. Verified: make verify (30 static + 412 test checks + 15 journey steps), make asan 412/412, and the installer executed under Wine 11.19 in a fresh prefix (install, verify, run, reinstall, uninstall)."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

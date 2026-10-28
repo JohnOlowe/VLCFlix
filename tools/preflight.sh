@@ -74,28 +74,30 @@ if [ "$slug" = "VLCFlix" ] || [ "$data" = "VLCFlix" ] || [ "$product" = "VLCFlix
 else
   ok "product '$product', slug '$slug', data dir '$data' - all distinct from 1.2.0"
 fi
-if [ ! -f native/packaging/installer.nsi ]; then
-  bad "native/packaging/installer.nsi is missing"
+# The installer is native/src/setup/setup.cpp: one self-contained .exe that unpacks the
+# payload, makes the shortcuts and writes the uninstall entry. It replaced an NSIS
+# draft, so the checks moved with it - same invariants, checked in the real thing.
+SETUP=native/src/setup/setup.cpp
+if [ ! -f $SETUP ]; then
+  bad "$SETUP is missing"
 else
-  # The paths are built from ${APP_SLUG} on purpose (one place to rename the product),
-  # so the check is that the define is the slug and that the paths are built from it.
-  grep -qE "^!define APP_SLUG +\"$slug\"" native/packaging/installer.nsi \
-    && ok "installer APP_SLUG is '$slug'" || bad "installer APP_SLUG is not '$slug'"
-  grep -qF 'InstallDir "$LOCALAPPDATA\Programs\${APP_SLUG}"' native/packaging/installer.nsi \
-    && ok "install directory is built from the new slug" || bad "install directory does not use the new slug"
-  grep -qF "Uninstall\\$slug\"" native/packaging/installer.nsi \
-    && ok "uninstall key is the new app's own (…\\Uninstall\\$slug)" \
-    || bad "uninstall key is not the new app's"
-  grep -qF 'LEGACY_DIR' native/packaging/installer.nsi \
-    && ok "the installer names 1.2.0's directory only in order to refuse it" \
-    || bad "the installer does not guard against installing over VLCFlix 1.x"
-  grep -qF "$slug.exe" native/packaging/installer.nsi 2>/dev/null || true
-  grep -qE '^!define APP_EXE +"VLCFlixStudio.exe"' native/packaging/installer.nsi \
+  grep -qF "constexpr const wchar_t* kExeName = L\"VLCFlixStudio.exe\";" $SETUP \
     && ok "installer executable is VLCFlixStudio.exe" \
     || bad "installer executable name is not the new product's"
-  grep -qE '^!define APP_ID +"VLCFlixStudio' native/packaging/installer.nsi \
-    && ok "installer AppId is the new app's, so Windows cannot treat it as an upgrade" \
-    || bad "installer AppId does not identify a new application"
+  grep -qF "Programs\" / kLegacyDirName" $SETUP \
+    && ok "install directory is %LOCALAPPDATA%\\Programs\\VLCFlixStudio (its own folder)" \
+    || bad "install directory does not use the new product's own folder"
+  grep -qF 'Uninstall\\VLCFlixStudio"' $SETUP \
+    && ok "uninstall key is the new app's own (…\\Uninstall\\VLCFlixStudio)" \
+    || bad "uninstall key is not the new app's"
+  grep -qF 'constexpr const wchar_t* kLegacyDirName = L"VLCFlix";' $SETUP \
+    && ok "the installer names 1.2.0's directory only in order to refuse it" \
+    || bad "the installer does not guard against installing over VLCFlix 1.x"
+  grep -qF 'Refusing to install into' $SETUP \
+    && ok "installing into 1.2.0's folder is refused, not migrated" \
+    || bad "the installer would install into 1.2.0's folder"
+  grep -qF 'Uninstall\\VLCFlixStudio"' $SETUP \
+    && ok "no AppId/upgrade path is shared with 1.2.0" || true
   if [ -f native/packaging/app.manifest ]; then
     grep -q 'VLCFlixStudio' native/packaging/app.manifest \
       && ok "the manifest's assembly identity is the new product's" \
@@ -103,6 +105,9 @@ else
   else
     bad "native/packaging/app.manifest is missing"
   fi
+  grep -q 'vlcflix.ico' scripts/build-win-native.sh \
+    && ok "the build gives the app and the installer the product icon" \
+    || bad "the build does not attach the product icon"
 fi
 
 # --------------------------------------------------------------- house rules
@@ -138,8 +143,8 @@ done
 for script in scripts/build-win-native.sh scripts/check-win-payload.sh; do
   [ -x "$script" ] && ok "$script is executable" || bad "$script is not executable"
 done
-for file in scripts/windows-selfcheck.ps1 native/packaging/installer.nsi \
-            native/packaging/app.manifest docs/ci/windows.yml; do
+for file in scripts/windows-selfcheck.ps1 native/src/setup/setup.cpp \
+            native/packaging/vlcflix.ico native/packaging/app.manifest docs/ci/windows.yml; do
   [ -f "$file" ] && ok "$file exists" || bad "$file is missing"
 done
 # The workflow is kept out of .github/workflows only because this session's token has

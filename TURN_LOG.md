@@ -1334,3 +1334,55 @@ pinned to a fixed height instead of moving with the text. Both are covered now.
 
 Suite: 364 → **412 checks**, `make verify` green (28 static + 412 + 15 journey steps),
 `make asan` clean, golden baselines regenerated for the two sheets that changed.
+
+## Turn 6 — one file to hand somebody
+
+**The request, twice, unchanged:** *"All those libraries that it needs, make them all
+get packed into an exe file. Then I should be able to install the app, and then it should
+behave like a standard app, with a desktop icon and all. Then that final packed app, save
+it under native/releases."*
+
+**Why it cannot be one file the ordinary way.** libVLC loads its codecs from
+`plugins/` at runtime. A single statically-linked binary would mean replacing libVLC
+with something else, so the honest reading of "pack it all into an exe" is: put the
+whole directory inside the executable and unpack it on first run. That is what
+`native/src/setup/setup.cpp` does - the stub is a GUI-subsystem program with the
+payload zip appended and a 24-byte footer (`VFSUZIP1`, offset, length) after it; miniz
+inflates it in place. No unpacking by hand, no second download, no DLLs to place.
+
+**What the installer does**, all of it logged to
+`%LOCALAPPDATA%\VLCFlixStudio\logs\setup.log` line by line, opened and closed per write
+so a crash still leaves evidence:
+
+| Step | Detail |
+|---|---|
+| Install | 372 files into `%LOCALAPPDATA%\Programs\VLCFlixStudio` (the app, SDL2, FreeType, libpng, zlib, libjpeg, libVLC + all 29 plugin modules) |
+| Desktop icon | `Desktop\VLCFlix Studio.lnk` via `IShellLinkW`, icon from the exe's own `1 ICON` resource |
+| Start Menu | `VLCFlix Studio.lnk` and `Uninstall VLCFlix Studio.lnk` |
+| Apps & features | `HKCU\…\Uninstall\VLCFlixStudio`: DisplayName, DisplayVersion 2.0.0, DisplayIcon, InstallLocation, UninstallString, QuietUninstallString, EstimatedSize, NoModify, NoRepair |
+| First launch | starts the installed app when the installer was double-clicked |
+| Uninstall | removes program, all three shortcuts and the registry key; **keeps** catalog, artwork, settings and progress - uninstalling a player must not throw away the collection |
+| Self-delete | the running copy cannot delete its own folder, so it copies itself to `%TEMP%`, relaunches with `--finish-uninstall`, and retries the delete for five seconds |
+| 1.x | the legacy folder is only ever *looked* at; `--dir` pointed at it is refused with exit 1 |
+
+New icon: `native/packaging/vlcflix.ico` (6 sizes, 16→256), also embedded in the app.
+
+**A fifth Windows-only bug, found by installing it.** Double-clicking the new Desktop
+shortcut did nothing: `main()` defaulted to the `help` command, so the shortcut launched
+a GUI-subsystem program that printed usage text into an invisible console and exited.
+No arguments now means *open the window*, and a window that cannot be created shows a
+message box pointing at the log rather than failing silently. (`--help` still prints the
+command list.)
+
+**Executed under Wine 11.19, in a fresh prefix:** install with no arguments → 372 files;
+`--verify` → exit 0; the installed app runs (`version`, `scan` = 8 items / 0 errors,
+`play` decoded=70 presented=70, `render --screen settings` → 58,923 B); reinstall over
+itself keeps the library; `--uninstall --quiet` → folder gone, registry key gone, three
+shortcuts gone, user data intact; a stand-in 1.x folder untouched.
+
+**Not verified, and not claimed:** a real Windows shell drawing these icons, a real Add/
+Remove Programs running this uninstaller, and side-by-side with a genuine 1.2.0 install.
+
+`make verify` is green with **30 static checks** (the NSIS draft `installer.nsi` is gone;
+its identity checks now check `native/src/setup/setup.cpp`), 412 tests and 15 journey
+steps. Deliverable: **`native/releases/VLCFlixStudio-Setup.exe`**, 71 MB, git-ignored.

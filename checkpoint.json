@@ -79,9 +79,8 @@
   ]
  },
  "next_steps": [
-  "Run scripts/windows-selfcheck.ps1 (it ships inside dist/win-native/VLCFlixStudio-win64.zip) on a real Windows machine and send back windows-selfcheck-evidence.zip - that is the last mile: a real display, real audio, and the installer side by side with 1.2.0.",
-  "Or enable docs/ci/windows.yml (needs a token with the Workflows permission, or paste it in the browser) and the same evidence is produced unattended and published to a release.",
-  "Open from v1.2.0: the user runs tools/hwdecode-probe.cmd on the laptop.",
+  "Run scripts/windows-selfcheck.ps1 (it ships inside dist/win-native/VLCFlixStudio-win64.zip) on a real Windows machine: that is the last mile - a real display, real audio, a real Explorer drawing the desktop icon, and a real Add/Remove Programs running the uninstaller.",
+  "Optional: put ffmpeg.exe/ffprobe.exe in the install folder for durations on files with unusual headers (not bundled: 166 MB each).",
   "The Node app (server/, public/, src/win/) is untouched and is deleted only when the user approves."
  ],
  "git_auth": {
@@ -368,7 +367,7 @@
  "native": {
   "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
   "branch": "cpp",
-  "tests": "412 checks (unit + golden image + fault injection), 28 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 412 under AddressSanitizer",
+  "tests": "412 checks (unit + golden image + fault injection), 30 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 412 under AddressSanitizer",
   "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
   "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
   "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
@@ -377,14 +376,25 @@
    "a zero-decode file arrived from libVLC as Ended and was written as watched (removed from Continue Watching); now a zero-decode end is a failure with a message and writes no progress",
    "the artwork preview job captured its segment list by reference after the owning block closed: ~half of scans drew no preview and ffmpeg got an absurd -t; fixed with [&, segments], proved by ASan stack-use-after-scope on the old code and a 3-pass regression test"
   ],
-  "packaging": "native/packaging/{installer.nsi,app.manifest} + scripts/build-win-native.sh (--check reports missing toolchain, exit 3) - written, NOT verified",
+  "packaging": "native/src/setup/setup.cpp (the installer, built by scripts/build-win-native.sh --setup) + native/packaging/{vlcflix.ico,app.manifest}; the NSIS draft installer.nsi is deleted and tools/preflight.sh checks the real installer source instead",
   "not_verified": [
    "audio (no sound card in this machine)",
    "the window on a real display (headless SDL_VIDEODRIVER=dummy only)",
-   "real Windows 10/11 itself (the exe runs under Wine 11.19; that is not Windows)",
+   "real Windows 10/11 itself (the exe and the installer run under Wine 11.19; that is not Windows)",
    "-hwaccel auto GPU path (no Vulkan video queue; software fallback proven by output file)",
-   "installing side by side with 1.2.0 (needs Windows)"
-  ]
+   "a real Explorer/Start Menu/Add-Remove Programs, and side by side with a genuine 1.2.0"
+  ],
+  "installer": {
+   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71 MB, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
+   "how": "GUI-subsystem stub (miniz) + payload zip appended + 24-byte footer 'VFSUZIP1' + <offset> + <length>; extracts to %LOCALAPPDATA%\\Programs\\VLCFlixStudio on first run",
+   "installs": "372 files; Desktop icon; Start Menu entry + uninstall entry; HKCU\\...\\Uninstall\\VLCFlixStudio (DisplayName/DisplayVersion 2.0.0/DisplayIcon/InstallLocation/UninstallString/QuietUninstallString/EstimatedSize/NoModify/NoRepair); launches the app when double-clicked",
+   "flags": "--install-only, --uninstall, --verify (exit 0 only when complete), --dir <path>, --quiet",
+   "log": "%LOCALAPPDATA%\\VLCFlixStudio\\logs\\setup.log, appended per line (opened and closed each time)",
+   "uninstall": "removes program + 3 shortcuts + registry key, keeps catalog/media/progress; copies itself to %TEMP% and relaunches with --finish-uninstall, retrying the delete for 5 s",
+   "legacy": "VLCFlix 1.x's folder is only read; --dir pointed at it is refused with exit 1",
+   "verified_under_wine_11_19": "install (no args) -> 372 files; --verify -> 0; installed app: version, scan 8 items/0 errors, play decoded=70 presented=70, render 58,923 B PNG; reinstall keeps the library; uninstall removes folder + key + shortcuts and leaves user data; stand-in 1.x untouched",
+   "not_verified": "a real Windows shell drawing the icons, a real Add/Remove Programs running the uninstaller, side by side with a genuine 1.2.0"
+  }
  },
  "windows_build": {
   "status": "cross-compiled, payload-checked (136 imports, 0 missing), and EXECUTED under Wine 11.19: version/doctor/status/scan (8 items, 0 errors)/artwork (8 of 8)/render (6 screens)/play (state=playing, decoded=99 presented=99)/crash (log has CRASH + stack). Not yet run on real Windows.",
@@ -395,12 +405,13 @@
   "portability_fixes": "<cstdlib> for std::atoi/atof/strtoul under libc++; <windows.h> for RaiseException; GUI-subsystem exe + AttachConsole(ATTACH_PARENT_PROCESS) so cmd.exe output still works; run_process rewritten from PeekNamedPipe polling to blocking per-pipe reader threads; explicit PROC_THREAD_ATTRIBUTE_HANDLE_LIST + serialised CreateProcess (concurrent probes were inheriting each other's pipes, error 1359); write_png writes through a libpng callback instead of a FILE* (CRT mismatch: every write failed and render died with a divide-by-zero in msvcrt); have_binary now requires exit code 0 and non-empty output",
   "artifact": "dist/win-native/VLCFlixStudio-win64.zip (69.6 MB, 401 files, sha256 7bf4c97d75d558a18fbd6d866ea3d6060388bbdd03df5e65fda2b6c81e24357b) - git-ignored, local only; nothing is published to GitHub releases",
   "evidence": "docs/TESTING.md section 11; docs/evidence/windows-browse.png, docs/evidence/windows-detail.png",
-  "handout": "native/releases/VLCFlixStudio.exe (5.6 MB, git-ignored, written by scripts/build-win-native.sh on every build) - the bare exe; it needs the DLLs from dist/win-native/VLCFlixStudio-win64.zip beside it",
+  "handout": "native/releases/VLCFlixStudio-Setup.exe (71 MB, git-ignored, one file, installs the app with icons) and native/releases/VLCFlixStudio.exe (5.6 MB, the bare exe; needs the DLLs from dist/win-native/VLCFlixStudio-win64.zip beside it)",
   "zip": "dist/win-native/VLCFlixStudio-win64.zip (69.6 MB, git-ignored) - the runnable set",
   "ffmpeg": "not bundled (166 MB each); without ffmpeg.exe/ffprobe.exe the scan lists films but has no durations or artwork, and doctor says 'ffmpeg MISSING (no artwork)'",
   "reverified": "2026-10-28 after the scrolling change: version OK, scan 8 items / 0 errors, all six screens rendered under Wine 11.19 (docs/evidence/windows-home-scrolling.png)"
  },
  "ui": {
-  "scrolling": "Every screen declares a scroll region while drawing: 'page' (Home, Browse, My List, Search), 'detail', 'settings', and 'rail:<id>' per Home rail. The same declaration drives the bar, the wheel, the keys and the tests. Wheel works over the open sheets (previously ignored), over a rail it scrolls the rail sideways and then falls through to the page, Page Up/Down/Home/End scroll whatever is in front, bars are draggable (SDL_MOUSEBUTTONUP added), keyboard focus reveal_rect() scrolls whatever holds the focused card, and hit areas outside the visible clip are dropped. Six new UI tests incl. a fits-so-no-limit negative control."
+  "scrolling": "Every screen declares a scroll region while drawing: 'page' (Home, Browse, My List, Search), 'detail', 'settings', and 'rail:<id>' per Home rail. The same declaration drives the bar, the wheel, the keys and the tests. Wheel works over the open sheets (previously ignored), over a rail it scrolls the rail sideways and then falls through to the page, Page Up/Down/Home/End scroll whatever is in front, bars are draggable (SDL_MOUSEBUTTONUP added), keyboard focus reveal_rect() scrolls whatever holds the focused card, and hit areas outside the visible clip are dropped. Six new UI tests incl. a fits-so-no-limit negative control.",
+  "no_arguments": "no arguments now means 'open the window' (it used to run `help`, so the Desktop shortcut appeared to do nothing); --help still prints the command list; a window that cannot be created shows a message box naming the log"
  }
 }

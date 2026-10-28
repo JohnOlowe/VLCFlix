@@ -11,6 +11,12 @@
 
 namespace vf {
 
+// A last-resort notice for the user. The Windows build is a GUI-subsystem program, so
+// when it is started from the desktop shortcut there is no console to print to: a
+// failure would look exactly like nothing happening at all. This is the one thing the
+// platform layer does for the rest of the program that is not drawing.
+void show_error_box(const std::string& title, const std::string& text);
+
 class Window {
  public:
   ~Window();

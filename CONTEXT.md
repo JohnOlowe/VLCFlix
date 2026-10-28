@@ -41,7 +41,7 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 28 static checks + 412
+- **Verified from a clean clone on GitHub**: `make verify` = 30 static checks + 412
   test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 412
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
@@ -88,7 +88,7 @@ pushed and verified from a clean clone.
   (`docs/evidence/windows-browse.png`, `windows-detail.png`), `play 1 --wait 4`
   (`state=playing … decoded=99 presented=99`), and `crash` (log carries the `CRASH`
   record and a 21-frame stack). Evidence and the exact recipe: `docs/TESTING.md` §11.
-- **Executing it found four Windows-only bugs the cross build could not see**, all
+- **Executing it found five Windows-only bugs the cross build could not see**, all
   fixed: (1) `run_process` drained its pipes with `PeekNamedPipe` and returned nothing,
   so every film was "unreadable"; (2) `CreateProcess(bInheritHandles=TRUE)` let eight
   concurrent probes inherit each other's pipe ends — pipes never reached EOF and Wine
@@ -96,17 +96,35 @@ pushed and verified from a clean clone.
   `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` plus serialised spawning; (3) `write_png` handed
   libpng a `FILE*` from a different C runtime, so every byte failed to write and
   `render` died with an integer divide-by-zero in `msvcrt`, fixed by writing through a
-  libpng callback into memory and reading the file back to check it; (4)
-  `have_binary()` trusted a process that printed nothing.
-- **Windows packaging** (`native/packaging/installer.nsi` with a new AppId, install
-  dir, uninstall key, refusing to install over 1.x; `app.manifest`;
-  `scripts/build-win-native.sh` whose `--check` exits 3) is written and the payload is
-  machine-checked (`scripts/check-win-payload.sh`: 136 imports, 0 missing), but the
-  installer itself has never been built or run.
+  libpng callback into memory and reading the file back to check it; (4) the installed
+  app's shortcut did nothing because no arguments meant `help`; (5) `have_binary()`
+  trusted a process that printed nothing.
+- **There is now one file to hand out: `native/releases/VLCFlixStudio-Setup.exe`**
+  (71 MB, git-ignored), built by `scripts/build-win-native.sh --setup` from
+  `native/src/setup/setup.cpp`. It carries the program, SDL2, FreeType, libpng, zlib,
+  libjpeg, libVLC and all 29 plugin modules inside itself (zip appended to a
+  GUI-subsystem stub, miniz footer `VFSUZIP1`), so nothing is unzipped by hand.
+  Double-clicking installs into `%LOCALAPPDATA%\Programs\VLCFlixStudio`, adds a Desktop
+  icon and two Start Menu entries, registers in Apps & features, and starts the app;
+  `--uninstall` removes program, shortcuts and registry key but keeps the user's
+  library. Identity is a new application throughout (own folder, data dir, uninstall
+  key, AppId, mutex); 1.x's folder is only read, and `--dir` pointed at it is refused.
+  The old `native/packaging/installer.nsi` draft is deleted and `tools/preflight.sh`
+  checks the real installer source instead (**30 static checks**).
+- **A fifth Windows-only bug came out of installing it:** double-clicking the shortcut
+  did nothing, because `main()` defaulted to `help` and the GUI-subsystem binary printed
+  usage into a console nobody could see. No arguments now opens the window, and a
+  window that cannot open shows a message box naming the log.
+- **Verified under Wine 11.19 in a fresh prefix:** install (no args) → 372 files,
+  `--verify` → 0, the installed app scans (8 items, 0 errors), plays
+  (decoded=70 presented=70) and renders (58,923 B PNG); reinstall keeps the library;
+  uninstall removes folder + key + 3 shortcuts and leaves `catalog.json`, `media/` and
+  `progress.json`; a stand-in 1.x folder is untouched.
 - **Still not verified:** Windows 10/11 itself (Wine is an impression, not the real
-  thing), the window on a real display (only headless SDL and off-screen renders), audio
-  (no sound card), the `-hwaccel auto` GPU path (no Vulkan video queue here, software
-  fallback proven), and installing side by side with 1.2.0.
+  thing), a real Explorer/Start Menu/Add-Remove Programs drawing these shortcuts and
+  running this uninstaller, the window on a real display (only headless SDL and
+  off-screen renders), audio (no sound card), the `-hwaccel auto` GPU path (no Vulkan
+  video queue here, software fallback proven), and side by side with a genuine 1.2.0.
   Automatic device-latency compensation is not implemented because libVLC 3 cannot
   report output latency — the UI says so instead of offering a toggle that did
   nothing (`autoLatency` is gone from the code, the settings file and the CLI). Do not

@@ -34,21 +34,31 @@ make verify       # static checks + 412 tests + 15-step end-to-end journey
 make asan         # the same tests under AddressSanitizer
 ```
 
-**Windows:** the executable is cross-compiled from this tree with llvm-mingw and left
-at **`native/releases/VLCFlixStudio.exe`** (git-ignored — a fresh clone builds it with
-`scripts/build-win-native.sh`). It needs the libraries that ship beside it in
-`dist/win-native/VLCFlixStudio-win64.zip`: `libvlc.dll`, `libvlccore.dll` and its
-`plugins/`, SDL2, libpng, zlib and libjpeg. Unzip those next to the exe and run it;
-nothing is installed and your data stays in `%LOCALAPPDATA%\VLCFlixStudio`, beside 1.x
-rather than over it. Put `ffmpeg.exe` and `ffprobe.exe` in the same folder (or on
-`PATH`) or the library scans without durations and artwork — `doctor` says so plainly.
+**Windows:** hand over one file — **`native/releases/VLCFlixStudio-Setup.exe`**
+(git-ignored; a fresh clone builds it with `scripts/build-win-native.sh --setup`).
+Double-click it and it installs VLCFlix Studio like any other Windows application:
+everything the app needs is inside that one file — the program, SDL2, FreeType,
+libpng, zlib, libjpeg, `libvlc.dll`, `libvlccore.dll` and all 29 libVLC plugin
+modules — so there is nothing to unzip and nothing else to download. It unpacks into
+`%LOCALAPPDATA%\Programs\VLCFlixStudio`, adds a **Desktop icon** and a **Start Menu**
+entry, registers itself in **Apps & features** (with its own uninstall entry, icon and
+version) and starts the app. Uninstalling removes the program, both shortcuts and the
+registry entry, and leaves your library and settings alone.
 
-The Windows build has been **executed** (under Wine 11.19, on this machine): scanning,
-artwork, playback, all six screens, and the crash log. Running it is what found four
-Windows-only bugs the cross build could not see. What Wine cannot prove — a real
-display, real audio, and the installer — is listed in
-[`docs/TESTING.md`](docs/TESTING.md) §11, and the zip ships
-`windows-selfcheck.ps1` to run the same checks on real Windows.
+The same build also leaves a bare **`native/releases/VLCFlixStudio.exe`** for people who
+would rather not install: it is the program alone and needs the libraries beside it
+from `dist/win-native/VLCFlixStudio-win64.zip`. Either way your data stays in
+`%LOCALAPPDATA%\VLCFlixStudio`, beside 1.x rather than over it. Put `ffmpeg.exe` and
+`ffprobe.exe` in the install folder (or on `PATH`) if you want durations from files
+whose headers are unusual — `doctor` says plainly when they are missing.
+
+Both have been **executed** (under Wine 11.19, on this machine): the installer from a
+fresh prefix — install, verify, run the installed app, uninstall — and the app itself:
+scanning, artwork, playback, all six screens and the crash log. Running it is what found
+the Windows-only bugs a cross build cannot see. What Wine cannot prove — a real display,
+real audio, a real Explorer, and a real Add/Remove Programs — is listed in
+[`docs/TESTING.md`](docs/TESTING.md) §11, and the zip ships `windows-selfcheck.ps1` to
+run the same checks on real Windows.
 
 How it is tested — six layers, a regression test per known bug with its negative
 control, and the honest list of what could not be verified here — is

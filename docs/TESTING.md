@@ -185,7 +185,7 @@ list (`[&, segments]`). Two things keep it fixed:
 ## 7. Layer 6 — static preflight (the part of the checklist a machine can hold)
 
 ```bash
-tools/preflight.sh        # 28 checks, no compiler needed
+tools/preflight.sh        # 30 checks, no compiler needed
 ```
 
 Some rules cannot be checked by building on this machine, but they *can* be checked by
@@ -257,7 +257,7 @@ difference between "the Play button exists" and "the Play button can be reached"
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
 * 412 checks across layers 1, 2 and 4 — `0 failure(s)`
-* 28/28 static preflight checks
+* 30/30 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
 * `make asan`: 412 checks clean, and the pre-fix code failing under it
@@ -334,7 +334,7 @@ are checked statically by `tools/preflight.sh`.
 17. Pull the network drive / rename the folder while a film is playing: the player
     says the file is gone and does not hang.
 
-## 11. The Windows build: built, executed, and the four bugs that found
+## 11. The Windows build: built, executed, and the five bugs that found
 
 This was the largest "not verified" item in section 9. It is now closed for everything
 that can run without a Windows desktop: the executable has been **run**, repeatedly,
@@ -401,7 +401,7 @@ The rendered screens are the real UI, drawn by the Windows binary: real fonts fr
 FreeType, real posters decoded from the JPEG/PNG files ffmpeg had just produced on
 Windows, real text layout. That is a much stronger statement than "it compiles".
 
-### The four bugs that only running it could find
+### The five bugs that only running it could find
 
 None of these could be seen from Linux, from the cross build, or from the tests:
 
@@ -426,7 +426,13 @@ None of these could be seen from Linux, from the cross build, or from the tests:
    with an integer divide-by-zero inside `msvcrt`. Fixed by writing through a libpng
    callback into memory and writing the file ourselves, then reading it back to prove
    the size matches.
-4. **A one-line honesty bug**: `doctor` claimed the tools were present because a process
+4. **Double-clicking the installed app did nothing at all.** The CLI defaulted to
+   `help`, so the Desktop and Start Menu shortcuts launched a GUI-subsystem program
+   that printed a usage text to a console nobody could see and exited. Found by
+   installing it and launching the shortcut the way a user would; with no arguments the
+   app now opens its window, and if the window cannot be created it shows a message box
+   pointing at the log instead of disappearing silently.
+5. **A one-line honesty bug**: `doctor` claimed the tools were present because a process
    had started. `have_binary()` now requires `exit code 0` *and* non-empty output.
 
 Bugs 1 and 3 were found only because the app's own log recorded the failure honestly
@@ -442,6 +448,32 @@ written by the same script on every build. The bare exe is 5.6 MB and is *not*
 self-contained - it needs the DLLs from the zip beside it - which is why the two exist
 together.
 
+### The installer: one file to hand somebody
+
+`scripts/build-win-native.sh --setup` also produces **one** `.exe` —
+`native/releases/VLCFlixStudio-Setup.exe` (71 MB, git-ignored) — that carries
+everything: the program, SDL2, FreeType, libpng, zlib, libjpeg, `libvlc.dll`,
+`libvlccore.dll` and all 29 plugin modules. It is `native/src/setup/setup.cpp` linked
+as a GUI-subsystem stub with the payload zip appended to it and a 24-byte footer after
+that (`VFSUZIP1`, offset, length); miniz inflates it on first run.
+
+| Action | Executed under Wine 11.19 | Result |
+|---|---|---|
+| `VLCFlixStudio-Setup.exe` with no arguments (the double-click path) | installs **372 files**, then starts the app | folder appears at `drive_c/users/<user>/AppData/Local/Programs/VLCFlixStudio`, `setup.log` names every step |
+| `--verify` | exit **0** | registry entry, exe, `libvlc.dll`, >20 plugin files and both shortcuts all present |
+| shortcuts | `Desktop\VLCFlix Studio.lnk`, `Start Menu\VLCFlix Studio.lnk`, `Start Menu\Uninstall VLCFlix Studio.lnk` | 972 B / 972 B / 1028 B; `strings -el` on the `.lnk` shows the target `…\Programs\VLCFlixStudio\VLCFlixStudio.exe` |
+| Apps & features entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\VLCFlixStudio` | `DisplayName`, `DisplayVersion 2.0.0`, `DisplayIcon`, `InstallLocation`, `UninstallString`, `QuietUninstallString`, `EstimatedSize`, `NoModify`, `NoRepair` |
+| the installed app | `version` → `2.0.0-turn1`; `scan --folders …` → **8 item(s), 0 errors**; `play 1 --wait 3` → `state=playing … decoded=70 presented=70`; `render --screen settings` → 58,923 B PNG | the installed copy is the working application, not a launcher shell |
+| reinstall over itself | removes the previous copy first, then installs | no stale plugins, and the library/settings are kept |
+| launch with no arguments | prints `could not create a window …` and exits 5 | correct here (no display under Wine); on a desktop it opens the window — that is what the shortcut does |
+| `--uninstall --quiet` | install folder **gone**, registry key gone, all three shortcuts gone | user data (`catalog.json`, `media/`, `progress.json`) deliberately kept; the log ends `uninstall: files removed` |
+| 1.x side by side | a fake `…\Programs\VLCFlix\VLCFlix.exe` was left in place during an install | untouched (2 files before, 2 after); `--dir` pointed at that folder **refuses** and exits 1 |
+
+Two things this proves that a test cannot: an uninstaller can delete the directory it is
+running from (it copies itself to `%TEMP%`, relaunches with `--finish-uninstall`, and
+retries the delete for five seconds because Windows keeps handles open), and no step
+depends on a file the user has to remember to run first.
+
 `ffmpeg.exe` and `ffprobe.exe` are **not** bundled (166 MB each, and they are the
 user's choice of build). Without them the scan still runs and lists the films, but
 there are no durations and no artwork, and `doctor` says exactly that:
@@ -454,7 +486,8 @@ there are no durations and no artwork, and `doctor` says exactly that:
 | Real Windows 10/11 itself | Wine is a very good impression of Windows, not Windows; `kernel32` behaviour under Wine is not proof about the real thing |
 | The window on screen, and therefore *interactive* scrolling on Windows | Wine here has no display; `ui` is exercised on Linux with SDL's dummy driver, and the drawing is exercised by `render` on Windows. The wheel plumbing (`SDL_MOUSEWHEEL`, both axes, `MOUSEBUTTONUP` for drag release) compiles and is exercised on Linux, but a wheel turn on Windows has not been performed |
 | Audio output | no sound card under Wine (`ALSA lib … Unknown PCM default`); playback itself is verified (decoded/presented counters advance) |
-| Installer, side-by-side with 1.2.0, uninstall | needs NSIS and a real registry; `scripts/build-win-native.sh --check` names exactly what is missing and exits 3 |
+| A real Explorer, Start Menu and Add/Remove Programs | Wine implements shortcuts and `HKCU` convincingly, and the installer was executed there, but a real Windows shell has not drawn these icons or run this uninstaller. The registry key, the `.lnk` targets and the delete were all verified; what is unproven is the shell's rendering of them |
+| Side by side with a real 1.2.0 | verified against a stand-in directory (`%LOCALAPPDATA%\Programs\VLCFlix\VLCFlix.exe`): the installer ignores it and refuses to be pointed at it. A machine with the real 1.x installed has not been used |
 | Code signing, SmartScreen | out of scope, and stated on the download page |
 
 Two independent ways to close the rest: `scripts/windows-selfcheck.ps1` (ships inside

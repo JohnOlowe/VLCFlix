@@ -67,6 +67,48 @@ machine with no display (`SDL_VIDEODRIVER=dummy`). `render` needs no display at 
 every screen is drawn into a pixel buffer and written out, so a layout can be checked
 by looking at a file rather than by describing it.
 
+## Installing on Windows
+
+One file: **`releases/VLCFlixStudio-Setup.exe`**, built by
+`scripts/build-win-native.sh --setup` (git-ignored, ~70 MB). It carries the program,
+SDL2, FreeType, libpng, zlib, libjpeg, `libvlc.dll`, `libvlccore.dll` and all 29 of
+libVLC's plugin modules, so nothing else has to be downloaded and there is nothing to
+unzip first.
+
+Double-click it. It unpacks into `%LOCALAPPDATA%\Programs\VLCFlixStudio`, adds a
+Desktop icon and a Start Menu entry, registers itself in **Apps & features**, and starts
+the app. Every step is written to `%LOCALAPPDATA%\VLCFlixStudio\logs\setup.log` —
+an installer that fails silently is the worst kind, so the log is opened, appended and
+closed for each line.
+
+```
+VLCFlixStudio-Setup.exe                 install (if needed), then start the app
+VLCFlixStudio-Setup.exe --install-only  install, do not start
+VLCFlixStudio-Setup.exe --verify        report state, exit 0 only if complete
+VLCFlixStudio-Setup.exe --uninstall     remove program, shortcuts, registry entry
+VLCFlixStudio-Setup.exe --dir <path>    install somewhere else
+                                        (anything else is taken as "install, then run")
+```
+
+Why the app is not a single file: libVLC loads its codecs from `plugins/` at runtime, so
+a self-contained binary is impossible without replacing libVLC itself. The honest way to
+hand someone one file is to put the directory *inside* it: the stub executable has the
+zip appended to it, followed by a 24-byte footer (`VFSUZIP1`, offset, length), and
+miniz inflates it on first run. Uninstalling runs the copy the installer kept in the
+install folder; it can delete the folder it lives in because it relaunches itself from
+`%TEMP%` first, and it retries for five seconds because Windows often keeps a handle
+open. Your library, settings and artwork are **not** deleted — uninstalling a player
+should not throw away the collection.
+
+VLCFlix 1.x, if present, is left exactly where it is: this is a different application
+with its own folder, data directory and uninstall key, and the installer refuses to be
+pointed at 1.x's folder rather than migrating it.
+
+The same build also writes a bare `releases/VLCFlixStudio.exe` and
+`dist/win-native/VLCFlixStudio-win64.zip` for running without installing. Put
+`ffmpeg.exe` and `ffprobe.exe` in the install folder (or on `PATH`) if you want
+durations for files with unusual headers; `doctor` says when they are missing.
+
 ## The window
 
 | Screen | What it does |
@@ -181,7 +223,7 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 ## What the tests prove
 
 `make verify` runs four things and they are not interchangeable:
-`../tools/preflight.sh` (28 static checks a compiler here cannot make), 412 test
+`../tools/preflight.sh` (30 static checks a compiler here cannot make), 412 test
 checks, and the 15-step journey through the real binary. `make asan` runs the same 412
 checks under AddressSanitizer. The reasoning behind each layer, the negative control
 for every layer, and the honest list of what none of them can reach are in

@@ -173,3 +173,62 @@ laptop and a screenshot of it — **not** a cross-compiled binary I cannot run.
    dependency).
 3. **VLC's own window** — does anyone want the old "open real VLC and drive it"
    mode kept as an option, or is inline playback the only engine?
+
+---
+
+## 7. Two requirements added by the user on 2026-10-28
+
+### 7.1 The Windows build must look like a *new* application
+
+It must not install over VLCFlix 1.2.0, must not share its uninstall entry, and
+must not touch its data. Concretely, everything that Windows uses to identify an
+install changes:
+
+| Identity | v1.2.0 (leave alone) | Native port |
+|---|---|---|
+| Product name | `VLCFlix` | **`VLCFlix Studio`** |
+| Executable | `VLCFlix.exe` | `VLCFlixStudio.exe` |
+| Install dir | `%LOCALAPPDATA%\Programs\VLCFlix` | `%LOCALAPPDATA%\Programs\VLCFlixStudio` |
+| User data dir | `%LOCALAPPDATA%\VLCFlix` | `%LOCALAPPDATA%\VLCFlixStudio` |
+| Uninstall key | `…\Uninstall\VLCFlix` | `…\Uninstall\VLCFlixStudio` |
+| NSIS `AppId` / mutex / shortcut / window class | VLCFlix | unique per app |
+| Single-instance mutex | — | `Global\VLCFlixStudio-…` |
+
+Rules: the installer refuses to write into an existing VLCFlix directory, never
+deletes or migrates 1.2.0's data (an import is an explicit future action, asked
+for), and the two apps can be installed, run and uninstalled side by side. The
+product name is a placeholder — say the word and it is `VLCFlix Next`, `VLCFlix 2`
+or whatever you prefer; it is one constant (`brand.h`) plus the installer defines.
+
+### 7.2 Logs must exist even when the app dies on the first frame
+
+The failure this prevents is the one already in the repo's history: a Windows
+build that showed a black window and wrote *nothing* useful. The logging layer is
+therefore installed **before anything else in `main()`** and is designed to
+survive a crash in any later line:
+
+1. **First statement:** open the log and write a header (version, build hash,
+   OS, argv, cwd, PID). Nothing at all is allowed to run before it — the log
+   call is the entry point.
+2. **Three destination attempts, in order:** `%LOCALAPPDATA%\VLCFlixStudio\logs\`,
+   then next to the executable, then `%TEMP%`. If one cannot be opened it says so
+   in the next one; if all three fail the process writes to stderr and calls
+   `abort()` with a message rather than continuing silently.
+3. **Flushed per line**, so a hard kill loses at most the line in flight.
+4. **Crash handlers installed immediately after the log opens:** Win32
+   `SetUnhandledExceptionFilter` + `AddVectoredExceptionHandler` (first-chance
+   code, address, and module name resolved from the address), `std::set_terminate`,
+   `SIGSEGV/SIGABRT/SIGFPE/SIGILL/SIGINT` on POSIX, and a `__try/__except`-free
+   design so it compiles the same on both platforms. Each handler writes a
+   `CRASH` record with a stack trace (DbgHelp on Windows, `backtrace()` elsewhere)
+   and flushes before the process dies.
+5. **A session marker:** an `open` record on start and a `clean exit` record on
+   shutdown, so the *next* launch can state plainly "the previous run ended
+   unexpectedly (no clean-exit record)" — exactly the information missing from
+   the 1.0.x black-window reports.
+6. **Log rotation:** 5 files × 2 MB, oldest dropped, so a crash loop cannot fill a
+   disk on a user's machine.
+7. `--log <path>` overrides the location; `--console` mirrors to the terminal.
+
+The log is the first thing I will ask for if the Windows build misbehaves, and it
+is written even if the window never opens.

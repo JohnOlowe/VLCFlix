@@ -22,6 +22,9 @@ class Window {
   // close; a timeout with no event returns true and leaves `event` untouched.
   bool poll(ui::InputEvent* event, int timeout_ms = 16);
   bool valid() const { return window_ != nullptr; }
+  // Fullscreen is the window's business, not the UI's.
+  void toggle_fullscreen();
+  bool fullscreen() const { return fullscreen_; }
   int width() const { return width_; }
   int height() const { return height_; }
 
@@ -31,6 +34,7 @@ class Window {
   void* window_ = nullptr;
   int width_ = 0;
   int height_ = 0;
+  bool fullscreen_ = false;
 };
 
 }  // namespace vf

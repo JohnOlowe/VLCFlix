@@ -147,6 +147,11 @@ const Image* App::backdrop_for(const Item& item) {
 
 void App::draw(Canvas& canvas) {
   hits_.clear();
+  if (player_open_) {
+    // The player owns the whole surface: no header, no rails, no overlays.
+    draw_player_frame(canvas);
+    return;
+  }
   order_.clear();
   // Home is a set of single-row rails, so vertical movement there has nowhere to go;
   // Browse and My List are grids and get their real column count below.
@@ -229,20 +234,24 @@ void App::draw_backdrop_or_fallback(Canvas& canvas, const Rect& rect, const Item
   canvas.fill_gradient_v(rect, rgba(0x000000, 0), rgba(0x000000, 140));
 }
 
-float App::button_width(const std::string& label, bool primary) const {
+float App::button_width(const std::string& label, bool primary, bool icon) const {
   const float text = bold_.measure(label, theme::kFontBody).width;
-  return (primary ? 36.0f + 14.0f : 36.0f) + text + 20.0f;
+  const float left = primary ? (icon ? 50.0f : 18.0f) : 18.0f;
+  return left + text + 20.0f;
 }
 
 void App::draw_button(Canvas& canvas, const Rect& rect, const std::string& label, bool primary,
-                      Action action) {
+                      Action action, bool icon) {
   const bool hovered = false;
   if (primary) {
     canvas.fill_round_rect(rect, theme::kRadius + 2, theme::accent());
     Color text_color = rgb(0x1a0d00);
-    draw_triangle_right(canvas, Rect{rect.x + 16, rect.y + rect.h / 2 - 7, 11, 14}, text_color);
-    bold_.draw(canvas, label, rect.x + 36, rect.y + (rect.h - bold_.line_height(theme::kFontBody)) / 2,
-               theme::kFontBody, text_color);
+    if (icon) {
+      draw_triangle_right(canvas, Rect{rect.x + 16, rect.y + rect.h / 2 - 7, 11, 14}, text_color);
+    }
+    bold_.draw(canvas, label, rect.x + (icon ? 36 : 18),
+               rect.y + (rect.h - bold_.line_height(theme::kFontBody)) / 2, theme::kFontBody,
+               text_color);
   } else {
     canvas.fill_round_rect(rect, theme::kRadius + 2, rgba(0xffffff, hovered ? 40 : 22));
     canvas.stroke_round_rect(rect, theme::kRadius + 2, 1.0f, rgba(0xffffff, 60));
@@ -321,6 +330,34 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   add_hit(card, action);
 }
 
+void App::set_hover_preview(int index) {
+  if (index == preview_index_) return;
+  preview_index_ = index;
+  preview_has_frame_ = false;
+  preview_engine_.stop();
+  if (index < 0 || static_cast<std::size_t>(index) >= catalog_.items.size()) return;
+  const Item& item = catalog_.items[static_cast<std::size_t>(index)];
+  // Prefer the generated preview montage (that is what the web build played); fall
+  // back to the film itself, from a fifth of the way in, so there is always motion.
+  std::string path = !item.preview.empty() ? join(media_dir_, item.preview) : item.path;
+  if (!file_exists(path)) path = item.path;
+  if (!file_exists(path)) return;
+  preview_engine_.add_argument("--aout=dummy");  // hover previews are silent by design
+  preview_engine_.configure(640, 360);
+  preview_engine_.set_clock([this] { return clock_now(); });
+  std::string error;
+  if (!preview_engine_.open(path, &error)) {
+    LOG_WARN("preview: %s", error.c_str());
+    preview_index_ = -1;
+    return;
+  }
+  preview_engine_.set_muted(true);
+  preview_engine_.play();
+  if (item.duration > 10) preview_engine_.seek(item.duration * 0.2);
+  preview_started_ = clock_now();
+  LOG_INFO("preview: playing %s", path.c_str());
+}
+
 void App::draw_hover_preview(Canvas& canvas) {
   if (view_ == View::Search && query_.empty()) return;
   if (open_item_ >= 0 || settings_open_) return;
@@ -358,7 +395,12 @@ void App::draw_hover_preview(Canvas& canvas) {
   const Rect media{panel.x, panel.y, width, media_height};
   canvas.push_clip(media);
   const Image* preview = backdrop_for(item);
-  if (preview) {
+  if (preview_has_frame_ && preview_frame_.width > 0 && preview_index_ == hover_item_) {
+    // A real decoded frame from the preview montage, played muted while the pointer
+    // rests on the card - this is the motion the web build had.
+    canvas.blit_raw(preview_frame_.pixels.data(), preview_frame_.width, preview_frame_.height,
+                    media, true);
+  } else if (preview) {
     canvas.blit(*preview, media, false);
   } else {
     Color base = theme::poster_fallback(item.title, true);
@@ -899,6 +941,15 @@ void App::ensure_layout() {
 }
 
 bool App::handle(const InputEvent& event) {
+  if (player_open_) {
+    // The player's hit areas come from its own drawing pass, so lay it out first if
+    // the window has not drawn a frame yet.
+    if (hits_.empty()) {
+      Canvas scratch(width_, height_);
+      draw_player_frame(scratch);
+    }
+    return handle_player(event);
+  }
   ensure_layout();
   switch (event.type) {
     case InputEvent::Type::MouseMove: {
@@ -907,6 +958,7 @@ bool App::handle(const InputEvent& event) {
       if (action.kind == Action::Kind::OpenDetail) hover = action.index;
       if (hover != hover_item_) {
         hover_item_ = hover;
+        set_hover_preview(hover);
         return true;
       }
       return false;
@@ -942,13 +994,10 @@ bool App::handle(const InputEvent& event) {
           open_item_ = -1;
           return true;
         case Action::Kind::Play: {
+          // Play really plays now: the click goes straight into the libVLC engine.
           const int index = action.index >= 0 ? action.index : 0;
-          if (index < static_cast<int>(catalog_.items.size())) {
-            const Item& item = catalog_.items[static_cast<std::size_t>(index)];
-            notify("Play “" + item.title + "” — the libVLC player is not wired up yet");
-            LOG_INFO("ui: play requested for %s", item.title.c_str());
-            if (on_play_requested) on_play_requested(index);
-          }
+          set_hover_preview(-1);
+          start_playback(index);
           return true;
         }
         case Action::Kind::ToggleMyList: {
@@ -1007,6 +1056,18 @@ bool App::handle(const InputEvent& event) {
           }
           return true;
         }
+        // The player's own actions only exist once a film is playing; reaching here
+        // means the browsing UI drew something it should not have.
+        case Action::Kind::Replay:
+        case Action::Kind::ClosePlayer:
+        case Action::Kind::Seek:
+        case Action::Kind::SeekRelative:
+        case Action::Kind::TogglePause:
+        case Action::Kind::Mute:
+        case Action::Kind::Volume:
+        case Action::Kind::CycleSubtitles:
+        case Action::Kind::NudgeSync:
+          return false;
       }
       return false;
     }

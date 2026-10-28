@@ -15,12 +15,12 @@ verified here, so every "it works" claim would have been unverifiable.
 The user chose **"Netflix front-end driving real VLC"** instead. VLC remains the
 playback engine; VLCFlix owns the entire browsing surface.
 
-## Current state (2026-10-28) — native port, turn 2 of 4 done
+## Current state (2026-10-28) — native port, turn 3 of 4 done
 
 Product: **VLCFlix Studio 2.0.0**. Branch **`cpp`** exists on GitHub (`origin/cpp`)
-and is the working branch. Turns 1 (engine) and 2 (window + browsing UI) are
-committed, pushed and verified from a clean clone; turns 3 (player, sync, subtitles)
-and 4 (polish, bug confirmation, test strategy) remain.
+and is the working branch. Turns 1 (engine), 2 (window + browsing UI) and 3 (player,
+sync, subtitles) are committed, pushed and verified from a clean clone; turn 4 (polish,
+bug confirmation, test strategy) remains.
 
 - **Code lives in `native/`.** The Node app (`server/`, `public/`, `src/win/`) is
   untouched and still works; it is the reference behaviour for the port and is
@@ -32,6 +32,11 @@ and 4 (polish, bug confirmation, test strategy) remain.
   a CLI (`scan/status/settings/naming/doctor/crash/ui/render`) and a test harness.
   Builds with CMake **and** with plain `make`, because installed tooling does not
   survive a snapshot.
+- **Playback is libVLC in-process**: `playback/engine` takes every decoded frame into
+  our own buffer, `playback/presenter` pays a picture-side sync delay when the plan
+  says the picture must wait, `ui/player` draws the picture, chrome and subtitles. No
+  `vlc.exe`, no HTTP bridge, no `<video>`: the three audited bugs that lived in that
+  machinery no longer have a code path.
 - **The UI draws with its own software renderer**, so `vlcflix render --all <dir>`
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
@@ -52,9 +57,12 @@ and 4 (polish, bug confirmation, test strategy) remain.
   code: A1 (year-titled films), A4 (finished films), A5 (`nv12`), A6 (password
   type), A9 (still versioning). A2/A3 die with the code that caused them
   (transcoding by pipe; HTTP range serving).
-- **Not done:** playback (turn 3 — Play currently says so out loud); **no Windows
-  build exists**, so every `_WIN32` branch is written but unexecuted, and the window
-  has only ever run headless (`SDL_VIDEODRIVER=dummy`). Do not claim otherwise.
+- **Not done:** turn 4 (polish, bug confirmation, the test strategy and `make
+  verify`). **No Windows build exists**, so every `_WIN32` branch is written but
+  unexecuted; the window has only ever run headless (`SDL_VIDEODRIVER=dummy`); there
+  is no sound card here, so the audio path is unverified; automatic device-latency
+  compensation is inert because libVLC 3 cannot report output latency. Do not claim
+  otherwise.
 
 ## Historical state (2026-10-26)
 — the Node/WebView2 application, v1.2.0

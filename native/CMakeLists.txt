@@ -16,6 +16,7 @@ pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 pkg_check_modules(FREETYPE REQUIRED IMPORTED_TARGET freetype2)
 pkg_check_modules(PNG REQUIRED IMPORTED_TARGET libpng)
 pkg_check_modules(JPEG REQUIRED IMPORTED_TARGET libjpeg)
+pkg_check_modules(VLC REQUIRED IMPORTED_TARGET libvlc)
 
 # The logic that has no pixels in it. Turn 1 is entirely this library plus the CLI.
 add_library(vlcflix_core STATIC
@@ -40,17 +41,23 @@ add_library(vlcflix_core STATIC
   src/ui/theme.cpp
   src/ui/app.cpp
   src/platform/window_sdl.cpp
+  src/playback/engine.cpp
+  src/playback/presenter.cpp
+  src/ui/player.cpp
 )
 target_include_directories(vlcflix_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(vlcflix_core PUBLIC pthread PkgConfig::SDL2 PkgConfig::FREETYPE
-                                             PkgConfig::PNG PkgConfig::JPEG)
+                                             PkgConfig::PNG PkgConfig::JPEG PkgConfig::VLC)
 
 add_executable(vlcflix src/main.cpp)
 target_link_libraries(vlcflix PRIVATE vlcflix_core)
 
-# Turn 3 adds libVLC to this target. It is not required yet, and a build that does
-# not need a dependency should not require it.
+# libVLC is required for playback (turn 3): the picture is delivered to our own
+# callbacks, so the engine runs in this process - no vlc.exe, no HTTP bridge.
 enable_testing()
-add_executable(native-tests tests/run_tests.cpp tests/ui_tests.cpp)
+add_executable(native-tests tests/run_tests.cpp tests/ui_tests.cpp tests/player_tests.cpp)
 target_link_libraries(native-tests PRIVATE vlcflix_core)
-add_test(NAME native-tests COMMAND native-tests)
+# The tests play the bundled samples, so they run from the repository root where
+# `samples/` lives. A build directory outside the tree would otherwise have no way to
+# find them, and the playback tests would fail for the wrong reason.
+add_test(NAME native-tests COMMAND native-tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)

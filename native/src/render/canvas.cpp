@@ -222,6 +222,15 @@ void Canvas::fill_circle(float cx, float cy, float radius, Color color) {
   }
 }
 
+void Canvas::fill_triangle_right(const Rect& area, Color color) {
+  const int rows = std::max(1, static_cast<int>(area.h));
+  for (int i = 0; i < rows; ++i) {
+    const double t = rows > 1 ? static_cast<double>(i) / (rows - 1) : 0.0;
+    const double half = (1.0 - std::fabs(2.0 * t - 1.0)) * area.w;
+    fill_rect(Rect{area.x, area.y + i, static_cast<float>(half), 1}, color);
+  }
+}
+
 void Canvas::stroke_circle(float cx, float cy, float radius, float thickness, Color color) {
   const float inner = std::max(0.0f, radius - thickness);
   const int x0 = static_cast<int>(cx - radius) - 1;
@@ -237,6 +246,59 @@ void Canvas::stroke_circle(float cx, float cy, float radius, float thickness, Co
       if (coverage > 0.02f) {
         blend_pixel(x, y, with_alpha(color, static_cast<uint8_t>(color.a * coverage)));
       }
+    }
+  }
+}
+
+void Canvas::blit_raw(const uint8_t* pixels, int src_width, int src_height, const Rect& dst,
+                      bool cover) {
+  if (!pixels || src_width <= 0 || src_height <= 0 || dst.empty()) return;
+  const Rect clip_rect = clip();
+  const int x0 = std::max(0, static_cast<int>(std::floor(std::max(dst.x, clip_rect.x))));
+  const int y0 = std::max(0, static_cast<int>(std::floor(std::max(dst.y, clip_rect.y))));
+  const int x1 = std::min(width_, static_cast<int>(std::ceil(std::min(dst.right(), clip_rect.right()))));
+  const int y1 = std::min(height_, static_cast<int>(std::ceil(std::min(dst.bottom(), clip_rect.bottom()))));
+  // Cover crops the source instead of stretching it, which is what a video needs when
+  // the window aspect and the film aspect disagree.
+  double sx0 = 0, sy0 = 0, sw = src_width, sh = src_height;
+  if (cover) {
+    const double src_aspect = static_cast<double>(src_width) / src_height;
+    const double dst_aspect = dst.w / dst.h;
+    if (src_aspect > dst_aspect) {
+      sw = src_height * dst_aspect;
+      sx0 = (src_width - sw) / 2;
+    } else {
+      sh = src_width / dst_aspect;
+      sy0 = (src_height - sh) / 2;
+    }
+  }
+  for (int y = y0; y < y1; ++y) {
+    const double v = dst.h > 0 ? (y + 0.5 - dst.y) / dst.h : 0;
+    const double sy = sy0 + v * sh - 0.5;
+    const int iy0 = static_cast<int>(std::floor(sy));
+    const double fy = sy - iy0;
+    for (int x = x0; x < x1; ++x) {
+      const double u = dst.w > 0 ? (x + 0.5 - dst.x) / dst.w : 0;
+      const double sx = sx0 + u * sw - 0.5;
+      const int ix0 = static_cast<int>(std::floor(sx));
+      const double fx = sx - ix0;
+      const int ax = std::clamp(ix0, 0, src_width - 1);
+      const int bx = std::clamp(ix0 + 1, 0, src_width - 1);
+      const int ay = std::clamp(iy0, 0, src_height - 1);
+      const int by = std::clamp(iy0 + 1, 0, src_height - 1);
+      const uint8_t* p00 = pixels + (static_cast<std::size_t>(ay) * src_width + ax) * 4;
+      const uint8_t* p10 = pixels + (static_cast<std::size_t>(ay) * src_width + bx) * 4;
+      const uint8_t* p01 = pixels + (static_cast<std::size_t>(by) * src_width + ax) * 4;
+      const uint8_t* p11 = pixels + (static_cast<std::size_t>(by) * src_width + bx) * 4;
+      Color sample;
+      for (int channel = 0; channel < 4; ++channel) {
+        const double top = p00[channel] + (p10[channel] - p00[channel]) * fx;
+        const double bottom = p01[channel] + (p11[channel] - p01[channel]) * fx;
+        reinterpret_cast<uint8_t*>(&sample)[channel] = clamp_byte(top + (bottom - top) * fy);
+      }
+      // The fourth byte of RV32 is padding, not alpha: force it opaque.
+      sample.a = 255;
+      blend_pixel(x, y, sample);
     }
   }
 }

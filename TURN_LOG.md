@@ -1034,3 +1034,59 @@ visible in a PNG before it was fixed):
 **Not verified, stated not assumed:** the window on a real display with a real mouse
 (headless SDL only); no Windows build exists; the player is turn 3.
 
+## 2026-10-28 — Turn 3: playback, sync, subtitles, honest finish
+
+Branch `cpp`. Turn 2's window is unchanged in behaviour; this turn fills in the hole it
+declared: clicking Play now plays.
+
+**Built:** `playback/engine.cpp` (libVLC instance, `set_callbacks` frame sink into our
+own buffer, play/pause/stop/seek/rate/volume/mute/audio-delay, duration and state from
+the engine, EndReached/Error events), `playback/presenter.cpp` (the frame queue that
+pays a picture-side sync delay, bounded by the delay it is paying for), `ui/player.cpp`
+(player view: letterboxed picture, chrome, scrub, subtitles, end card), the hover
+preview on a second engine, and `vlcflix play` / `ui --play <index>` /
+`render --play <index>` so playback can be run and screenshotted without a mouse.
+
+**The three audited bugs that stop existing** rather than being fixed: A2 (seeking a
+single-keyframe file), the `vlc.exe`+HTTP bridge family, and the browser's black-window
+class of failures. The code path that caused them is not in this program.
+
+**Verified this turn:**
+- `make test` → **276 checks, 0 failures**; CMake + CTest the same, from a build
+  directory outside the tree.
+- Real decoding: `vlcflix play 3 --seek 5 --wait 4` → `state=playing time=5.40 s
+  length=16.00 s decoded=119 presented=118`. The length comes from libVLC, not ffprobe.
+- **Seek on the single-keyframe sample** (`the-silent-coast.mp4`, audit A2): the clock
+  moves past 12 s and pictures keep arriving; asserted in the test suite, not just by
+  eye.
+- Resume: a film saved at 8 s of 16 s restarts at 8 s (`player: resumed at 8.0 s of
+  16.0 s`), and the window's own `--play` path did the same from saved progress.
+- End card: ran a film past its end → `state=ended`, the film was written as finished
+  and **removed** from `progress.json`, and the still I opened shows the card, not the
+  old chrome bleeding through (that was a real defect, fixed by adding a solid plate).
+- Subtitles: `samples/ghostlight.en.srt` (added this turn so the path has a real file)
+  is found by the scanner, parsed into 4 cues, and the cue for 2 s–4 s is drawn
+  centred in the lower third — screenshot opened and read.
+- Hover preview: moving the pointer onto a card starts a muted preview on its own
+  engine; the panel shows a decoded frame; leaving stops it.
+- The window loop with the player inside it, headless: `SDL_VIDEODRIVER=dummy
+  ./build/vlcflix ui --play 3 --frames 200` → window opens, engine opens, resumes,
+  draws, closes, exit 0, clean-exit record in the log.
+
+**Defects I introduced and caught by looking:**
+- the `+` sync control and the CC label drew past the right edge (fixed by laying the
+  right-hand controls out from the right edge inwards, and by measuring buttons);
+- the mute/CC buttons showed a play triangle because they are "primary" when active
+  (buttons now take an `icon` flag);
+- the end card was drawn over the *last* frame with one 190-alpha layer and the old
+  chrome was still legible through it;
+- `find_dir_upwards` was needed because CTest ran from a build directory outside the
+  repository and the playback tests could not find `samples/` — they failed for the
+  wrong reason, which is worse than failing.
+
+**Not verified, stated not assumed:** audio (no sound card here — the picture, clock
+and state machine are verified, the sound is not); automatic device-latency
+compensation is inert because libVLC 3 cannot report output latency, so the
+`autoLatency` toggle records intent and changes nothing; the window on a real display;
+Windows.
+

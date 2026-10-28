@@ -1212,7 +1212,7 @@ outputs. Both were possible; one needed a workaround.
   libvlc and libvlccore: **48 imports checked, 0 missing**, and it fails if the
   libVLC plugin modules the app needs are absent. Before this, "the exe opens and
   closes" was a thing that could only be discovered by running it.
-* **The published exe**: release `win64-cross-1`,
+* **The published exe**: release `win64-cross-2`,
   `VLCFlixStudio-win64.zip` (67 MB — exe, SDL2, libpng, zlib, libjpeg, libVLC 3.0.24
   with its 29 plugin modules, and the self-check script). PE64, GUI subsystem,
   manifest and version block in place.

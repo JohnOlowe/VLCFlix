@@ -43,4 +43,4 @@ written into the release notes, so an empty release list is itself a signal.
 A cross-compiled exe proves the source compiles for Windows. Only running it proves
 the app opens a window, loads libVLC's plugins and decodes a frame on Windows. That is
 the difference this workflow closes, and it is why the release notes on
-`win64-cross-1` say "not verified: never executed".
+`win64-cross-2` say "not verified: never executed".

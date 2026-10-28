@@ -35,8 +35,8 @@ make asan         # the same tests under AddressSanitizer
 ```
 
 **Windows:** there is a ready-to-run build —
-[**VLCFlixStudio-win64.zip**](https://github.com/JohnOlowe/VLCFlix/releases/download/win64-cross-1/VLCFlixStudio-win64.zip)
-on the `win64-cross-1` release. Unzip anywhere and run `VLCFlixStudio.exe`; nothing is
+[**VLCFlixStudio-win64.zip**](https://github.com/JohnOlowe/VLCFlix/releases/download/win64-cross-2/VLCFlixStudio-win64.zip)
+on the `win64-cross-2` release. Unzip anywhere and run `VLCFlixStudio.exe`; nothing is
 installed and your data stays in `%LOCALAPPDATA%\VLCFlixStudio`. It is cross-compiled
 and **has not been executed yet** — the release page says exactly what is and is not
 proven, and the zip contains `windows-selfcheck.ps1`, which runs the app on your machine

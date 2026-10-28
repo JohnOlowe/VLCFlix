@@ -247,7 +247,7 @@ Verified on this machine (Linux, no display, no sound card), in this turn:
 
 | Area | Why not | How to check it on a machine that has it |
 |---|---|---|
-| **Running** the Windows build | the exe is built and payload-checked (§11), but never executed: Wine dies before creating a prefix in this sandbox, and there is no Windows machine here | run `scripts/windows-selfcheck.ps1` from the `win64-cross-1` release, or enable `docs/ci/windows.yml` |
+| **Running** the Windows build | the exe is built and payload-checked (§11), but never executed: Wine dies before creating a prefix in this sandbox, and there is no Windows machine here | run `scripts/windows-selfcheck.ps1` from the `win64-cross-2` release, or enable `docs/ci/windows.yml` |
 | Every `_WIN32` branch | compiled by the cross build now, but not executed | build on Windows and run the checklist in §10 |
 | A real display / window manager | no X11 or Wayland here | `./build/vlcflix` on a desktop; resize, full-screen, hover a card, press `f` |
 | Audio | no sound card; libVLC prints `ALSA lib … cannot find card '0'` | play a sample with sound and check the `−/+` latency keys move the sound earlier/later |
@@ -314,7 +314,7 @@ are checked statically by `tools/preflight.sh`.
 This started as the largest "not verified" item. It is now half closed.
 
 **Built.** `scripts/build-win-native.sh` produces a real `VLCFlixStudio.exe` from this
-source tree on a Linux box; the result is published as the `win64-cross-1` release.
+source tree on a Linux box; the result is published as the `win64-cross-2` release.
 The recipe, all of which ran in this session:
 
 | Piece | Where it comes from | Why that one |

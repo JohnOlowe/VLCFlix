@@ -367,7 +367,7 @@
  "native": {
   "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
   "branch": "cpp",
-  "tests": "513 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 513 under AddressSanitizer",
+  "tests": "529 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 529 under AddressSanitizer",
   "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
   "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
   "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
@@ -385,7 +385,7 @@
    "a real Explorer/Start Menu/Add-Remove Programs, and side by side with a genuine 1.2.0"
   ],
   "installer": {
-   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,762,466 bytes, sha256 b84fcba86efb9d5be8321f9f5640a2ac3704716f60f169079ac6ebfbf78e7d40, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
+   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,764,833 bytes, sha256 5eadb2505cf1c59919a2a8fce74c5826fdcc8c853faf1442bb171713812c53e4, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
    "how": "GUI-subsystem stub (miniz) + payload zip appended + 24-byte footer 'VFSUZIP1' + <offset> + <length>; extracts to %LOCALAPPDATA%\\Programs\\VLCFlixStudio on first run",
    "installs": "372 files; Desktop icon; Start Menu entry + uninstall entry; HKCU\\...\\Uninstall\\VLCFlixStudio (DisplayName/DisplayVersion 2.0.0/DisplayIcon/InstallLocation/UninstallString/QuietUninstallString/EstimatedSize/NoModify/NoRepair); launches the app when double-clicked",
    "flags": "--install-only, --uninstall, --verify (exit 0 only when complete), --dir <path>, --quiet",
@@ -403,7 +403,7 @@
     "not_proven": "Microsoft's own parser cannot be run here; sxstrace.exe on the target machine is the arbiter"
    }
   },
-  "version": "2.0.2 (window fits the screen, sheets clickable, cursor on every screen, folder browser)",
+  "version": "2.0.3 (software renderer by default: the D3D9 driver crash is gone)",
   "real_screen_bugs_2026_10_28": {
    "window_too_wide": "opened at the 1600x900 default on any display, putting the title bar (and minimise/maximise/close) off-screen; fit_window_to_display() now clamps to 96%/90% of the usable desktop with a 640x420 floor, plus SDL_SetWindowMinimumSize",
    "sheet_controls_dead": "two bugs: the scrim + click-swallow panel were registered last (hit testing takes the last match) so they covered every control, and add_hit() silently drops Action::Kind::None so the swallow was never registered at all; clicks that missed a control hit the scrim and closed the sheet",
@@ -412,7 +412,15 @@
    "negative_controls": "restoring the old z-order fails six checks; replacing swallow() with add_hit(panel, Action{}) fails both new tests"
   },
   "pointer_coordinates_fixed": "the window shrinks to fit the desktop but the canvas stayed at the requested size, so SDL stretched it and every hit test was ~23% off in window pixels - the cursor stayed an arrow on Home and clicks landed on the wrong control. The canvas now follows the window at startup and every frame.",
-  "folder_browser": "Settings > Browse... opens a folder picker over the sheet (library/fs_browse.{h,cpp}): current path, real subdirectories, '.. up one level', Windows drives, wheel/Page/bar scrolling, Use this folder -> add_library_folder(). Verified by unit tests on a temp tree, UI tests through its hit areas, and four real xdotool clicks on Xvfb that wrote the folder to settings.json."
+  "folder_browser": "Settings > Browse... opens a folder picker over the sheet (library/fs_browse.{h,cpp}): current path, real subdirectories, '.. up one level', Windows drives, wheel/Page/bar scrolling, Use this folder -> add_library_folder(). Verified by unit tests on a temp tree, UI tests through its hit areas, and four real xdotool clicks on Xvfb that wrote the folder to settings.json.",
+  "renderer_policy": {
+   "crash": "2.0.2 on real Windows: 0xc0000005 in igdumdim64!OpenAdapter -> D3D9!Direct3DCreate9On12Ex, i.e. SDL's default driver order fell through to Direct3D 9 and the D3D9-on-12 shim in the Intel driver faulted before the first frame",
+   "fix": "request the renderer by name (platform/render_driver.h): software by default, VLCFLIX_RENDER_DRIVER/SDL_RENDER_DRIVER honoured, always falling back to software, direct3d9 flagged as the driver that crashed",
+   "why_software_is_enough": "the UI rasterizes every pixel into a Canvas and uploads one texture per frame, so the GPU only saves a memcpy",
+   "visible": "`doctor` prints `renderer  the safe default; ask for another with VLCFLIX_RENDER_DRIVER`; the window log line prints the driver actually created",
+   "verified": "live on Xvfb: renderer: software, cursor works, Settings opens, pixels identical to the accelerated builds",
+   "not_proven": "the Intel crash itself (no Intel GPU on this machine); what is proved is that the crashing driver is no longer selected"
+  }
  },
  "windows_build": {
   "status": "cross-compiled, payload-checked (136 imports, 0 missing), and EXECUTED under Wine 11.19: version/doctor/status/scan (8 items, 0 errors)/artwork (8 of 8)/render (6 screens)/play (state=playing, decoded=99 presented=99)/crash (log has CRASH + stack). Not yet run on real Windows.",

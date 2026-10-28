@@ -36,6 +36,7 @@
 #include "library/probe.h"
 #include "library/scan.h"
 #include "library/walk.h"
+#include "platform/render_driver.h"
 #include "platform/window_sdl.h"
 #include "render/canvas.h"
 #include "render/font.h"
@@ -740,6 +741,13 @@ int command_doctor(const Args& args) {
   const ToolProbe tools = probe_tools();
   std::printf("ffmpeg          %s\n", tools.ffmpeg ? "found" : "MISSING (no artwork)");
   std::printf("ffprobe         %s\n", tools.ffprobe ? "found" : "MISSING (no durations)");
+  // The renderer is a policy, not a device: `doctor` can say what the window will ask
+  // for without opening one, which matters when the window is what fails.
+  const char* requested_driver = std::getenv("VLCFLIX_RENDER_DRIVER");
+  if (!requested_driver || !*requested_driver) requested_driver = std::getenv("SDL_RENDER_DRIVER");
+  std::printf("renderer        %s\n",
+              render_driver_description(render_driver_plan(requested_driver ? requested_driver : ""))
+                  .c_str());
   std::printf("catalog         %zu item(s)%s\n", catalog.items.size(),
               catalog.scanned_at ? "" : " (never scanned)");
   std::printf("previous run    %s\n",

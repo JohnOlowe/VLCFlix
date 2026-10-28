@@ -256,11 +256,11 @@ difference between "the Play button exists" and "the Play button can be reached"
 
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
-* 513 checks across layers 1, 2 and 4 — `0 failure(s)`
+* 529 checks across layers 1, 2 and 4 — `0 failure(s)`
 * 33/33 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
-* `make asan`: 513 checks clean, and the pre-fix code failing under it
+* `make asan`: 529 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
@@ -494,6 +494,49 @@ become "the thing under the pointer is the thing that was drawn there".
 Both halves were confirmed by re-breaking them: with the scrim and swallow moved back to
 the end, six checks fail; with `swallow()` replaced by `add_hit(panel, Action{})`, the
 two new sheet/cursor tests fail.
+
+### The crash in the Intel graphics driver: 2.0.3
+
+The first 2.0.2 launch on the real machine died before the window appeared. The crash log
+named the culprit line by line:
+
+```
+[CRASH] unhandled exception code=0xc0000005 address=00007FF860F6DBDE
+  #8  igdumdim64!OpenAdapter                     <- Intel graphics driver
+  #9  D3D9!Direct3DShaderValidatorCreate9
+  #11 D3D9!Direct3DCreate9On12Ex
+  #13 SDL2!...
+  #16 VLCFlixStudio ...                          <- our SDL_CreateRenderer call
+```
+
+SDL's default driver order (direct3d11, then direct3d, then ...) fell through to
+**Direct3D 9** on that machine, and the D3D9-on-12 shim inside the Intel driver raised an
+access violation *inside* the driver. That is not recoverable: it happens before
+`SDL_CreateRenderer` can return anything, so no return value, no fallback and no
+`try/catch` can help. The only fix is never to ask that driver to do anything.
+
+What the app needs from SDL is one streaming texture per frame — the UI rasterizes every
+pixel itself into a `Canvas`. A GPU buys a memcpy here. So:
+
+| Change | Reason |
+|---|---|
+| the renderer is asked for **by name**, software first | no reliance on SDL's driver order, which is what crashed |
+| `VLCFLIX_RENDER_DRIVER=direct3d11` (or `SDL_RENDER_DRIVER`) overrides it | anyone who wants the accelerated path can have it, and the choice is logged |
+| the plan always ends in `software` | an explicit choice that cannot be honoured degrades to something that works |
+| `direct3d`/`direct3d9` are honoured but flagged in the log and in `doctor` | the user's decision, taken with the warning attached |
+| `doctor` prints the policy | `renderer  the safe default; ask for another with VLCFLIX_RENDER_DRIVER` |
+
+The policy is a pure function (`platform/render_driver.h`) and is tested: empty request →
+software only; `direct3d11` → itself then software; `software` → once, not twice; padding
+trimmed; `direct3d9` flagged as the driver that has crashed in the wild.
+
+Verified live on the virtual display: the window opens with `renderer: software`, the
+cursor works, Settings opens, and the screenshot is pixel-for-pixel the same UI as
+before — the software path is not a degraded mode, it is the normal one.
+
+**Not covered, and stated as such:** this machine has no Intel GPU, so the crash itself
+cannot be reproduced here. What is verified is that the crashing driver is no longer
+selected, which is the whole of the fix.
 
 ### 2.0.1 was still wrong on one screen: pointer coordinates
 

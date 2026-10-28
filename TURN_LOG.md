@@ -1502,3 +1502,43 @@ Suite: 461 → **513 checks**, `make verify` green (33 static + 513 + 15 journey
 `make asan` clean, CMake build clean. Installer rebuilt as **2.0.2**, installed and
 verified under Wine 11.19 (372 files, `version` → 2.0.2), the picker rendered on Windows
 and a film still plays (`decoded=76 presented=76`).
+
+## Turn 9 — the crash inside the graphics driver
+
+2.0.2 did not open on the real machine. It wrote this and died:
+
+```
+[CRASH] unhandled exception code=0xc0000005 address=00007FF860F6DBDE
+  #8  igdumdim64!OpenAdapter            #9  D3D9!Direct3DShaderValidatorCreate9
+  #11 D3D9!Direct3DCreate9On12Ex        #13 SDL2!...        #16 VLCFlixStudio ...
+```
+
+SDL's default renderer order (direct3d11, then direct3d, then ...) fell through to
+**Direct3D 9**, and the D3D9-on-12 shim inside the Intel driver raised an access violation
+*inside the driver*, on SDL's call, before `SDL_CreateRenderer` could return anything. No
+fallback can be written for that: the fault happens on code we do not own and cannot
+catch. The fix has to be not asking.
+
+The app needs exactly one thing from SDL's renderer - a streaming texture it can upload a
+finished pixel buffer into - because the UI rasterizes every pixel itself into a `Canvas`.
+So a GPU saves a memcpy and costs a driver bug. The renderer is now requested **by name**
+(`platform/render_driver.h`), **software by default**, with:
+
+| Rule | Why |
+|---|---|
+| never `SDL_CreateRenderer(window, -1, ...)` | that is "pick for me", and what it picked crashed |
+| `VLCFLIX_RENDER_DRIVER=direct3d11` (or `SDL_RENDER_DRIVER`) honoured | the accelerated path stays available |
+| the plan always ends in `software` | an explicit choice that cannot be honoured still opens a window |
+| `direct3d`/`direct3d9` honoured but flagged in the log and in `doctor` | the user's decision, with the warning attached |
+| `doctor` prints the policy | the answer is visible without opening a window |
+
+Verified live on Xvfb: `renderer: software`, cursor working, Settings opening, and the
+screenshot identical to the accelerated builds - software is not a degraded mode here, it
+is the normal one. Suite 513 → **529 checks** (`make verify` green, `make asan` clean).
+
+What this does **not** prove: the machine cannot reproduce the Intel crash (no Intel GPU
+here). What is proved is that the driver that crashed is no longer selected.
+
+Installer rebuilt as **2.0.3**, installed and verified under Wine 11.19 (372 files,
+`version` → 2.0.3, `doctor` prints the renderer policy, scan 8 items / 0 errors, playback
+decoded=80 presented=78).

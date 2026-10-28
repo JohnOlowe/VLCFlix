@@ -41,8 +41,8 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 513
-  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 513
+- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 529
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 529
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
@@ -104,6 +104,16 @@ pushed and verified from a clean clone.
   through the same `add_library_folder()` validation as a typed path. Verified in unit
   tests on a temp tree, through the UI's own hit areas, and by four real clicks on the
   virtual display that put the folder in `settings.json`.
+- **2.0.3 stops asking Direct3D 9 to do anything.** 2.0.2 crashed on the real machine
+  with `0xc0000005` and a stack full of `igdumdim64` / `D3D9!Direct3DCreate9On12Ex`:
+  SDL's default driver order fell through to Direct3D 9 and the D3D9-on-12 shim inside the
+  Intel driver faulted before the first frame, which no return value or try/catch can
+  recover from. The renderer is now requested **by name** (`platform/render_driver.h`),
+  defaults to **software** (the UI rasterizes every pixel itself, so the GPU only saves a
+  memcpy), always falls back to software, honours `VLCFLIX_RENDER_DRIVER`/`SDL_RENDER_DRIVER`,
+  flags `direct3d9` as the driver that crashed, and is reported by `doctor`. Tested live on
+  Xvfb: `renderer: software`, identical pixels. The crash itself cannot be reproduced on
+  this machine (no Intel GPU) and is not claimed to be.
 - **The Windows build has now been RUN**, under Wine 11.19 (Wine 11.20 and
   11.20-staging are broken upstream: `create_view`/`virtual_alloc_first_thread_data`
   SEGV before a prefix exists). Executed and captured: `version`, `doctor`, `status`,

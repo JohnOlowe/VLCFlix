@@ -23,7 +23,7 @@ current, and `../docs/TESTING.md` §10 is the checklist for the machine that can
 sudo apt install build-essential pkg-config libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev
 cd native
 make -j2          # build/vlcflix
-make verify       # the gate: static checks, 513 test checks, 15 journey steps
+make verify       # the gate: static checks, 529 test checks, 15 journey steps
 make test         # just the tests (unit, golden image, fault injection)
 make asan         # the same tests under AddressSanitizer
 make preflight    # just the static checks
@@ -103,6 +103,12 @@ should not throw away the collection.
 VLCFlix 1.x, if present, is left exactly where it is: this is a different application
 with its own folder, data directory and uninstall key, and the installer refuses to be
 pointed at 1.x's folder rather than migrating it.
+
+**The window's renderer** is chosen by name and defaults to SDL's *software* renderer:
+the UI rasterizes every pixel itself, so the GPU only saves a memcpy — and on at least one
+Intel machine SDL's default order fell through to Direct3D 9 and crashed inside
+`igdumdim64` before the first frame (2.0.2). Ask for the accelerated path if you want it:
+`set VLCFLIX_RENDER_DRIVER=direct3d11`. `VLCFlixStudio.exe doctor` prints the policy.
 
 **Adding a library folder** no longer means typing a path: in **Settings** the field has
 a **Browse...** button beside it which opens a folder picker — the current path, one row
@@ -234,13 +240,13 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 ## What the tests prove
 
 `make verify` runs four things and they are not interchangeable:
-`../tools/preflight.sh` (33 static checks a compiler here cannot make), 513 test
-checks, and the 15-step journey through the real binary. `make asan` runs the same 513
+`../tools/preflight.sh` (33 static checks a compiler here cannot make), 529 test
+checks, and the 15-step journey through the real binary. `make asan` runs the same 529
 checks under AddressSanitizer. The reasoning behind each layer, the negative control
 for every layer, and the honest list of what none of them can reach are in
 `../docs/TESTING.md`.
 
-**513 checks** (unit + golden image + fault injection):
+**529 checks** (unit + golden image + fault injection):
 
 - every bug from `../docs/AUDIT.md` has a regression test: **A1** year-titled films,
   **A4** a film past 92 % leaves Continue Watching, **A5** `nv12` is not 10-bit,

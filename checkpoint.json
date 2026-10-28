@@ -5,8 +5,8 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "pending this turn",
-  "remote_sha": "4e32c186c1623e66d67a39c176ead7187df9d6a1",
+  "local_head": "0f6d117",
+  "remote_sha": "0f6d117d14ec847529698ec0902abadd0a276344",
   "pushed": true,
   "awaiting": "nothing on cpp: all four turns are complete; the Windows build and the manual checklist remain for a Windows machine",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned 4e32c18 after the turn-3 push; main is untouched at d4606a7. Turns 1-3 committed and verified from a clean clone (build + 281/281 tests + scan + play). Turn 4 (polish, bug confirmation, test strategy, `make verify`) remains."
+  "remote_sha_note": "git ls-remote origin cpp returned 0f6d117 after the turn-4 push; main is untouched at d4606a7. All four turns are committed and verified from a fresh clone: make verify (22 static + 339 test checks + 15 journey steps), ctest 2/2, make asan 339/339."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

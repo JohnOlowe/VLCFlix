@@ -134,8 +134,21 @@ for target in verify test asan; do
   grep -qE "^$target:" Makefile && ok "make $target exists" || bad "make $target is promised but missing"
 done
 [ -x tests/journey.sh ] && ok "tests/journey.sh is executable" || bad "tests/journey.sh is not executable"
-[ -x scripts/build-win-native.sh ] && ok "scripts/build-win-native.sh is executable" \
-                                   || bad "scripts/build-win-native.sh is not executable"
+for script in scripts/build-win-native.sh scripts/check-win-payload.sh; do
+  [ -x "$script" ] && ok "$script is executable" || bad "$script is not executable"
+done
+for file in scripts/windows-selfcheck.ps1 packaging/installer.nsi \
+            packaging/app.manifest docs/ci/windows.yml; do
+  [ -f "$file" ] && ok "$file exists" || bad "$file is missing"
+done
+# The workflow is kept out of .github/workflows only because this session's token has
+# no `workflow` scope; if it was moved there, it must not still be advertised as
+# something the user has to copy.
+if [ -f .github/workflows/windows.yml ]; then
+  ok "the Windows workflow is live in .github/workflows"
+elif [ -f docs/ci/windows.yml ]; then
+  ok "the Windows workflow is staged in docs/ci (needs the workflow scope to go live)"
+fi
 for screen in home browse mylist search detail settings empty; do
   [ -f "tests/golden/$screen.png" ] || bad "golden baseline for '$screen' is missing"
 done

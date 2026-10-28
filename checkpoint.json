@@ -1,17 +1,20 @@
 {
-  "updated_at": "2026-10-26",
+  "updated_at": "2026-10-28",
   "repository": {
     "path": "/home/user/VLCFlix",
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
-    "branch": "main",
-    "tracking_branch": "origin/main",
-    "local_head": "821447e",
-    "remote_sha": "821447e7dd269d059fe313a05d90e1889e5a37b0",
-    "pushed": true,
+    "branch": "cpp",
+    "tracking_branch": "none \u2014 branch is local only",
+    "local_head": "e521d71",
+    "remote_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
+    "pushed": false,
     "awaiting": "user runs tools/hwdecode-probe.cmd on the laptop and sends back vlcflix-hwdecode-report.txt; and confirms 1.2.0 still plays with the switch off",
     "credential_file": ".git-credentials (absent this session; ignored by .gitignore when present)",
     "remote_sha_verified_at": "2026-10-26",
-    "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it"
+    "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
+    "remote_sha_ref": "origin/main (ls-remote, 2026-10-28)",
+    "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
+    "base_commit": "d4606a7 (main, v1.2.0)"
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -55,7 +58,12 @@
       "ffmpeg": "7.1.5 via apt - does not survive a snapshot restore",
       "vlc": "3.0.24 via vlc-bin + vlc-plugin-base - does not survive a snapshot restore",
       "chromium": "~/.cache/ms-playwright - does not survive a snapshot restore",
-      "node_modules": "reinstall with npm install"
+      "node_modules": "reinstall with npm install",
+      "cmake": "apt, this session only",
+      "ninja-build": "apt, this session only",
+      "libsdl2-dev": "apt, this session only",
+      "libvlc-dev": "apt, this session only (libVLC 3.0.24)",
+      "zlib1g-dev / libfreetype-dev": "apt, this session only"
     },
     "sandbox_limits": {
       "cpu_cores": 2,
@@ -69,9 +77,10 @@
     ]
   },
   "next_steps": [
-    "user runs tools/hwdecode-probe.cmd on the Windows laptop and sends back vlcflix-hwdecode-report.txt",
-    "use that report to pin the ladder order/download format for their GPU (the app already falls back safely without it)",
-    "user confirms on real Windows that the switch is off by default and that turning it on still plays the film"
+    "get the three open decisions from the user (branch name, UI toolkit, external-VLC mode)",
+    "P0: cmake + Makefile skeleton and a make test harness that can fail",
+    "P1: json, store, naming (A1 fixed), subtitles, sync \u2014 with a regression test per bug and a negative control",
+    "a GitHub credential is needed before anything can be pushed"
   ],
   "git_auth": {
     "token_location": ".secrets/github-token",
@@ -249,5 +258,59 @@
     "reason_for_hwdownload": "without it ffmpeg fails with 'Impossible to convert between the formats supported by the filter Parsed_null_0 and auto_scale_0' - the v1.1.0-v1.1.10 black screen",
     "bug_caught_by_test": "POST /api/settings copies only allowed keys; hwDecode was missing from that list, so the switch silently saved nothing (test failed 200 !== 400 before the fix)",
     "probe_script": "tools/hwdecode-probe.cmd - runs S0 software plus H1-H7 hardware plans on a real film or a self-made 3 s 10-bit HEVC clip, writes vlcflix-hwdecode-report.txt to the Desktop; NOT yet run on Windows"
-  }
+  },
+  "port": {
+    "decision": "rewrite the whole product in pure C++; libVLC in-process, own renderer/input; no Node, no browser, no WebView2, no HTTP control of external vlc.exe",
+    "decided_by_user": true,
+    "branch": "cpp",
+    "status": "audit + plan complete, no C++ code yet",
+    "docs": [
+      "docs/AUDIT.md",
+      "docs/PORT_PLAN.md"
+    ],
+    "verified_assumptions": {
+      "libvlc_frames_into_our_buffer": "frames=22 luma=132 state=3 (libVLC 3.0.24 set_callbacks on samples/the-silent-coast.mp4)",
+      "libvlc_seek_on_single_keyframe_file": "set_time(12000) -> time_ms=12390, 18 new frames",
+      "duration_without_ffprobe": "length_ms=16000 from the engine"
+    },
+    "unverified": [
+      "the SDL2 window and input path (no display in this sandbox)",
+      "any Windows build",
+      "frame-exact timing beyond the libVLC 3 smem API (no per-frame PTS until VLC 4)"
+    ],
+    "open_decisions": [
+      "branch name: assumed cpp",
+      "UI toolkit: SDL2 + own renderer (recommended) vs Win32/GDI vs Dear ImGui",
+      "keep the external-VLC playback mode as an option, or inline only"
+    ],
+    "phases": "P0 skeleton, P1 core+tests, P2 scan/artwork, P3 renderer/shell, P4 browsing UI, P5 player, P6 sync, P7 hw-decode+previews, P8 platform",
+    "dependencies": [
+      "SDL2",
+      "libVLC>=3.0",
+      "FreeType",
+      "libjpeg",
+      "libpng",
+      "zlib",
+      "cmake (Makefile fallback)"
+    ],
+    "dropped": [
+      "Express API",
+      "VLC HTTP client + XML parsing",
+      "HTTP range streaming",
+      "WebView2 shell",
+      "transcode-for-playback"
+    ]
+  },
+  "bugs_verified_2026_10_28": [
+    "A1 parseName: titles that are years are truncated and given the wrong year (1917.2019.2160p -> \"1917 2019 2160p WEB-DL\", year 1917)",
+    "A2 ffmpeg copy engine cannot seek single-keyframe files: -ss 4 -c copy on a 1-I-frame/480 clip emits duration=16.000000 (dense GOP emits 12.000000)",
+    "A3 Range bytes=-500 answered as bytes 0-500/217238",
+    "A4 setProgress(97%) keeps the entry; no path marks a film finished",
+    "A5 hwCandidates deep test /10|12/ matches nv12 (8-bit)",
+    "A6 POST /api/settings accepts {\"vlcPassword\":{\"a\":1}} (200)",
+    "A7 README/API drift: subtitle route path, \"23 tests\" vs 72 actual"
+  ],
+  "withdrawn_claims": [
+    "Suspected unit bug in subtitleClock(): noise \u2014 sub.audio is stored in seconds; arithmetic correct. Checked before reporting."
+  ]
 }

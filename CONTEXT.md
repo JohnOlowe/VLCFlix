@@ -15,7 +15,31 @@ verified here, so every "it works" claim would have been unverifiable.
 The user chose **"Netflix front-end driving real VLC"** instead. VLC remains the
 playback engine; VLCFlix owns the entire browsing surface.
 
-## Current state
+## Current state (2026-10-28) — rewriting to pure C++ on branch `cpp`
+
+The product is being **rewritten from scratch in C++**: one native binary, libVLC
+in-process, our own renderer and input. No Node, no Express, no browser, no
+WebView2, no external `vlc.exe` driven over HTTP.
+
+- Branch **`cpp`**, created from `main` at `d4606a7`. **Local only — not pushed.**
+  A fresh clone contains no credential (`.secrets/github-token` is git-ignored and
+  absent), so there is nothing here that can authenticate a push. The user has to
+  supply a token before any push can happen.
+- `docs/AUDIT.md` — what `main` does, and six verified bugs with the commands that
+  show them (title/year parsing, unseekable ffmpeg copy streams, broken suffix
+  Range, films that never finish, `nv12` classified as 10-bit, unvalidated
+  `vlcPassword`).
+- `docs/PORT_PLAN.md` — architecture, JS→C++ module map, phases P0–P8 each with a
+  verification, deliberate differences, risks.
+- Verified spike: libVLC 3.0.24 `set_callbacks` delivers decoded frames into our
+  own buffer and seeks a file the ffmpeg pipe engine cannot seek. This is the
+  foundation of the rewrite.
+- **Nothing has been compiled for the new app yet**, and the desktop window/input
+  path is unverified (this sandbox has no display). Do not claim either.
+- The v1.2.0 Node application below still works and is still what `main` holds; it
+  is the reference behaviour for the port, not the deliverable.
+
+## Historical state (2026-10-26) — the Node/WebView2 application, v1.2.0
 - Local clone at `/home/user/VLCFlix`, branch `main`, tracking `origin/main`.
 - Application is **complete, working and pushed**. Local HEAD = remote
   `origin/main` = `a53d691`, verified with `git ls-remote` and independently with
@@ -94,14 +118,21 @@ report `Everything up-to-date`.
   separate processes; a server started with `start_process` survives and must be
   stopped with `stop_process`.
 
-## Next steps
+## Next steps (C++ port)
+1. Three decisions asked on 2026-10-28 and needed before P1: branch name (`cpp`),
+   UI toolkit (SDL2 + own renderer recommended), and whether the external-VLC
+   mode is kept at all.
+2. P0/P1: build skeleton (`cmake` + `make`), then `json`, `store`, `naming`,
+   `subtitles`, `sync`, with a regression test per audit bug and a negative
+   control that the old behaviour fails it.
+3. A credential is required to push the `cpp` branch; until then work stays local
+   and that must be said at the end of every turn.
+
+## Superseded next steps (Node app, v1.2.0)
 1. Ask the user to rotate the chat-exposed PAT and narrow it to
    Contents: read/write on `JohnOlowe/VLCFlix` only.
-2. Ask the user to test `start-windows.bat` against their real VLC install and
-   report failures with the exact VLC error text now surfaced by `launch()`.
-3. Likely follow-ups, not yet requested: subtitle handling, multi-part/season
-   grouping, an online metadata provider, player-in-VLC seek from the dock while
-   VLC is fullscreen.
+2. ~~Ask the user to test `start-windows.bat`~~ — irrelevant once the C++ app
+   replaces the shell; the Windows proof now belongs to P8.
 
 ## RECOVERY
 1. Read `AGENTS.md` for standing rules.
@@ -112,8 +143,11 @@ report `Everything up-to-date`.
    **Both `.git-credentials` and `.git/config` are stripped from snapshots.**
    Run `bash scripts/setup-git-auth.sh` to rebuild origin, identity and the
    credential helper from `.gitremote` and `.secrets/github-token`.
-4. `node_modules` does not survive; run `npm install`.
+4. `node_modules` does not survive; run `npm install` (needed only to run/compare
+   the reference Node app, not to build the C++ port).
 5. Reinstall ffmpeg/VLC if the VLC tests or scanning need them (commands above).
-6. Start the app with the **process tool**, not `bash`:
+6. Start the reference app with the **process tool**, not `bash`:
    `cd /home/user/VLCFlix && node server/index.js`, then open port 4173.
-7. Resume at the first item in **Next steps**.
+7. For the C++ port, reinstall `cmake ninja-build libsdl2-dev libvlc-dev ffmpeg
+   vlc-bin vlc-plugin-base zlib1g-dev libfreetype-dev` (all ephemeral).
+8. Resume at the first item in **Next steps (C++ port)**.

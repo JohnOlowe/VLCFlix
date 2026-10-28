@@ -197,6 +197,12 @@ BEGIN
   END
 END
 RC
+# The manifest is the one file that can stop the process before main() runs: a single
+# attribute that is not in Microsoft's schema produces "the side-by-side configuration
+# is incorrect" and there is nothing to log. Wine does not validate manifests, so it is
+# checked here and again inside the linked executable.
+python3 "$ROOT/scripts/check-win-manifest.py" "$ROOT/packaging/app.manifest" \
+  || die "the application manifest is not valid"
 "$WINDRES" -I "$CACHE" -O coff -o "$OBJ/version.res.o" "$CACHE/version.rc" || die "windres failed"
 
 LIBS="-L$CACHE/sdk/lib -lvlc -L$SDL/lib -lmingw32 -lSDL2main -lSDL2 \
@@ -218,6 +224,8 @@ cp "$ROOT/scripts/windows-selfcheck.ps1" "$PAYLOAD/"
 
 say "checking that the payload can load at all"
 "$ROOT/scripts/check-win-payload.sh" "$PAYLOAD" | tail -20 || die "the payload is incomplete"
+python3 "$ROOT/scripts/check-win-manifest.py" "$ROOT/packaging/app.manifest" \
+  "$PAYLOAD/VLCFlixStudio.exe" || die "the manifest in the executable is not the checked one"
 
 if [ "$MODE" = "zip" ] || [ "$MODE" = "setup" ]; then
   say "packing"
@@ -280,6 +288,8 @@ RC
     -mwindows -lole32 -luuid -lshell32 -lshlwapi -ladvapi32 -luser32 -static-libgcc \
     -static-libstdc++ || die "linking the installer failed"
 
+  python3 "$ROOT/scripts/check-win-manifest.py" "$ROOT/packaging/app.manifest" \
+    "$DIST/setup-stub.exe" || die "the manifest in the installer is not the checked one"
   say "attaching the application to the installer"
   python3 - "$DIST/setup-stub.exe" "$DIST/payload.zip" "$DIST/VLCFlixStudio-Setup.exe" <<'APPEND'
 import struct, sys

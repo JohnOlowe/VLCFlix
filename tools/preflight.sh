@@ -109,6 +109,27 @@ else
     || bad "the build does not attach the product icon"
 fi
 
+# A manifest that Windows' side-by-side parser rejects stops the process before main(),
+# so it cannot be caught by running the app - and Wine does not validate manifests at
+# all. This is the check that does, plus a negative control proving it can fail.
+if python3 scripts/check-win-manifest.py packaging/app.manifest >/dev/null 2>&1; then
+  ok "the application manifest is schema-clean and has no dependent assemblies"
+else
+  bad "packaging/app.manifest is not valid (Windows would refuse to start the exe)"
+fi
+negative_manifest=$(mktemp)
+sed 's|name="VLCFlixStudio.Desktop"|name="VLCFlixStudio.Desktop" description="not a schema attribute"|' \
+  packaging/app.manifest > "$negative_manifest"
+if python3 scripts/check-win-manifest.py "$negative_manifest" >/dev/null 2>&1; then
+  bad "the manifest check accepted a description attribute on assemblyIdentity"
+else
+  ok "the manifest check rejects an out-of-schema attribute (negative control)"
+fi
+rm -f "$negative_manifest"
+grep -q 'check-win-manifest.py' scripts/build-win-native.sh \
+  && ok "the Windows build refuses to ship a manifest that fails that check" \
+  || bad "scripts/build-win-native.sh does not run the manifest check"
+
 # --------------------------------------------------------------- house rules
 # From AGENTS.md: main.cpp must not include SDL headers (the window layer owns SDL),
 # and credentials must never be committed.

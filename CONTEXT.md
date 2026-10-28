@@ -15,12 +15,12 @@ verified here, so every "it works" claim would have been unverifiable.
 The user chose **"Netflix front-end driving real VLC"** instead. VLC remains the
 playback engine; VLCFlix owns the entire browsing surface.
 
-## Current state (2026-10-28) — native port, turn 3 of 4 done
+## Current state (2026-10-28) — native port, all 4 turns done
 
 Product: **VLCFlix Studio 2.0.0**. Branch **`cpp`** exists on GitHub (`origin/cpp`)
-and is the working branch. Turns 1 (engine), 2 (window + browsing UI) and 3 (player,
-sync, subtitles) are committed, pushed and verified from a clean clone; turn 4 (polish,
-bug confirmation, test strategy) remains.
+and is the working branch. All four turns — 1 foundation, 2 window + browsing UI,
+3 player/sync/subtitles, 4 polish + bug confirmation + test strategy — are committed,
+pushed and verified from a clean clone.
 
 - **Code lives in `native/`.** The Node app (`server/`, `public/`, `src/win/`) is
   untouched and still works; it is the reference behaviour for the port and is
@@ -41,9 +41,9 @@ bug confirmation, test strategy) remains.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make` builds, `make test` = 210/210,
-  every screen rendered at four sizes and looked at, and an in-app
-  samples→scan→browse journey that ends with real posters on screen.
+- **Verified from a clean clone on GitHub**: `make verify` = 22 static checks + 339
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 339
+  checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
 - Identity/product rules: the Windows build must look like a new application
@@ -57,12 +57,31 @@ bug confirmation, test strategy) remains.
   code: A1 (year-titled films), A4 (finished films), A5 (`nv12`), A6 (password
   type), A9 (still versioning). A2/A3 die with the code that caused them
   (transcoding by pipe; HTTP range serving).
-- **Not done:** turn 4 (polish, bug confirmation, the test strategy and `make
-  verify`). **No Windows build exists**, so every `_WIN32` branch is written but
-  unexecuted; the window has only ever run headless (`SDL_VIDEODRIVER=dummy`); there
-  is no sound card here, so the audio path is unverified; automatic device-latency
-  compensation is inert because libVLC 3 cannot report output latency. Do not claim
-  otherwise.
+- **The test strategy is `docs/TESTING.md`**: six layers (unit → golden image with
+  pixel diffs → end-to-end journey on a library built during the run → fault injection
+  → AddressSanitizer → static preflight), a regression test per known bug with its
+  negative control, the honest "not verified" table, and the manual checklist for what
+  cannot run here. `make verify` is the gate and needs nothing but a compiler,
+  pkg-config, ffmpeg and libVLC.
+- **Turn 4 found and fixed three real bugs** (none of them cosmetic): an unreadable
+  file was kept with no marker and no refusal; a zero-decode file arrived from libVLC
+  as `Ended` and was written as *watched*, silently removing it from Continue Watching;
+  and the artwork preview job captured its segment list by reference after the owning
+  block had closed, so roughly half of all scans drew no preview at all (ffmpeg got an
+  absurd `-t`). All three have regression tests; the third is proved by ASan reporting
+  `stack-use-after-scope` on the old code and nothing on the new.
+- **Windows packaging now exists but is unverified**: `native/packaging/installer.nsi`
+  (new AppId, install dir, uninstall key, refuses to install over 1.x, never touches
+  1.x data), `native/packaging/app.manifest`, and `scripts/build-win-native.sh`, whose
+  `--check` mode reports on this machine that no mingw, NSIS or Windows VLC is present
+  and exits 3.
+- **Still not verified:** the Windows build and every `_WIN32` branch (no toolchain
+  here); a real display (the window has only ever run headless); audio (no sound card);
+  the `-hwaccel auto` GPU path (no Vulkan video queue here, software fallback proven).
+  Automatic device-latency compensation is not implemented because libVLC 3 cannot
+  report output latency — the UI says so instead of offering a toggle that did
+  nothing (`autoLatency` is gone from the code, the settings file and the CLI). Do not
+  claim otherwise.
 
 ## Historical state (2026-10-26)
 — the Node/WebView2 application, v1.2.0

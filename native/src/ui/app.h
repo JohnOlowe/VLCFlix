@@ -136,6 +136,8 @@ class App {
   bool preview_has_picture() const { return preview_has_frame_; }
   bool playing() const { return player_open_; }
   const EngineStatus& player_status() const { return player_status_; }
+  // Why the player gave up, if it did. Empty while it is healthy.
+  const std::string& player_error() const { return player_error_; }
   const Presenter& presenter() const { return presenter_; }
   // The engine, for tests that want to watch what it really did (frames, seeks).
   Engine& engine() { return engine_; }
@@ -245,8 +247,10 @@ class App {
   bool player_chrome_ = false;     // the chrome is drawn over the picture
   bool chrome_visible_ = true;
   bool player_finished_ = false;
+  bool player_failed_ = false;
   double chrome_hidden_at_ = -1;   // clock time when the chrome last hid
   double last_input_at_ = 0;
+  double playback_started_at_ = 0;
   double last_progress_save_ = 0;
   double resume_at_ = -1;          // pending "start here" seek, applied once length is known
   int playing_index_ = -1;

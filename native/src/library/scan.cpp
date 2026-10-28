@@ -65,6 +65,7 @@ Catalog scan_library(const ScanOptions& options) {
   LOG_INFO("tools: ffmpeg=%s ffprobe=%s", tools.ffmpeg ? "yes" : "no",
            tools.ffprobe ? "yes" : "no");
 
+  set_hwaccel_decoding(options.hw_decode);
   if (!options.render_artwork || !tools.can_render) {
     if (!tools.can_render) LOG_WARN("ffmpeg missing: artwork will not be drawn, the UI falls back");
   }
@@ -158,7 +159,11 @@ Catalog scan_library(const ScanOptions& options) {
           item.vcodec = info.vcodec;
           item.acodec = info.acodec;
           item.pix_fmt = info.pix_fmt;
-          if (info.duration == 0) {
+          // A file the prober cannot read is marked rather than dropped: dropping it
+          // hides the user's file, and pretending it is fine shows a card that can
+          // never play. The mark is cleared the moment a later probe succeeds.
+          item.unreadable = info.duration == 0;
+          if (item.unreadable) {
             std::lock_guard<std::mutex> lock(error_mutex);
             catalog.errors.push_back("unreadable video: " + item.filename);
             LOG_WARN("unreadable video: %s", file.c_str());
@@ -201,7 +206,7 @@ Catalog scan_library(const ScanOptions& options) {
   /* --------------------------- phase 2: draw ---------------------------- */
 
   if (options.render_artwork && tools.can_render) {
-    render_missing_artwork(
+    const ArtRunResult art = render_missing_artwork(
         catalog.items, options.media_dir, true,
         [&](const ArtProgress& p) {
           if (options.on_progress) {
@@ -212,6 +217,9 @@ Catalog scan_library(const ScanOptions& options) {
           if (options.on_catalog) options.on_catalog(catalog);
         },
         options.cancel);
+    if (options.art_result) *options.art_result = art;
+    LOG_INFO("phase 2 complete: %d of %d artwork set(s) drawn, %d still missing", art.drawn,
+             art.total, art.remaining);
   }
 
   return catalog;

@@ -13,6 +13,22 @@
 #include "platform/proc.h"
 
 namespace vf {
+
+namespace {
+bool g_hwaccel = false;
+
+// One place that builds ffmpeg's argv, so the hardware flag cannot be forgotten at one
+// call site out of five.
+std::vector<std::string> ffmpeg_args(const std::vector<std::string>& rest) {
+  std::vector<std::string> args = {"ffmpeg"};
+  if (g_hwaccel) {
+    args.push_back("-hwaccel");
+    args.push_back("auto");
+  }
+  args.insert(args.end(), rest.begin(), rest.end());
+  return args;
+}
+}  // namespace
 namespace {
 
 // A touch of contrast and a vignette keeps white text legible over a real frame.
@@ -132,8 +148,8 @@ int sweep_temp_art(const std::string& media_dir) {
 
 double measure_luma(const std::string& file) {
   const ProcResult r = run_process(
-      {"ffmpeg", "-hide_banner", "-nostats", "-i", file, "-frames:v", "1", "-vf",
-       "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"},
+      ffmpeg_args({"-hide_banner", "-nostats", "-i", file, "-frames:v", "1", "-vf",
+       "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"}),
       20000);
   const std::string text = r.out + r.err;
   const std::string key = "lavfi.signalstats.YAVG=";
@@ -161,13 +177,17 @@ void correct_exposure(const std::string& file, double target) {
   char filter[128];
   std::snprintf(filter, sizeof filter, "eq=gamma=%.3f:contrast=%.2f:saturation=1.04", gamma,
                 contrast);
-  const ProcResult r = run_process({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i",
-                                    file, "-vf", filter, "-q:v", "3", file},
+  const ProcResult r = run_process(ffmpeg_args({"-y", "-hide_banner", "-loglevel", "error", "-i", file,
+                                 "-vf", filter, "-q:v", "3", file}),
                                    30000);
   if (!r.ok()) LOG_DEBUG("exposure correction failed for %s", basename(file).c_str());
 }
 
 }  // namespace
+
+
+void set_hwaccel_decoding(bool enabled) { g_hwaccel = enabled; }
+bool hwaccel_decoding() { return g_hwaccel; }
 
 ArtResult render_art(const std::string& video_path, double duration, const std::string& media_dir,
                      const std::string& id, MissingArt needs) {
@@ -206,8 +226,8 @@ ArtResult render_art(const std::string& video_path, double duration, const std::
       const std::string filter =
           std::string("scale=400:600:force_original_aspect_ratio=increase,crop=400:600,") + kGrade;
       track("poster",
-            run_process({"ffmpeg", "-y", "-loglevel", "error", "-ss", seconds, "-i", video_path,
-                         "-frames:v", "1", "-vf", filter, "-q:v", "4", tmp_poster},
+            run_process(ffmpeg_args({"-y", "-loglevel", "error", "-ss", seconds, "-i", video_path,
+                                     "-frames:v", "1", "-vf", filter, "-q:v", "4", tmp_poster}),
                         60000),
             tmp_poster);
     });
@@ -219,8 +239,8 @@ ArtResult render_art(const std::string& video_path, double duration, const std::
       const std::string filter =
           std::string("scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,") + kGrade;
       track("backdrop",
-            run_process({"ffmpeg", "-y", "-loglevel", "error", "-ss", seconds, "-i", video_path,
-                         "-frames:v", "1", "-vf", filter, "-q:v", "3", tmp_backdrop},
+            run_process(ffmpeg_args({"-y", "-loglevel", "error", "-ss", seconds, "-i", video_path,
+                                     "-frames:v", "1", "-vf", filter, "-q:v", "3", tmp_backdrop}),
                         60000),
             tmp_backdrop);
     });
@@ -228,9 +248,14 @@ ArtResult render_art(const std::string& video_path, double duration, const std::
   if (needs.preview) {
     const auto segments = preview_segments(duration);
     if (!segments.empty()) {
-      jobs.emplace_back([&] {
+      // By value, deliberately: `segments` lives only inside this if-block, and the
+      // jobs are joined after it closes. Capturing it by reference let the preview
+      // thread read a destroyed vector, which reached ffmpeg as an absurd `-t` and
+      // failed the preview roughly half the time - a real bug this turn found, not a
+      // theoretical one.
+      jobs.emplace_back([&, segments] {
         // One ffmpeg pass: seek to each snippet, normalise, concatenate.
-        std::vector<std::string> args = {"ffmpeg", "-y", "-loglevel", "error"};
+        std::vector<std::string> args = ffmpeg_args({"-y", "-loglevel", "error"});
         for (const auto& seg : segments) {
           char start[32];
           char len[32];
@@ -297,6 +322,10 @@ ArtRunResult render_missing_artwork(std::vector<Item>& items, const std::string&
                                     const std::function<bool()>& cancel) {
   std::vector<std::size_t> pending;
   for (std::size_t i = 0; i < items.size(); ++i) {
+    // A file the prober could not read has no duration to seek into, so it cannot have
+    // artwork. Counting it as "missing" for ever would turn one bad file into a
+    // permanent artwork job.
+    if (items[i].unreadable) continue;
     if (!retry_failed && !should_retry_art(items[i])) continue;
     if (!needs_artwork(items[i], media_dir)) continue;
     pending.push_back(i);

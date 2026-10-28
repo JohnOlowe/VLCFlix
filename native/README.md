@@ -1,6 +1,7 @@
 # VLCFlix Studio — the native port
 
-The C++ rewrite of VLCFlix. Turn 3 of four (see `../docs/PLAN_4_TURNS.md`).
+The C++ rewrite of VLCFlix. All four turns are done (see `../docs/PLAN_4_TURNS.md`);
+how it is tested is in `../docs/TESTING.md`.
 
 **What this is right now:** the whole product, in one native binary — the library
 engine (scan, probe, artwork, subtitles, sync maths, crash-proof logging), the window
@@ -9,9 +10,10 @@ libVLC decodes the picture in-process into our buffer, we present it ourselves, 
 the subtitles ourselves off the engine's clock, and apply the sync plan from
 `sync-math.js` by delaying whichever of the two senses has to wait.
 
-**What is not verified:** no Windows build exists, the window has only ever run
-headless, and nobody has heard the audio path on a real sound card (this machine has
-none). See "Not verified, on purpose" at the bottom; it is kept current.
+**What is not verified:** the Windows build (written and packagable, never compiled or
+run), the window on a real display (it has only ever run headless), and the audio path
+(there is no sound card here). See "Not verified, on purpose" at the bottom; it is kept
+current, and `../docs/TESTING.md` §10 is the checklist for the machine that can.
 
 ---
 
@@ -21,7 +23,10 @@ none). See "Not verified, on purpose" at the bottom; it is kept current.
 sudo apt install build-essential pkg-config libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev
 cd native
 make -j2          # build/vlcflix
-make test         # 210 checks, includes the UI tests
+make verify       # the gate: static checks, 339 test checks, 15 journey steps
+make test         # just the tests (unit, golden image, fault injection)
+make asan         # the same tests under AddressSanitizer
+make preflight    # just the static checks
 ```
 
 or with CMake:
@@ -159,55 +164,37 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 
 ## What the tests prove
 
-`make test` → **281 checks**. Beyond porting the JS cases (naming, sync maths,
-subtitle conventions, rails), each bug from `../docs/AUDIT.md` has a regression
-test, and the naming one carries a **negative control**: a copy of the old
-algorithm is run against the same filenames and asserted to be wrong on all four,
-so the test cannot pass by testing nothing.
+`make verify` runs four things and they are not interchangeable:
+`../tools/preflight.sh` (22 static checks a compiler here cannot make), 339 test
+checks, and the 15-step journey through the real binary. `make asan` runs the same 339
+checks under AddressSanitizer. The reasoning behind each layer, the negative control
+for every layer, and the honest list of what none of them can reach are in
+`../docs/TESTING.md`.
 
-- **A1** year-titled films: `1917.2019.2160p` → `1917` / 2019,
-  `Blade.Runner.2049.2017` → `Blade Runner 2049` / 2017.
-- **A4** a film watched past 92 % is removed from progress, so it leaves
-  Continue Watching.
-- **A5** `nv12` is not 10-bit, `yuv420p10le` is.
-- **A6** `vlcPassword` must be a string; `hwDecode` must be a boolean.
-- **A9** a still from an older format is treated as missing even though the file
-  exists.
+**339 checks** (unit + golden image + fault injection):
 
-The 78 UI checks are measurements, not assertions about intent:
-
-- every screen, including the empty library, draws at least a floor fraction of
-  non-background pixels, with a **negative control** (a cleared canvas must measure
-  zero content, or the measurement means nothing);
-- clicking the nav, a card, the search field, Play, My List, Settings and the close
-  button each does the thing it looks like, driven through the same `handle()` the
-  window calls;
-- Play reports the request and says the player is not wired up yet — turn 2 does not
-  pretend to play;
-- hit areas do not overlap, so one click is always one action;
-- arrow keys move the focus and Enter opens the focused film;
-- the minimum window size (640×420) draws every screen without a crash.
-
-The 66 playback checks are also measurements, not mocks:
-
-- libVLC really decodes `samples/ghostlight.mp4` into our buffer: the test asserts
-  320×180 frames arrive, that they contain more than one shade (so a black frame
-  would fail), and that the length comes from the engine (16 s ± 1);
-- **seeking a single-keyframe file** (`the-silent-coast.mp4`, the file behind audit
-  A2) moves the clock past 12 s and keeps delivering pictures — the exact thing the
-  ffmpeg pipe engine could not do;
-- the presenter shows the newest frame immediately with no delay, holds a frame for
-  the configured delay when there is one, and drops the oldest beyond its bound;
-- the player view starts a film, **resumes at the saved position** (8 s of 16 s), and
-  draws chrome whose every control is clickable;
-- `Space` really pauses (waits for libVLC's asynchronous state), and the sync offset
-  moves between the two branches of the plan — audio pays for a positive offset,
-  picture pays for a negative one — with the presenter reconfigured to match;
-- the sidecar subtitle is found through the scanner, read, and its cue is returned at
-  2 s and empty at 20 s; a +3 s offset moves the window;
-- stopping saves progress; finishing removes the film from Continue Watching;
-- a film whose file is gone reports that and does not open the player, and so
-  does an empty library and an index past the end of it
+- every bug from `../docs/AUDIT.md` has a regression test: **A1** year-titled films,
+  **A4** a film past 92 % leaves Continue Watching, **A5** `nv12` is not 10-bit,
+  **A6** `vlcPassword` must be a string, **A9** a still from an older format is
+  missing even though the file exists;
+- **seven golden baselines** (`tests/golden/*.png`) compare every screen pixel by
+  pixel — per-channel tolerance 6/255, at most 0.15 % of pixels — and the comparator
+  self-checks: an identical image reports 0 changed pixels and a 4×4 nudge reports
+  exactly 16;
+- the UI checks are measurements, not assertions about intent: every screen including
+  the empty library draws real content (with a cleared canvas as the negative
+  control), clicking the nav, a card, the search field, Play, My List, Settings and
+  the close button each does what it looks like, hit areas do not overlap, arrow keys
+  move focus and Enter opens the focused film, and 640×420 draws without a crash;
+- playback is measured against a real decoder: libVLC decodes `samples/ghostlight.mp4`
+  into our buffer at 320×180 with more than one shade, the length comes from the engine,
+  seeking the single-keyframe file behind A2 keeps delivering pictures, the presenter
+  honours the plan in both directions, pause is confirmed through libVLC's asynchronous
+  state, the sidecar subtitle is timed off the engine clock, and stopping saves progress
+  while finishing removes the film;
+- fault injection: corrupt catalog/settings/JSON/subtitles, a read-only data directory,
+  a scan with no ffmpeg, junk video, corrupt artwork, a file deleted mid-playback and
+  nonsense UI input all end in a message rather than a crash, a hang or silence.
 
 ## Verified end-to-end in this session
 
@@ -226,20 +213,27 @@ The 66 playback checks are also measurements, not mocks:
 
 ## Not verified, on purpose
 
-- **Windows.** No toolchain or machine here. `platform/proc.cpp` has a
-  `CreateProcess` path, `paths.cpp` a `%LOCALAPPDATA%` path, and `log.cpp` a DbgHelp
-  stack-trace path; all three are written but never executed. Treat them as
-  unproven until the first Windows build runs.
+- **Windows.** No toolchain or machine here: `scripts/build-win-native.sh --check`
+  lists exactly what is missing (mingw-w64, NSIS, a Windows VLC, and mingw builds of
+  the five libraries) and exits 3 rather than pretending. `platform/proc.cpp` has a
+  `CreateProcess` path, `paths.cpp` a `%LOCALAPPDATA%` path, `log.cpp` a DbgHelp
+  stack-trace path, and `packaging/` has the installer and manifest for a *new*
+  application (own AppId, install dir, uninstall key, data dir; refuses to install
+  over 1.x and never touches 1.x's data). All of it is unproven until a Windows build
+  actually runs; `../docs/TESTING.md` §10 is the checklist for that day.
 - **The window on a real display.** The window, its event loop, its renderer and the
   player inside it were exercised with `SDL_VIDEODRIVER=dummy` (opens, plays a film,
   presents frames, closes, exit 0), and every screen and the player were rendered and
   looked at as PNGs at 1600×900, 1280×720 and 1920×1080 — but nobody has watched it on
   a monitor with a mouse in hand.
-- **Audio.** There is no sound card here. Playback ran with the default output and
+- **Audio.** There is no sound card here (libVLC prints `ALSA lib … cannot find card
+  '0'` on every attempt, which is the machine, not the app). Playback ran with the default output and
   with `--aout=dummy`; the picture, the clock and the state machine are verified, the
   sound is not. `libvlc_audio_set_delay` is called and the plan is computed, but
   whether the sound actually lands where the maths says has not been heard.
-- **Automatic latency compensation**, see above: the device term is always zero
-  because libVLC cannot report it.
+- **Automatic latency compensation.** libVLC 3 cannot report output latency, so the
+  device term is always zero. This used to be an `autoLatency` toggle that changed
+  nothing; it is now removed from the setting, the settings file, the CLI and the UI,
+  which says "not available with libVLC 3 — use − / + in the player" instead.
 - Artwork rendering with libVLC instead of ffmpeg is not planned: ffmpeg remains the
   artwork engine, libVLC is the playback engine.

@@ -38,6 +38,11 @@ struct Item {
   int preview_version = 0;
   int art_attempts = 0;
   std::string art_error;
+  // The prober could not read this file (a partial download, a truncated file, a
+  // container it does not know). It stays in the library so the user can see it and
+  // so a later scan can retry it, but the UI marks it and Play refuses it with a
+  // reason instead of opening a player that can only show black.
+  bool unreadable = false;
 };
 
 struct Progress {
@@ -53,7 +58,6 @@ struct Settings {
   std::string vlc_password = "vlcflix";
   std::string play_mode = "vlc";      // informational only in the native app
   bool vlc_fullscreen = true;
-  bool auto_latency = false;
   bool hw_decode = false;             // now only feeds artwork/preview rendering
 };
 

@@ -27,6 +27,8 @@
 namespace vf {
 void run_ui_tests(const std::string& out_dir);
 void run_player_tests();
+void run_golden_tests(const std::string& baseline_dir);
+void run_fault_tests();
 }
 
 using namespace vf;
@@ -466,6 +468,16 @@ int main() {
   const std::string ui_out = join(temp_dir(), "vlcflix-studio-shots");
   vf::run_ui_tests(ui_out);
   vf::run_player_tests();
+  // Golden images: baselines live in the repository, so a layout change is reviewable
+  // in the diff instead of being invisible.
+  {
+    // Baselines live beside the tests, in the repository.
+    const std::string native_dir = vf::find_dir_upwards("native");
+    const std::string golden_dir = native_dir.empty() ? std::string("tests/golden")
+                                                      : vf::join(native_dir, "tests/golden");
+    vf::run_golden_tests(golden_dir);
+  }
+  vf::run_fault_tests();
   std::printf("\n(UI screenshots written to %s)\n", ui_out.c_str());
   return vftest::summary("native tests");
 }

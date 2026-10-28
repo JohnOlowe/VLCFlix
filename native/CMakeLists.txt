@@ -55,9 +55,14 @@ target_link_libraries(vlcflix PRIVATE vlcflix_core)
 # libVLC is required for playback (turn 3): the picture is delivered to our own
 # callbacks, so the engine runs in this process - no vlc.exe, no HTTP bridge.
 enable_testing()
-add_executable(native-tests tests/run_tests.cpp tests/ui_tests.cpp tests/player_tests.cpp)
+add_executable(native-tests tests/run_tests.cpp tests/ui_tests.cpp tests/player_tests.cpp tests/golden_tests.cpp tests/fault_tests.cpp)
 target_link_libraries(native-tests PRIVATE vlcflix_core)
 # The tests play the bundled samples, so they run from the repository root where
 # `samples/` lives. A build directory outside the tree would otherwise have no way to
 # find them, and the playback tests would fail for the wrong reason.
 add_test(NAME native-tests COMMAND native-tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# The journey drives the built binary, so it takes the binary path as an argument
+# instead of guessing where a `make` build would have put it.
+add_test(NAME journey COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/journey.sh --binary $<TARGET_FILE:vlcflix>
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)

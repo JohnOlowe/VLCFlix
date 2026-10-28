@@ -1,381 +1,389 @@
 {
-  "updated_at": "2026-10-28",
-  "repository": {
-    "path": "/home/user/VLCFlix",
-    "remote": "https://github.com/JohnOlowe/VLCFlix.git",
-    "branch": "cpp",
-    "tracking_branch": "origin/cpp",
-    "local_head": "4e32c18",
-    "remote_sha": "4e32c186c1623e66d67a39c176ead7187df9d6a1",
-    "pushed": true,
-    "awaiting": "turn 4 only: polish, confirm there are no bugs, write docs/TESTING.md and make `make verify` green from a fresh clone. Still open from v1.2.0: the user runs tools/hwdecode-probe.cmd on the laptop.",
-    "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
-    "remote_sha_verified_at": "2026-10-28",
-    "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
-    "remote_sha_ref": "origin/cpp via git ls-remote, 2026-10-28",
-    "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
-    "base_commit": "d4606a7 (main, v1.2.0)",
-    "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-    "remote_sha_note": "git ls-remote origin cpp returned 4e32c18 after the turn-3 push; main is untouched at d4606a7. Turns 1-3 committed and verified from a clean clone (build + 281/281 tests + scan + play). Turn 4 (polish, bug confirmation, test strategy, `make verify`) remains."
+ "updated_at": "2026-10-28",
+ "repository": {
+  "path": "/home/user/VLCFlix",
+  "remote": "https://github.com/JohnOlowe/VLCFlix.git",
+  "branch": "cpp",
+  "tracking_branch": "origin/cpp",
+  "local_head": "pending this turn",
+  "remote_sha": "4e32c186c1623e66d67a39c176ead7187df9d6a1",
+  "pushed": true,
+  "awaiting": "nothing on cpp: all four turns are complete; the Windows build and the manual checklist remain for a Windows machine",
+  "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
+  "remote_sha_verified_at": "2026-10-28",
+  "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
+  "remote_sha_ref": "origin/cpp via git ls-remote, 2026-10-28",
+  "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
+  "base_commit": "d4606a7 (main, v1.2.0)",
+  "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
+  "remote_sha_note": "git ls-remote origin cpp returned 4e32c18 after the turn-3 push; main is untouched at d4606a7. Turns 1-3 committed and verified from a clean clone (build + 281/281 tests + scan + play). Turn 4 (polish, bug confirmation, test strategy, `make verify`) remains."
+ },
+ "scope": {
+  "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
+  "decided_by_user": true,
+  "rejected_alternative": "patching VLC for Windows source (unbuildable/unverifiable in this sandbox: 2 cores, 2 GB RAM, no mingw-w64)",
+  "confirmation_needed": false
+ },
+ "application": {
+  "status": "working and verified",
+  "stack": "Node 20 + Express 4 + vanilla ES modules (no build step)",
+  "entry": "server/index.js",
+  "port": 4173,
+  "start_command": "cd /home/user/VLCFlix && node server/index.js",
+  "windows_launcher": "start-windows.bat"
+ },
+ "verification": {
+  "unit_tests": "23/23 pass (npm test)",
+  "negative_controls": "confirmed: re-introducing the <leaf> bug and the boolean-detect bug each failed exactly one test",
+  "vlc_real_binary": "3.0.24 Vetinari; status/playlist parsed; in_play, pl_pause, seek, volume verified; 401 on wrong password",
+  "vlc_launch_path": "spawned detached, connected in 0.36s, outlived a server restart",
+  "vlc_failure_path": "reports VLC's own stderr in 0.37s instead of a 20s timeout",
+  "builtin_player": "verified with VP9/WebM: duration 10s, currentTime advancing",
+  "ui_reviewed": "Chromium 1600x900 across home, rails, hover, detail, browse, search, settings, player, VLC dock",
+  "v117_checks": "14-check browser harness all pass, negative control fails as designed; 64/64 unit tests",
+  "v118_checks": "fresh install over existing data rewrote 0/48 files; 8 deleted previews redrawn only; adopted a nulled catalogue field with 0 rewrites; killed pass resumed at 0.4 s; 64/64 tests"
+ },
+ "commit_identity": {
+  "name": "John Olowe",
+  "email": "121398818+JohnOlowe@users.noreply.github.com"
+ },
+ "bugs_fixed_this_session": [
+  "detect() returned a boolean instead of an executable path",
+  "normalizePlaylist() ignored <leaf> elements and always returned []",
+  "demo generator crop offsets exceeded the valid range, rendering near-black clips",
+  "launch() waited 20s and hid VLC's actual startup error",
+  "/api/player/status served a stale title after playback stopped",
+  "artwork exposure fixed with gamma rather than brightness to avoid a milky image"
+ ],
+ "environment": {
+  "ephemeral_packages": {
+   "ffmpeg": "7.1.5 via apt - does not survive a snapshot restore",
+   "vlc": "3.0.24 via vlc-bin + vlc-plugin-base - does not survive a snapshot restore",
+   "chromium": "~/.cache/ms-playwright - does not survive a snapshot restore",
+   "node_modules": "reinstall with npm install",
+   "cmake": "apt, this session only",
+   "ninja-build": "apt, this session only",
+   "libsdl2-dev": "apt, this session only",
+   "libvlc-dev": "apt, this session only (libVLC 3.0.24)",
+   "zlib1g-dev / libfreetype-dev": "apt, this session only"
   },
-  "scope": {
-    "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
-    "decided_by_user": true,
-    "rejected_alternative": "patching VLC for Windows source (unbuildable/unverifiable in this sandbox: 2 cores, 2 GB RAM, no mingw-w64)",
-    "confirmation_needed": false
+  "sandbox_limits": {
+   "cpu_cores": 2,
+   "ram_mb": 1982,
+   "disk_free": "21 GB"
   },
-  "application": {
-    "status": "working and verified",
-    "stack": "Node 20 + Express 4 + vanilla ES modules (no build step)",
-    "entry": "server/index.js",
-    "port": 4173,
-    "start_command": "cd /home/user/VLCFlix && node server/index.js",
-    "windows_launcher": "start-windows.bat"
+  "gotchas": [
+   "No Qt/display interface module: plain vlc exits 'no suitable interface module'; use -I dummy for headless tests.",
+   "Playwright Chromium has no H.264; verify the built-in player with VP9/WebM.",
+   "Never pkill -f with a pattern that matches the current command line."
+  ]
+ },
+ "next_steps": [
+  "Turn 4 is done and pushed; nothing is outstanding on this branch.",
+  "Open from v1.2.0: the user runs tools/hwdecode-probe.cmd on the laptop.",
+  "On a Windows machine: scripts/build-win-native.sh, then the manual checklist in docs/TESTING.md section 10 (install identity, crash logs, display, sound).",
+  "The Node app (server/, public/, src/win/) is untouched and is deleted only when the user approves."
+ ],
+ "git_auth": {
+  "token_location": ".secrets/github-token",
+  "token_location_reason": "snapshots strip .git-credentials and .git/config by filename; .secrets/ is git-ignored but not snapshot-excluded, so it persists and cannot be pushed",
+  "mode": "600",
+  "gitignored": true,
+  "committed_to_github": false,
+  "verified_absent_on_remote": "fresh clone checked: no .secrets, no .git-credentials, no 'github_pat_' string anywhere",
+  "remote_url_file": ".gitremote (tracked, non-secret)",
+  "restore_command": "bash scripts/setup-git-auth.sh",
+  "identity": "JohnOlowe (id 121398818)",
+  "token_type": "fine-grained (no X-OAuth-Scopes header)",
+  "scope_probes": {
+   "read VLCFlix": 200,
+   "actions secrets": 403,
+   "administration": 403,
+   "repos_visible": 15
   },
-  "verification": {
-    "unit_tests": "23/23 pass (npm test)",
-    "negative_controls": "confirmed: re-introducing the <leaf> bug and the boolean-detect bug each failed exactly one test",
-    "vlc_real_binary": "3.0.24 Vetinari; status/playlist parsed; in_play, pl_pause, seek, volume verified; 401 on wrong password",
-    "vlc_launch_path": "spawned detached, connected in 0.36s, outlived a server restart",
-    "vlc_failure_path": "reports VLC's own stderr in 0.37s instead of a 20s timeout",
-    "builtin_player": "verified with VP9/WebM: duration 10s, currentTime advancing",
-    "ui_reviewed": "Chromium 1600x900 across home, rails, hover, detail, browse, search, settings, player, VLC dock",
-    "v117_checks": "14-check browser harness all pass, negative control fails as designed; 64/64 unit tests",
-    "v118_checks": "fresh install over existing data rewrote 0/48 files; 8 deleted previews redrawn only; adopted a nulled catalogue field with 0 rewrites; killed pass resumed at 0.4 s; 64/64 tests"
+  "scope_caveats": [],
+  "negative_control": "hiding the token + clearing .git-credentials produced 'No anonymous write access'; restoring made dry-run succeed",
+  "token_value_in_state_files": false,
+  "scope_verification": {
+   "method": "git push --dry-run with the token sent explicitly via http.extraheader, so credential.useHttpPath could not mask the result",
+   "control": "JohnOlowe/VLCFlix -> accepted (* [new branch] HEAD -> scope-probe)",
+   "other_repositories": "14 of 14 returned HTTP 403",
+   "side_effects": "none - --dry-run created no refs; VLCFlix still has only main, no scope-probe branch on any repo",
+   "conclusion": "effective scope is Contents: read/write on VLCFlix only",
+   "retracted_claim": "an earlier note said the token was broader than one repository; that was wrong - the 15 visible repos are all public, which requires no permission"
   },
-  "commit_identity": {
-    "name": "John Olowe",
-    "email": "121398818+JohnOlowe@users.noreply.github.com"
+  "recommend_rotation_reason": "chat exposure only, not over-scoping",
+  "token_scrub": "fresh clone of cpp greps clean for github_pat_; no .secrets and no .git-credentials in the tree"
+ },
+ "windows_app": {
+  "status": "built and verified under Wine; not yet run on real Windows",
+  "artifacts": {
+   "installer": "release/VLCFlix-Setup-1.2.0.exe (21 MB)",
+   "portable": "release/VLCFlix-portable-1.2.0.zip (30 MB)",
+   "gitignored": true,
+   "regenerate": "VERSION=1.2.0 bash scripts/build-win.sh"
   },
-  "bugs_fixed_this_session": [
-    "detect() returned a boolean instead of an executable path",
-    "normalizePlaylist() ignored <leaf> elements and always returned []",
-    "demo generator crop offsets exceeded the valid range, rendering near-black clips",
-    "launch() waited 20s and hid VLC's actual startup error",
-    "/api/player/status served a stale title after playback stopped",
-    "artwork exposure fixed with gamma rather than brightness to avoid a milky image"
+  "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
+  "verified": [
+   "VLCFlix.exe is a PE32+ GUI binary, 670 KB, depending only on system DLLs",
+   "installer payload contains all 696 entries including node.exe (69.8 MB)",
+   "silent install creates VLCFlix.exe, Uninstall.exe, resources/, a desktop shortcut, Start Menu entries and an uninstall registry key",
+   "the installed copy resolves its paths, starts node.exe, and answers /api/health in 800 ms",
+   "the installed server serves the full UI (/, /css/styles.css, /js/app.js all 200) and reports platform win32",
+   "the installed server binds 127.0.0.1 only",
+   "silent uninstall removes files, shortcuts and the registry key while keeping user data"
   ],
-  "environment": {
-    "ephemeral_packages": {
-      "ffmpeg": "7.1.5 via apt - does not survive a snapshot restore",
-      "vlc": "3.0.24 via vlc-bin + vlc-plugin-base - does not survive a snapshot restore",
-      "chromium": "~/.cache/ms-playwright - does not survive a snapshot restore",
-      "node_modules": "reinstall with npm install",
-      "cmake": "apt, this session only",
-      "ninja-build": "apt, this session only",
-      "libsdl2-dev": "apt, this session only",
-      "libvlc-dev": "apt, this session only (libVLC 3.0.24)",
-      "zlib1g-dev / libfreetype-dev": "apt, this session only"
-    },
-    "sandbox_limits": {
-      "cpu_cores": 2,
-      "ram_mb": 1982,
-      "disk_free": "21 GB"
-    },
-    "gotchas": [
-      "No Qt/display interface module: plain vlc exits 'no suitable interface module'; use -I dummy for headless tests.",
-      "Playwright Chromium has no H.264; verify the built-in player with VP9/WebM.",
-      "Never pkill -f with a pattern that matches the current command line."
-    ]
-  },
-  "next_steps": [
-    "Turn 2: render/canvas (blend, clip, rounded rect, gradient, blit), FreeType text, JPEG/PNG load, SDL2 window, widget tree, then home/hero/rails/cards/browse/search/mylist/detail/settings, each rendered to a PNG and looked at",
-    "Turn 3: libVLC engine with set_callbacks frame sink, presenter queue for both-direction audio offset, subtitle overlay on the presentation clock, player chrome and gestures, docs, honest list of what is missing",
-    "Windows build is not verifiable here; it needs the user machine (P8)"
+  "not_verified": [
+   "WebView2 rendering still has not been exercised here (Wine has no WebView2 runtime); the fix is grounded in Microsoft's documented controller lifetime rule and four independent corroborating sources, not in a local render."
   ],
-  "git_auth": {
-    "token_location": ".secrets/github-token",
-    "token_location_reason": "snapshots strip .git-credentials and .git/config by filename; .secrets/ is git-ignored but not snapshot-excluded, so it persists and cannot be pushed",
-    "mode": "600",
-    "gitignored": true,
-    "committed_to_github": false,
-    "verified_absent_on_remote": "fresh clone checked: no .secrets, no .git-credentials, no 'github_pat_' string anywhere",
-    "remote_url_file": ".gitremote (tracked, non-secret)",
-    "restore_command": "bash scripts/setup-git-auth.sh",
-    "identity": "JohnOlowe (id 121398818)",
-    "token_type": "fine-grained (no X-OAuth-Scopes header)",
-    "scope_probes": {
-      "read VLCFlix": 200,
-      "actions secrets": 403,
-      "administration": 403,
-      "repos_visible": 15
-    },
-    "scope_caveats": [],
-    "negative_control": "hiding the token + clearing .git-credentials produced 'No anonymous write access'; restoring made dry-run succeed",
-    "token_value_in_state_files": false,
-    "scope_verification": {
-      "method": "git push --dry-run with the token sent explicitly via http.extraheader, so credential.useHttpPath could not mask the result",
-      "control": "JohnOlowe/VLCFlix -> accepted (* [new branch] HEAD -> scope-probe)",
-      "other_repositories": "14 of 14 returned HTTP 403",
-      "side_effects": "none - --dry-run created no refs; VLCFlix still has only main, no scope-probe branch on any repo",
-      "conclusion": "effective scope is Contents: read/write on VLCFlix only",
-      "retracted_claim": "an earlier note said the token was broader than one repository; that was wrong - the 15 visible repos are all public, which requires no permission"
-    },
-    "recommend_rotation_reason": "chat exposure only, not over-scoping",
-    "token_scrub": "fresh clone of cpp greps clean for github_pat_; no .secrets and no .git-credentials in the tree"
-  },
-  "windows_app": {
-    "status": "built and verified under Wine; not yet run on real Windows",
-    "artifacts": {
-      "installer": "release/VLCFlix-Setup-1.2.0.exe (21 MB)",
-      "portable": "release/VLCFlix-portable-1.2.0.zip (30 MB)",
-      "gitignored": true,
-      "regenerate": "VERSION=1.2.0 bash scripts/build-win.sh"
-    },
-    "architecture": "Win32 shell (mingw-w64) + bundled node.exe + WebView2 (OS runtime); no bundled browser",
-    "verified": [
-      "VLCFlix.exe is a PE32+ GUI binary, 670 KB, depending only on system DLLs",
-      "installer payload contains all 696 entries including node.exe (69.8 MB)",
-      "silent install creates VLCFlix.exe, Uninstall.exe, resources/, a desktop shortcut, Start Menu entries and an uninstall registry key",
-      "the installed copy resolves its paths, starts node.exe, and answers /api/health in 800 ms",
-      "the installed server serves the full UI (/, /css/styles.css, /js/app.js all 200) and reports platform win32",
-      "the installed server binds 127.0.0.1 only",
-      "silent uninstall removes files, shortcuts and the registry key while keeping user data"
-    ],
-    "not_verified": [
-      "WebView2 rendering still has not been exercised here (Wine has no WebView2 runtime); the fix is grounded in Microsoft's documented controller lifetime rule and four independent corroborating sources, not in a local render."
-    ],
-    "bugs_found_and_fixed": [
-      "server bound 0.0.0.0 in a single-user desktop app; launcher now sets HOST=127.0.0.1",
-      "no diagnostics on startup failure; launcher.log and server.log added",
-      "icon.ico was PNG-compressed and NSIS could not load it; regenerated as BMP/DIB entries",
-      "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
-      "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
-    ],
-    "version": "1.2.0",
-    "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
-    "v101_fixes": [
-      "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
-      "NavigationCompleted and ProcessFailed handlers added",
-      "native fallback panel replaces the black window and keeps the app open",
-      "logging moved to the first statement of wWinMain so early exits are recorded",
-      "single-instance exit is now logged instead of being silent"
-    ],
-    "v102_changes": [
-      "watchdog (8s): if NavigationCompleted never fires, log full browser state and escalate",
-      "second attempt with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu in a separate profile",
-      "every previously unchecked call now logged (put_IsVisible, put_Bounds via failure, all add_*Event, get_Settings)",
-      "LogWebViewState(): visible / bounds / source / browserPid captured when an attempt is abandoned",
-      "the loading label now stays on top of the webview until the page actually paints (no unexplained black)",
-      "SetUnhandledExceptionFilter writes exception code, address and module to launcher.log",
-      "accurate final message: 'runtime could not be started (hr)' vs 'started but never drew the page'"
-    ],
-    "next_diagnostic_step": "user runs 1.0.2; if it still fails, launcher.log will contain [webview2] state: visible=.. bounds=.. source=.. browserPid=.. at watchdog time, plus attempt 1 with --disable-gpu",
-    "root_cause_found": "ICoreWebView2Controller is a BORROWED reference inside the completed handler. Storing it without AddRef let the runtime destroy it as soon as Invoke returned, which per MS docs closes the WebView. Hence: Navigate returned S_OK (called inside the handler) but no navigation event ever fired and nothing painted (black window); later puts (put_Bounds on WM_SIZE, the watchdog state dump) dereferenced freed memory -> 0xC0000005 crash. Fixed in 1.0.3 with controller->AddRef().",
-    "v103_changes": [
-      "controller->AddRef() before storing it; Released in TearDownWebView()",
-      "LogWebViewState only trusts out-params whose call returned S_OK"
-    ]
-  },
-  "features_v110": {
-    "scan": "two-phase: fast metadata pass publishes the catalog (measured 685 ms for 8 clips), artwork renders in the background with 2-way concurrency and republishes progressively",
-    "subtitles": "sidecar .srt/.vtt beside the video, Movie.srt / Movie.en.srt / Movie.forced.srt; served as WebVTT via /api/subtitles/:id/:index; CC button in the player",
-    "ffmpeg_engine": "third playMode 'ffmpeg': /api/stream/:id?engine=ffmpeg&t=N, hwaccel qsv/d3d11va/dxva2 on Windows, copies H.264 instead of re-encoding, restarts the stream to seek"
-  },
-  "tests": "64 passing",
-  "features_v111": {
-    "scan_watcher": "decoupled from the Settings panel; header chip shows progress anywhere; grid refreshes as artwork lands",
-    "bug_fixed": "closeSettings() cleared the poll interval AND pollScan() bailed when #scanStatus was gone, so the UI froze while the server kept working"
-  },
-  "features_v112": {
-    "engine_switch_fixed": "server whitelist rejected playMode 'ffmpeg' (400); UI handler used event.currentTarget after an await (null) and threw AFTER de-highlighting every button",
-    "preview_montage": "PREVIEW_VERSION=2; five 2 s snippets at 12/32/52/72/90% concatenated in one ffmpeg pass; stale clips re-render automatically",
-    "detail_preview": "Info panel plays the same clip as hover (attachHeroPreview, 500 ms delay)",
-    "muted_autoplay_fixed": "el() set the muted ATTRIBUTE (defaultMuted); the property is what the autoplay policy checks"
-  },
-  "features_v113": {
-    "custom_subtitle_renderer": "hand-written WebVTT parser + overlay; native <track> cannot be retimed/resized/moved",
-    "keys": "G/H subtitle delay, J/K audio delay, V next track (VLC Windows/Linux defaults)",
-    "picker": "every subtitle file in the folder via /api/subtitles/:id/tracks, name matches first; choice stored in subtitleChoices.json keyed by item id",
-    "style": "size 50-250%, height 0-60% from bottom, persisted in localStorage",
-    "audio_limit": "browser can delay but not advance audio; J at 0 ms reports the limitation instead of silently doing nothing"
-  },
-  "features_v114": {
-    "negative_audio_sync": "a delayed picture is equivalent to earlier sound; frames buffered via requestVideoFrameCallback + createImageBitmap and drawn N ms late on a canvas overlay",
-    "auto_latency": "settings.autoLatency; reads AudioContext.outputLatency, re-measures every 2.5 s, smoothed; correction lives on the picture side so manual offset stays independent and zero-able",
-    "sync_math": "public/js/sync-math.js is shared with tests/sync.test.js (14 cases)"
-  },
-  "features_v115": {
-    "startup_refresh": "pendingArtwork() checked at startup; stale or missing artwork re-renders in the background without a manual scan",
-    "cache_busting": "artwork URLs carry ?v=<previewVersion>-<source mtime>, because /media is served immutable under a filename that never changes"
-  },
-  "features_v116": {
-    "centre_button": "the overlay was pointer-events:none so the bound click could never arrive; now clickable, and its glyph/label follow play state"
-  },
-  "features_v117": {
-    "tap_zones": "the player root classifies a click by x position: left <30%, middle, right >70%; only the middle toggles play/pause",
-    "double_tap": "two quick clicks on a side skip -10 s / +10 s with a badge over that side; two quick clicks in the middle toggle when the controls are hidden, and are simply two toggles when they are up",
-    "regression_fixed": "the v1.1.6 full-screen clickable .player__center overlay covered #playerClose and the bottom bar; it is display-only again",
-    "scroll_audit": "wheel input is one-to-one with scroll (measured); no wheel handlers exist; the Windows shell is unchanged since v1.1.4; overscroll-behavior: contain added to both nested scrollers"
-  },
-  "features_v118": {
-    "resume": "startup draws only what is missing, straight from the stored catalogue: no folder walk and no ffprobe for items that already have a duration",
-    "judged_by_disk": "missingArt() stats poster/backdrop/preview files; the catalogue is not trusted, and files found on disk are adopted into it",
-    "atomic": "artwork renders to *.tmpNNN.ext and is renamed when complete; stale temps swept at startup",
-    "failure_records": "artAttempts/artError, three attempts then left alone until a manual scan (one unreadable file used to force a full rescan at every launch)",
-    "progress_label": "the chip shows the artwork pass and ends with \"Artwork finished\" rather than claiming a scan ran"
-  },
-  "features_v119": {
-    "ui_ready_gate": "the page POSTs /api/ui/ready after its first paint; background artwork waits for it (20 s ceiling), so ffmpeg never competes with the window starting up",
-    "watchdog": "WebView2 navigation watchdog raised 8 s -> 20 s, because a cold start produced false \"page never finished loading\" failures",
-    "single_stat_pass": "startup stats the artwork once and reuses the result instead of four passes over the library",
-    "stale_urls_cleared": "catalogue fields pointing at files that are gone are cleared, so the grid falls back to its gradient instead of requesting a 404"
-  },
-  "open_question_playback": {
-    "reported": "black screen with the FFMPEG engine",
-    "cause": "FOUND from the user log: -hwaccel qsv produced qsv-format frames that the filter chain rejected; ffmpeg wrote nothing",
-    "fixed_in": "1.1.11 (software decode), on top of the 1.1.10 fallback and visible reason",
-    "next": "user to confirm plays, and to say whether 113-item artwork renders"
-  },
-  "features_v1110": {
-    "silent_black_fixed": "no error handler existed on #playerVideo, so any stream failure was a black screen with nothing said",
-    "fallback": "a failed ffmpeg stream (error event, or no picture after 7 s) is retried directly from the file at the same position, with a toast",
-    "notice": "if nothing plays, the reason is shown in the player instead of black",
-    "server_probe": "ffmpeg -encoders checked once; a build without libx264 answers 501 with code NO_X264 instead of dying silently, and the 502 now carries ffmpeg's own last error line"
-  },
-  "features_v1111": {
-    "hwaccel_removed": "the transcode path passed -hwaccel qsv; ffmpeg decoded into the qsv pixel format and the scale/libx264 chain could not take it (\"Impossible to convert between the formats supported by the filter\"), so every transcoded film was black",
-    "software_decode": "transcodes now decode in software; proved with a 10-bit HEVC 1920x1080 clip that used to take this path",
-    "controls_on_black": "the player chrome no longer auto-hides while the picture has no size, so a failed stream keeps its close button on screen"
-  },
-  "features_v1112": {
-    "permanent_back_button": "#playerClose moved out of .player__chrome (opacity 0 + pointer-events none when hidden) and given its own always-visible style with z-index 8",
-    "reveal_anywhere": "a document-level pointermove reveals the chrome while the player is open, not only movement over the picture"
-  },
-  "regression_answer": {
-    "question": "which update broke playback",
-    "answer": "-hwaccel was introduced in 95d453f = v1.1.0 (\"ffmpeg hardware playback\") and removed in 1.1.11",
-    "why_it_played_before": "the ffmpeg engine itself arrived in 1.1.0; before that playback was VLC or the file directly, neither of which transcoded"
-  },
-  "features_v1113": {
-    "chrome_above_delay_canvas": ".player__delay is a full-screen z-index:2 canvas holding frames back for audio sync; .player__chrome had no z-index, so the controls rendered underneath it. Chrome is now z-index:3 (verified: chrome 3 over canvas 2, close button hit-tests on top, screenshot read)",
-    "seek_replaces_offset": "resumed streams carry ?t=<resume>; restartStream() appended a second t, so Express delivered ['14','9'], Number() => NaN => 0, and every seek restarted from 0s. streamUrlAt() rebuilds the query with searchParams.set and the server takes the last value defensively",
-    "only_the_icon_toggles": "the middle third toggled playback; now only event.target.closest('.player__center') does, with the 84px svg alone given pointer-events:auto while the chrome is up; a click beside it just reveals the chrome. A hidden icon is never an invisible target (gated on .player.is-active), and the double-tap-while-hidden path still toggles",
-    "v115_comparison": "git show 3d2e10b:public/js/app.js shows v1.1.5 seek/scrub code identical to the current code, so no seek regression was introduced after 1.1.5; the resume URL added later is what broke it"
-  },
-  "features_v120": {
-    "option": "settings.hwDecode, off by default; Settings -> Playback -> Hardware decoding (experimental); must be explicitly switched on",
-    "ladder": "qsv/d3d11va/dxva2 (win32), videotoolbox (darwin), qsv/vaapi (linux), each with -hwaccel_output_format plus an explicit -vf hwdownload,format=...; p010le first for 10/12-bit films, nv12 first for 8-bit",
-    "trial": "2.5 s first-frame watchdog; early exit, missing device or timeout marks the plan broken and replays the same request in software; broken plans persist for the run",
-    "reason_for_hwdownload": "without it ffmpeg fails with 'Impossible to convert between the formats supported by the filter Parsed_null_0 and auto_scale_0' - the v1.1.0-v1.1.10 black screen",
-    "bug_caught_by_test": "POST /api/settings copies only allowed keys; hwDecode was missing from that list, so the switch silently saved nothing (test failed 200 !== 400 before the fix)",
-    "probe_script": "tools/hwdecode-probe.cmd - runs S0 software plus H1-H7 hardware plans on a real film or a self-made 3 s 10-bit HEVC clip, writes vlcflix-hwdecode-report.txt to the Desktop; NOT yet run on Windows"
-  },
-  "port": {
-    "decision": "rewrite the whole product in pure C++; libVLC in-process, own renderer/input; no Node, no browser, no WebView2, no HTTP control of external vlc.exe",
-    "decided_by_user": true,
-    "branch": "cpp",
-    "status": "turn 1 of 3 complete and pushed; window (turn 2) and player (turn 3) outstanding",
-    "docs": [
-      "docs/AUDIT.md",
-      "docs/PORT_PLAN.md"
-    ],
-    "verified_assumptions": {
-      "libvlc_frames_into_our_buffer": "frames=22 luma=132 state=3 (libVLC 3.0.24 set_callbacks on samples/the-silent-coast.mp4)",
-      "libvlc_seek_on_single_keyframe_file": "set_time(12000) -> time_ms=12390, 18 new frames",
-      "duration_without_ffprobe": "length_ms=16000 from the engine"
-    },
-    "unverified": [
-      "the SDL2 window and input path (no display in this sandbox)",
-      "any Windows build",
-      "frame-exact timing beyond the libVLC 3 smem API (no per-frame PTS until VLC 4)"
-    ],
-    "open_decisions": [
-      "branch name: assumed cpp",
-      "UI toolkit: SDL2 + own renderer (recommended) vs Win32/GDI vs Dear ImGui",
-      "keep the external-VLC playback mode as an option, or inline only"
-    ],
-    "phases": "P0 skeleton, P1 core+tests, P2 scan/artwork, P3 renderer/shell, P4 browsing UI, P5 player, P6 sync, P7 hw-decode+previews, P8 platform",
-    "dependencies": [
-      "SDL2",
-      "libVLC>=3.0",
-      "FreeType",
-      "libjpeg",
-      "libpng",
-      "zlib",
-      "cmake (Makefile fallback)"
-    ],
-    "dropped": [
-      "Express API",
-      "VLC HTTP client + XML parsing",
-      "HTTP range streaming",
-      "WebView2 shell",
-      "transcode-for-playback"
-    ],
-    "product_name": "VLCFlix Studio 2.0.0 (slug VLCFlixStudio)",
-    "code_root": "native/",
-    "build_systems": [
-      "CMake",
-      "plain make (g++ only)"
-    ],
-    "tests": "132/132 checks, own harness",
-    "verified_from_clean_clone": true,
-    "windows_identity": {
-      "exe": "VLCFlixStudio.exe",
-      "data_dir": "%LOCALAPPDATA%\\VLCFlixStudio",
-      "uninstall_key": "...Uninstall\\VLCFlixStudio",
-      "mutex": "unique per product",
-      "must_not_overwrite": "VLCFlix 1.2.0"
-    },
-    "logging": {
-      "init": "first statement of main()",
-      "fallbacks": [
-        "user data",
-        "beside exe",
-        "temp"
-      ],
-      "flush": "per line",
-      "crash_handlers": [
-        "std::terminate",
-        "SIGSEGV/ABRT/FPE/ILL/BUS/INT",
-        "Win32 unhandled exception + first-chance vectored"
-      ],
-      "rotation": "5 x 2 MB",
-      "run_marker": "previous-run-crashed detection"
-    },
-    "bugs_fixed": [
-      "A1 year-titled films",
-      "A4 finished films leave progress",
-      "A5 nv12 is not 10-bit",
-      "A6 password must be a string",
-      "A9 still versioning",
-      "+ adoption of artwork files already on disk"
-    ],
-    "own_bugs_found_by_running": [
-      "scan phase 1 assigned each item twice, losing cached fields and re-rendering artwork every launch",
-      "ffprobe -of json reports numbers as strings, so durations/dimensions read 0",
-      "git .gitignore media/ rule silently swallowed native/src/media/ (renamed to native/src/library/)"
-    ]
-  },
-  "bugs_verified_2026_10_28": [
-    "A1 parseName: titles that are years are truncated and given the wrong year (1917.2019.2160p -> \"1917 2019 2160p WEB-DL\", year 1917)",
-    "A2 ffmpeg copy engine cannot seek single-keyframe files: -ss 4 -c copy on a 1-I-frame/480 clip emits duration=16.000000 (dense GOP emits 12.000000)",
-    "A3 Range bytes=-500 answered as bytes 0-500/217238",
-    "A4 setProgress(97%) keeps the entry; no path marks a film finished",
-    "A5 hwCandidates deep test /10|12/ matches nv12 (8-bit)",
-    "A6 POST /api/settings accepts {\"vlcPassword\":{\"a\":1}} (200)",
-    "A7 README/API drift: subtitle route path, \"23 tests\" vs 72 actual"
+  "bugs_found_and_fixed": [
+   "server bound 0.0.0.0 in a single-user desktop app; launcher now sets HOST=127.0.0.1",
+   "no diagnostics on startup failure; launcher.log and server.log added",
+   "icon.ico was PNG-compressed and NSIS could not load it; regenerated as BMP/DIB entries",
+   "${__FILEDIR__} resolved incorrectly for a relative script path; icon and licence paths now passed via -D",
+   "makensis SIGBUS: it mmaps a solid block in TMPDIR and /tmp is a 992 MB tmpfs; TMPDIR now points into .cache"
   ],
-  "withdrawn_claims": [
-    "Suspected unit bug in subtitleClock(): noise \u2014 sub.audio is stored in seconds; arithmetic correct. Checked before reporting."
+  "version": "1.2.0",
+  "user_reported_symptom": "1.0.0/1.0.1 on real Windows: 'Starting VLCFlix' text ~5s, then total black; maximising and clicking closes the app. 1.0.1 log shows every HRESULT = 0 (environment, controller, get_CoreWebView2, Navigate all S_OK) but NavigationStarting/NavigationCompleted never fire, so the page never loads.",
+  "v101_fixes": [
+   "full HRESULT instrumentation at every WebView2 step, logged to launcher.log",
+   "NavigationCompleted and ProcessFailed handlers added",
+   "native fallback panel replaces the black window and keeps the app open",
+   "logging moved to the first statement of wWinMain so early exits are recorded",
+   "single-instance exit is now logged instead of being silent"
   ],
-  "identity": {
-    "name": "John Olowe",
-    "email": "121398818+JohnOlowe@users.noreply.github.com",
-    "as_instructed": true
+  "v102_changes": [
+   "watchdog (8s): if NavigationCompleted never fires, log full browser state and escalate",
+   "second attempt with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu in a separate profile",
+   "every previously unchecked call now logged (put_IsVisible, put_Bounds via failure, all add_*Event, get_Settings)",
+   "LogWebViewState(): visible / bounds / source / browserPid captured when an attempt is abandoned",
+   "the loading label now stays on top of the webview until the page actually paints (no unexplained black)",
+   "SetUnhandledExceptionFilter writes exception code, address and module to launcher.log",
+   "accurate final message: 'runtime could not be started (hr)' vs 'started but never drew the page'"
+  ],
+  "next_diagnostic_step": "user runs 1.0.2; if it still fails, launcher.log will contain [webview2] state: visible=.. bounds=.. source=.. browserPid=.. at watchdog time, plus attempt 1 with --disable-gpu",
+  "root_cause_found": "ICoreWebView2Controller is a BORROWED reference inside the completed handler. Storing it without AddRef let the runtime destroy it as soon as Invoke returned, which per MS docs closes the WebView. Hence: Navigate returned S_OK (called inside the handler) but no navigation event ever fired and nothing painted (black window); later puts (put_Bounds on WM_SIZE, the watchdog state dump) dereferenced freed memory -> 0xC0000005 crash. Fixed in 1.0.3 with controller->AddRef().",
+  "v103_changes": [
+   "controller->AddRef() before storing it; Released in TearDownWebView()",
+   "LogWebViewState only trusts out-params whose call returned S_OK"
+  ]
+ },
+ "features_v110": {
+  "scan": "two-phase: fast metadata pass publishes the catalog (measured 685 ms for 8 clips), artwork renders in the background with 2-way concurrency and republishes progressively",
+  "subtitles": "sidecar .srt/.vtt beside the video, Movie.srt / Movie.en.srt / Movie.forced.srt; served as WebVTT via /api/subtitles/:id/:index; CC button in the player",
+  "ffmpeg_engine": "third playMode 'ffmpeg': /api/stream/:id?engine=ffmpeg&t=N, hwaccel qsv/d3d11va/dxva2 on Windows, copies H.264 instead of re-encoding, restarts the stream to seek"
+ },
+ "tests": "64 passing",
+ "features_v111": {
+  "scan_watcher": "decoupled from the Settings panel; header chip shows progress anywhere; grid refreshes as artwork lands",
+  "bug_fixed": "closeSettings() cleared the poll interval AND pollScan() bailed when #scanStatus was gone, so the UI froze while the server kept working"
+ },
+ "features_v112": {
+  "engine_switch_fixed": "server whitelist rejected playMode 'ffmpeg' (400); UI handler used event.currentTarget after an await (null) and threw AFTER de-highlighting every button",
+  "preview_montage": "PREVIEW_VERSION=2; five 2 s snippets at 12/32/52/72/90% concatenated in one ffmpeg pass; stale clips re-render automatically",
+  "detail_preview": "Info panel plays the same clip as hover (attachHeroPreview, 500 ms delay)",
+  "muted_autoplay_fixed": "el() set the muted ATTRIBUTE (defaultMuted); the property is what the autoplay policy checks"
+ },
+ "features_v113": {
+  "custom_subtitle_renderer": "hand-written WebVTT parser + overlay; native <track> cannot be retimed/resized/moved",
+  "keys": "G/H subtitle delay, J/K audio delay, V next track (VLC Windows/Linux defaults)",
+  "picker": "every subtitle file in the folder via /api/subtitles/:id/tracks, name matches first; choice stored in subtitleChoices.json keyed by item id",
+  "style": "size 50-250%, height 0-60% from bottom, persisted in localStorage",
+  "audio_limit": "browser can delay but not advance audio; J at 0 ms reports the limitation instead of silently doing nothing"
+ },
+ "features_v114": {
+  "negative_audio_sync": "a delayed picture is equivalent to earlier sound; frames buffered via requestVideoFrameCallback + createImageBitmap and drawn N ms late on a canvas overlay",
+  "auto_latency": "settings.autoLatency; reads AudioContext.outputLatency, re-measures every 2.5 s, smoothed; correction lives on the picture side so manual offset stays independent and zero-able",
+  "sync_math": "public/js/sync-math.js is shared with tests/sync.test.js (14 cases)"
+ },
+ "features_v115": {
+  "startup_refresh": "pendingArtwork() checked at startup; stale or missing artwork re-renders in the background without a manual scan",
+  "cache_busting": "artwork URLs carry ?v=<previewVersion>-<source mtime>, because /media is served immutable under a filename that never changes"
+ },
+ "features_v116": {
+  "centre_button": "the overlay was pointer-events:none so the bound click could never arrive; now clickable, and its glyph/label follow play state"
+ },
+ "features_v117": {
+  "tap_zones": "the player root classifies a click by x position: left <30%, middle, right >70%; only the middle toggles play/pause",
+  "double_tap": "two quick clicks on a side skip -10 s / +10 s with a badge over that side; two quick clicks in the middle toggle when the controls are hidden, and are simply two toggles when they are up",
+  "regression_fixed": "the v1.1.6 full-screen clickable .player__center overlay covered #playerClose and the bottom bar; it is display-only again",
+  "scroll_audit": "wheel input is one-to-one with scroll (measured); no wheel handlers exist; the Windows shell is unchanged since v1.1.4; overscroll-behavior: contain added to both nested scrollers"
+ },
+ "features_v118": {
+  "resume": "startup draws only what is missing, straight from the stored catalogue: no folder walk and no ffprobe for items that already have a duration",
+  "judged_by_disk": "missingArt() stats poster/backdrop/preview files; the catalogue is not trusted, and files found on disk are adopted into it",
+  "atomic": "artwork renders to *.tmpNNN.ext and is renamed when complete; stale temps swept at startup",
+  "failure_records": "artAttempts/artError, three attempts then left alone until a manual scan (one unreadable file used to force a full rescan at every launch)",
+  "progress_label": "the chip shows the artwork pass and ends with \"Artwork finished\" rather than claiming a scan ran"
+ },
+ "features_v119": {
+  "ui_ready_gate": "the page POSTs /api/ui/ready after its first paint; background artwork waits for it (20 s ceiling), so ffmpeg never competes with the window starting up",
+  "watchdog": "WebView2 navigation watchdog raised 8 s -> 20 s, because a cold start produced false \"page never finished loading\" failures",
+  "single_stat_pass": "startup stats the artwork once and reuses the result instead of four passes over the library",
+  "stale_urls_cleared": "catalogue fields pointing at files that are gone are cleared, so the grid falls back to its gradient instead of requesting a 404"
+ },
+ "open_question_playback": {
+  "reported": "black screen with the FFMPEG engine",
+  "cause": "FOUND from the user log: -hwaccel qsv produced qsv-format frames that the filter chain rejected; ffmpeg wrote nothing",
+  "fixed_in": "1.1.11 (software decode), on top of the 1.1.10 fallback and visible reason",
+  "next": "user to confirm plays, and to say whether 113-item artwork renders"
+ },
+ "features_v1110": {
+  "silent_black_fixed": "no error handler existed on #playerVideo, so any stream failure was a black screen with nothing said",
+  "fallback": "a failed ffmpeg stream (error event, or no picture after 7 s) is retried directly from the file at the same position, with a toast",
+  "notice": "if nothing plays, the reason is shown in the player instead of black",
+  "server_probe": "ffmpeg -encoders checked once; a build without libx264 answers 501 with code NO_X264 instead of dying silently, and the 502 now carries ffmpeg's own last error line"
+ },
+ "features_v1111": {
+  "hwaccel_removed": "the transcode path passed -hwaccel qsv; ffmpeg decoded into the qsv pixel format and the scale/libx264 chain could not take it (\"Impossible to convert between the formats supported by the filter\"), so every transcoded film was black",
+  "software_decode": "transcodes now decode in software; proved with a 10-bit HEVC 1920x1080 clip that used to take this path",
+  "controls_on_black": "the player chrome no longer auto-hides while the picture has no size, so a failed stream keeps its close button on screen"
+ },
+ "features_v1112": {
+  "permanent_back_button": "#playerClose moved out of .player__chrome (opacity 0 + pointer-events none when hidden) and given its own always-visible style with z-index 8",
+  "reveal_anywhere": "a document-level pointermove reveals the chrome while the player is open, not only movement over the picture"
+ },
+ "regression_answer": {
+  "question": "which update broke playback",
+  "answer": "-hwaccel was introduced in 95d453f = v1.1.0 (\"ffmpeg hardware playback\") and removed in 1.1.11",
+  "why_it_played_before": "the ffmpeg engine itself arrived in 1.1.0; before that playback was VLC or the file directly, neither of which transcoded"
+ },
+ "features_v1113": {
+  "chrome_above_delay_canvas": ".player__delay is a full-screen z-index:2 canvas holding frames back for audio sync; .player__chrome had no z-index, so the controls rendered underneath it. Chrome is now z-index:3 (verified: chrome 3 over canvas 2, close button hit-tests on top, screenshot read)",
+  "seek_replaces_offset": "resumed streams carry ?t=<resume>; restartStream() appended a second t, so Express delivered ['14','9'], Number() => NaN => 0, and every seek restarted from 0s. streamUrlAt() rebuilds the query with searchParams.set and the server takes the last value defensively",
+  "only_the_icon_toggles": "the middle third toggled playback; now only event.target.closest('.player__center') does, with the 84px svg alone given pointer-events:auto while the chrome is up; a click beside it just reveals the chrome. A hidden icon is never an invisible target (gated on .player.is-active), and the double-tap-while-hidden path still toggles",
+  "v115_comparison": "git show 3d2e10b:public/js/app.js shows v1.1.5 seek/scrub code identical to the current code, so no seek regression was introduced after 1.1.5; the resume URL added later is what broke it"
+ },
+ "features_v120": {
+  "option": "settings.hwDecode, off by default; Settings -> Playback -> Hardware decoding (experimental); must be explicitly switched on",
+  "ladder": "qsv/d3d11va/dxva2 (win32), videotoolbox (darwin), qsv/vaapi (linux), each with -hwaccel_output_format plus an explicit -vf hwdownload,format=...; p010le first for 10/12-bit films, nv12 first for 8-bit",
+  "trial": "2.5 s first-frame watchdog; early exit, missing device or timeout marks the plan broken and replays the same request in software; broken plans persist for the run",
+  "reason_for_hwdownload": "without it ffmpeg fails with 'Impossible to convert between the formats supported by the filter Parsed_null_0 and auto_scale_0' - the v1.1.0-v1.1.10 black screen",
+  "bug_caught_by_test": "POST /api/settings copies only allowed keys; hwDecode was missing from that list, so the switch silently saved nothing (test failed 200 !== 400 before the fix)",
+  "probe_script": "tools/hwdecode-probe.cmd - runs S0 software plus H1-H7 hardware plans on a real film or a self-made 3 s 10-bit HEVC clip, writes vlcflix-hwdecode-report.txt to the Desktop; NOT yet run on Windows"
+ },
+ "port": {
+  "decision": "rewrite the whole product in pure C++; libVLC in-process, own renderer/input; no Node, no browser, no WebView2, no HTTP control of external vlc.exe",
+  "decided_by_user": true,
+  "branch": "cpp",
+  "status": "turn 1 of 3 complete and pushed; window (turn 2) and player (turn 3) outstanding",
+  "docs": [
+   "docs/AUDIT.md",
+   "docs/PORT_PLAN.md"
+  ],
+  "verified_assumptions": {
+   "libvlc_frames_into_our_buffer": "frames=22 luma=132 state=3 (libVLC 3.0.24 set_callbacks on samples/the-silent-coast.mp4)",
+   "libvlc_seek_on_single_keyframe_file": "set_time(12000) -> time_ms=12390, 18 new frames",
+   "duration_without_ffprobe": "length_ms=16000 from the engine"
   },
-  "native": {
-    "state": "turn 3 of 4 complete: playback, sync, subtitles, honest finish",
-    "branch": "cpp",
-    "commit": "4e32c18",
-    "tests": "281 checks, 0 failures (make test and ctest)",
-    "builds": "CMake and plain make, both from a clean clone",
-    "playback": "libVLC in-process: frames into our buffer, presenter pays a picture-side sync delay, our compositor draws subtitles off the engine clock",
-    "not_verified": [
-      "audio (no sound card in this machine)",
-      "automatic device-latency compensation (libVLC 3 cannot report output latency, so autoLatency is inert)",
-      "the window on a real display (headless SDL_VIDEODRIVER=dummy only)",
-      "Windows build and every _WIN32 branch"
-    ]
-  }
+  "unverified": [
+   "the SDL2 window and input path (no display in this sandbox)",
+   "any Windows build",
+   "frame-exact timing beyond the libVLC 3 smem API (no per-frame PTS until VLC 4)"
+  ],
+  "open_decisions": [
+   "branch name: assumed cpp",
+   "UI toolkit: SDL2 + own renderer (recommended) vs Win32/GDI vs Dear ImGui",
+   "keep the external-VLC playback mode as an option, or inline only"
+  ],
+  "phases": "P0 skeleton, P1 core+tests, P2 scan/artwork, P3 renderer/shell, P4 browsing UI, P5 player, P6 sync, P7 hw-decode+previews, P8 platform",
+  "dependencies": [
+   "SDL2",
+   "libVLC>=3.0",
+   "FreeType",
+   "libjpeg",
+   "libpng",
+   "zlib",
+   "cmake (Makefile fallback)"
+  ],
+  "dropped": [
+   "Express API",
+   "VLC HTTP client + XML parsing",
+   "HTTP range streaming",
+   "WebView2 shell",
+   "transcode-for-playback"
+  ],
+  "product_name": "VLCFlix Studio 2.0.0 (slug VLCFlixStudio)",
+  "code_root": "native/",
+  "build_systems": [
+   "CMake",
+   "plain make (g++ only)"
+  ],
+  "tests": "132/132 checks, own harness",
+  "verified_from_clean_clone": true,
+  "windows_identity": {
+   "exe": "VLCFlixStudio.exe",
+   "data_dir": "%LOCALAPPDATA%\\VLCFlixStudio",
+   "uninstall_key": "...Uninstall\\VLCFlixStudio",
+   "mutex": "unique per product",
+   "must_not_overwrite": "VLCFlix 1.2.0"
+  },
+  "logging": {
+   "init": "first statement of main()",
+   "fallbacks": [
+    "user data",
+    "beside exe",
+    "temp"
+   ],
+   "flush": "per line",
+   "crash_handlers": [
+    "std::terminate",
+    "SIGSEGV/ABRT/FPE/ILL/BUS/INT",
+    "Win32 unhandled exception + first-chance vectored"
+   ],
+   "rotation": "5 x 2 MB",
+   "run_marker": "previous-run-crashed detection"
+  },
+  "bugs_fixed": [
+   "A1 year-titled films",
+   "A4 finished films leave progress",
+   "A5 nv12 is not 10-bit",
+   "A6 password must be a string",
+   "A9 still versioning",
+   "+ adoption of artwork files already on disk"
+  ],
+  "own_bugs_found_by_running": [
+   "scan phase 1 assigned each item twice, losing cached fields and re-rendering artwork every launch",
+   "ffprobe -of json reports numbers as strings, so durations/dimensions read 0",
+   "git .gitignore media/ rule silently swallowed native/src/media/ (renamed to native/src/library/)"
+  ]
+ },
+ "bugs_verified_2026_10_28": [
+  "A1 parseName: titles that are years are truncated and given the wrong year (1917.2019.2160p -> \"1917 2019 2160p WEB-DL\", year 1917)",
+  "A2 ffmpeg copy engine cannot seek single-keyframe files: -ss 4 -c copy on a 1-I-frame/480 clip emits duration=16.000000 (dense GOP emits 12.000000)",
+  "A3 Range bytes=-500 answered as bytes 0-500/217238",
+  "A4 setProgress(97%) keeps the entry; no path marks a film finished",
+  "A5 hwCandidates deep test /10|12/ matches nv12 (8-bit)",
+  "A6 POST /api/settings accepts {\"vlcPassword\":{\"a\":1}} (200)",
+  "A7 README/API drift: subtitle route path, \"23 tests\" vs 72 actual"
+ ],
+ "withdrawn_claims": [
+  "Suspected unit bug in subtitleClock(): noise \u2014 sub.audio is stored in seconds; arithmetic correct. Checked before reporting."
+ ],
+ "identity": {
+  "name": "John Olowe",
+  "email": "121398818+JohnOlowe@users.noreply.github.com",
+  "as_instructed": true
+ },
+ "native": {
+  "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
+  "branch": "cpp",
+  "tests": "339 checks (unit + golden image + fault injection), 22 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 339 under AddressSanitizer",
+  "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
+  "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
+  "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
+  "bugs_found_turn4": [
+   "an unreadable file stayed in the library with no marker and Play opened a black window; now Item::unreadable is persisted, badged and refused with a reason",
+   "a zero-decode file arrived from libVLC as Ended and was written as watched (removed from Continue Watching); now a zero-decode end is a failure with a message and writes no progress",
+   "the artwork preview job captured its segment list by reference after the owning block closed: ~half of scans drew no preview and ffmpeg got an absurd -t; fixed with [&, segments], proved by ASan stack-use-after-scope on the old code and a 3-pass regression test"
+  ],
+  "packaging": "native/packaging/{installer.nsi,app.manifest} + scripts/build-win-native.sh (--check reports missing toolchain, exit 3) - written, NOT verified",
+  "not_verified": [
+   "audio (no sound card in this machine)",
+   "the window on a real display (headless SDL_VIDEODRIVER=dummy only)",
+   "Windows build and every _WIN32 branch (no mingw/NSIS toolchain here)",
+   "-hwaccel auto GPU path (no Vulkan video queue; software fallback proven by output file)",
+   "installing side by side with 1.2.0 (needs Windows)"
+  ]
+ }
 }

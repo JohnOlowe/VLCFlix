@@ -138,6 +138,17 @@ by name — Windows, GPU decoding, real hardware audio latency.
 faults) and prints one summary; from a fresh clone, on a machine with ffmpeg, it
 goes green; anything unsigned off is listed in the README under "not verified".
 
+**Status: done.** `docs/TESTING.md` exists with six layers instead of five — the
+sanitizer layer (`make asan`) and a static layer (`tools/preflight.sh`) were added
+because building this turn found a bug that only misbehaved *sometimes*, and a rule
+set that no compiler here can check. `make verify` = 22 static checks + 339 test
+checks + 15 journey steps, green from a fresh clone; CTest runs the same suites.
+Three real bugs were found and fixed on the way (unreadable file with no marker, a
+zero-decode file written as watched, half of all artwork previews never drawn), each
+with a regression test and, where the bug was intermittent, an ASan negative control.
+Windows packaging (`native/packaging/`, `scripts/build-win-native.sh`) is written and
+still unverified; `docs/TESTING.md` §9 says so and §10 is the checklist.
+
 ## What I need from you now
 
 A **fine-grained PAT** for `JohnOlowe/VLCFlix` with **Contents: read/write** only

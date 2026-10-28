@@ -1096,3 +1096,78 @@ compensation is inert because libVLC 3 cannot report output latency, so the
 `autoLatency` toggle records intent and changes nothing; the window on a real display;
 Windows.
 
+
+## 2026-10-28 — Turn 4: polish, bug confirmation, and how we know it works
+
+The turn's real deliverable is `docs/TESTING.md`, but the work that produced it was
+mostly *running* the thing until it broke, and it broke three times.
+
+### The testing layers, built this turn
+
+| Layer | File | What it is |
+|---|---|---|
+| 1 unit | `native/tests/run_tests.cpp` | unchanged, still the rules in isolation |
+| 2 golden image | `native/tests/golden_tests.cpp` + `native/tests/golden/*.png` | seven screens compared pixel by pixel, tolerance 6/255 per channel and 0.15 % of pixels; the comparator self-checks (identical image = 0 changed, a 4×4 nudge = exactly 16) |
+| 3 journey | `native/tests/journey.sh` | 15 steps through the real binary on a library built by ffmpeg during the run — no sample file touches it |
+| 4 faults | `native/tests/fault_tests.cpp` | corrupt inputs, read-only data dir, junk video, deleted file mid-playback: no crash, and every one says why |
+| 5 sanitizer | `make asan` | the same 339 checks under AddressSanitizer |
+| 6 static | `tools/preflight.sh` | 22 checks no compiler here can make: build-system parity, `#if` balance, the Windows identity, `AGENTS.md` house rules, the documentation's own promises |
+
+`make verify` chains preflight → tests → journey. It is green from a fresh clone with
+nothing but g++, pkg-config, ffmpeg and libVLC. CTest runs the same two suites from a
+build directory outside the tree.
+
+Totals: turn 1 = 132 checks, turn 2 = 210, turn 3 = 281, **turn 4 = 339 + 22 static +
+15 journey steps**.
+
+### Three real bugs found by the new layers
+
+1. **An unreadable file was kept with no marker.** A file the prober could not read
+   stayed in the library looking exactly like a healthy film, and Play opened a player
+   that could only ever show black. Now `Item::unreadable` is set by the scan, persisted
+   in the catalog, drawn as a badge on the card, and Play refuses with
+   *"This file could not be read when the library was scanned"*. Found by the fault
+   layer, which asserted that a junk file is *reported*.
+2. **A zero-decode file was written as watched.** libVLC reports a corrupt container as
+   `Ended` with `frames_decoded == 0`; the player treated that as a finished film, which
+   silently removed it from Continue Watching. Now a film that ends without producing a
+   single picture is a failure with a message, and no progress entry is written. Proved
+   with a throwaway harness that printed `state=ended decoded=0` before and
+   `state=error err=This file ended without producing a single picture` after.
+3. **Half of all artwork previews were never drawn.** The preview job captured its
+   segment list by reference while the list lived inside an `if` block that closed
+   before the jobs were joined, so the worker read a destroyed vector and ffmpeg
+   received `-t 3219238484152785303456914394985`. The fix is one word (`[&, segments]`).
+   The negative control is the point: with the old code, `make asan` fails on the first
+   pass with `AddressSanitizer: stack-use-after-scope`; with the fix it is clean. A
+   three-pass regression test now exists because *one* pass passed by luck.
+
+### Other changes this turn
+
+- `hwDecode` became real: `-hwaccel auto` on every ffmpeg call (`artwork.cpp`), off by
+  default. On this box ffmpeg logs Vulkan device errors and still produces the file, so
+  the test judges by exit code and output, never by stderr.
+- `autoLatency` is gone — setting, UI row, settings file and CLI output. libVLC 3 cannot
+  report output latency, so the row now reads "not available with libVLC 3 — use − / +".
+  A toggle that changes nothing is a lie in the shape of a feature.
+- `status --json` now carries a per-item `library` array (title, year, genres, pixFmt,
+  poster, subtitles, unreadable), and the banner goes to *stderr* in `--json` mode so a
+  parser gets JSON and nothing else. The journey checks that the first byte of stdout is
+  `{`.
+- The scan summary says what the artwork pass did (`0 of 0 artwork set(s) drawn` on a
+  rescan), names unreadable files instead of only counting them, and no longer counts an
+  unreadable file as a permanently missing artwork job.
+- Windows packaging for the native app: `native/packaging/installer.nsi` (new AppId,
+  install dir, uninstall key; refuses to install into a directory holding 1.2.0; never
+  touches 1.2.0's data), `native/packaging/app.manifest`, and
+  `scripts/build-win-native.sh`, whose `--check` mode states plainly what this machine
+  lacks and exits 3.
+
+### Not verified (unchanged, and now written down in `docs/TESTING.md` §9)
+
+The Windows build and every `_WIN32` branch (no mingw here — `--check` proves the
+absence rather than assuming it); a real display (the window only ever ran headless);
+audio (no sound card; libVLC prints `ALSA lib … cannot find card '0'`); the
+`-hwaccel auto` GPU path (no Vulkan video queue, software fallback proven by output
+file); installing side by side with 1.2.0 (needs Windows). The manual checklist is in
+`docs/TESTING.md` §10.

@@ -13,6 +13,34 @@ documented HTTP control interface.
 
 ---
 
+## VLCFlix Studio — the native rewrite (branch `cpp`)
+
+The 1.x application described below is the reference. On branch **`cpp`** the same
+product is rewritten from scratch in **C++17** as **VLCFlix Studio**: one native
+binary that scans the library, draws every screen with its own software renderer, and
+plays films through **libVLC in-process** — no browser, no `vlc.exe`, no HTTP bridge,
+so the audited bugs that lived in that machinery (a transcode engine that could not
+seek a sparse-keyframe file, an HTTP range server that served suffix ranges from byte
+0) have no code path left.
+
+It installs as a **separate application**: `VLCFlixStudio.exe`, its own install
+directory, data directory, uninstall entry, AppId and mutex. It never upgrades,
+overwrites or migrates 1.x, and the two can be installed side by side.
+
+```bash
+cd native
+make -j2          # build/vlcflix   (or: cmake -S . -B build && cmake --build build)
+make verify       # static checks + 339 tests + 15-step end-to-end journey
+make asan         # the same tests under AddressSanitizer
+```
+
+How it is tested — six layers, a regression test per known bug with its negative
+control, and the honest list of what could not be verified here — is
+[`docs/TESTING.md`](docs/TESTING.md). What is ported, and what is deliberately not, is
+[`native/README.md`](native/README.md).
+
+---
+
 ## Windows desktop app
 
 VLCFlix ships as a normal Windows application: **`VLCFlix.exe`**, an installer, and a

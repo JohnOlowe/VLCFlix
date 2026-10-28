@@ -82,7 +82,7 @@ ProcResult run_process(const std::vector<std::string>& argv, int timeout_ms) {
   close(err_pipe[1]);
   result.started = true;
 
-  auto readAll = [](int fd, std::string* sink) {
+  [[maybe_unused]] auto readAll = [](int fd, std::string* sink) {
     char buf[8192];
     for (;;) {
       const ssize_t n = read(fd, buf, sizeof buf);

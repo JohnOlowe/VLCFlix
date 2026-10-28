@@ -1,23 +1,26 @@
 # VLCFlix Studio — the native port
 
-The C++ rewrite of VLCFlix. Turn 1 of three (see `../docs/PLAN_3_TURNS.md`).
+The C++ rewrite of VLCFlix. Turn 2 of four (see `../docs/PLAN_4_TURNS.md`).
 
-**What this is right now:** the whole non-graphical half of the product — logging,
-settings, library scanning, metadata, artwork generation, subtitles, sync maths —
-as one native binary. It scans a real library and produces the same three assets per
-film the web version produced. The window and the player land in turns 2 and 3.
+**What this is right now:** a native window with the whole browsing experience —
+home billboard and rails, Browse All, search, My List, the detail sheet, the settings
+sheet with a working scan, keyboard browsing and the hover preview — drawn by our own
+software renderer, above the turn-1 library engine (scan, probe, artwork, subtitles,
+sync maths, crash-proof logging).
 
-**What it is not yet:** there is no window and no playback in this turn. Nothing
-here has been compiled for Windows. Both statements are deliberate, not omissions.
+**What it is not yet:** playback. Clicking Play says so out loud instead of doing
+nothing; libVLC, synchronisation and subtitles are turn 3. Nothing here has been
+compiled for Windows. Both statements are deliberate, not omissions.
 
 ---
 
 ## Build
 
 ```bash
+sudo apt install build-essential pkg-config libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev
 cd native
-make -j2          # build/vlcflix, needs only g++ and make
-make test         # 132 checks
+make -j2          # build/vlcflix
+make test         # 210 checks, includes the UI tests
 ```
 
 or with CMake:
@@ -27,7 +30,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2
 ctest --test-dir build
 ```
 
-C++17, no third-party headers. `ffmpeg`/`ffprobe` on `PATH` are used for probing
+C++17. Five system libraries, no vendored code and no third-party headers: SDL2
+(window and input), FreeType (text), libpng and libjpeg (artwork), and libVLC from
+turn 3. `ffmpeg`/`ffprobe` on `PATH` are used for probing
 and artwork; without them the app still scans and browses, it just has no
 durations and no thumbnails (and it says so).
 
@@ -41,7 +46,35 @@ durations and no thumbnails (and it says so).
 ./build/vlcflix naming "1917.2019.2160p.WEB-DL.mkv"  # what the parser makes of it
 ./build/vlcflix doctor                              # paths, tools, log location
 ./build/vlcflix crash                               # tests the crash log (really crashes)
+./build/vlcflix ui                                  # the window
+./build/vlcflix render --all out/ --size 1600x900    # every screen to PNG, no display
+./build/vlcflix render --screen detail --hover 2 --png d.png
+./build/vlcflix render --screen browse --focus 3 --png b.png
 ```
+
+`ui --frames N` draws N frames and exits, which is how the window loop is tested on a
+machine with no display (`SDL_VIDEODRIVER=dummy`). `render` needs no display at all:
+every screen is drawn into a pixel buffer and written out, so a layout can be checked
+by looking at a file rather than by describing it.
+
+## The window
+
+| Screen | What it does |
+|---|---|
+| Home | Billboard of the newest film with its synopsis, Play / My List / Details, then rails: Continue Watching, Recently Added, My List, one per genre |
+| Browse All | Auto-filling grid, wheel and arrow-key scrolling |
+| Search | Opens on `/` or a click, filters on title, genre and year as you type |
+| My List | The saved films, from `myList.json` |
+| Detail sheet | Artwork, title, meta line, synopsis, Play, My List, progress |
+| Settings | Library folders (add by typing a path, remove, or take the bundled samples), the two toggles, and **Scan library**, which runs the real scan |
+
+Keyboard: `/` search, arrows move the card focus (Enter opens it), Escape backs out
+one layer at a time, Tab-free by design. Mouse: hover lifts a card and shows a preview
+panel with the still and the meta line.
+
+Every hit area is produced by the drawing pass that drew it, so a control cannot be
+painted somewhere it cannot be clicked. The UI tests use that list, not guessed
+coordinates.
 
 `--data <dir>` puts settings/catalog/media somewhere else; `--log <file>` and
 `--console` control logging.
@@ -73,7 +106,7 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 
 ## What the tests prove
 
-`make test` → **132 checks**. Beyond porting the JS cases (naming, sync maths,
+`make test` → **210 checks**. Beyond porting the JS cases (naming, sync maths,
 subtitle conventions, rails), each bug from `../docs/AUDIT.md` has a regression
 test, and the naming one carries a **negative control**: a copy of the old
 algorithm is run against the same filenames and asserted to be wrong on all four,
@@ -87,6 +120,20 @@ so the test cannot pass by testing nothing.
 - **A6** `vlcPassword` must be a string; `hwDecode` must be a boolean.
 - **A9** a still from an older format is treated as missing even though the file
   exists.
+
+The 78 UI checks are measurements, not assertions about intent:
+
+- every screen, including the empty library, draws at least a floor fraction of
+  non-background pixels, with a **negative control** (a cleared canvas must measure
+  zero content, or the measurement means nothing);
+- clicking the nav, a card, the search field, Play, My List, Settings and the close
+  button each does the thing it looks like, driven through the same `handle()` the
+  window calls;
+- Play reports the request and says the player is not wired up yet — turn 2 does not
+  pretend to play;
+- hit areas do not overlap, so one click is always one action;
+- arrow keys move the focus and Enter opens the focused film;
+- the minimum window size (640×420) draws every screen without a crash.
 
 ## Verified end-to-end in this session
 
@@ -109,6 +156,10 @@ so the test cannot pass by testing nothing.
   `CreateProcess` path, `paths.cpp` a `%LOCALAPPDATA%` path, and `log.cpp` a DbgHelp
   stack-trace path; all three are written but never executed. Treat them as
   unproven until the first Windows build runs.
-- **The window and the player** — turns 2 and 3.
+- **The window on a real display.** The window, its event loop and its renderer were
+  exercised with `SDL_VIDEODRIVER=dummy` (opens, draws, presents, closes, exit 0), and
+  every screen was rendered and looked at as a PNG at 1600×900, 1280×720 and
+  1920×1080 — but nobody has watched it on a monitor with a mouse in hand. The player
+  is turn 3.
 - Artwork rendering with libVLC instead of ffmpeg is not planned: ffmpeg remains the
   artwork engine, libVLC is the playback engine.

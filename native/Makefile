@@ -9,21 +9,28 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter
-CPPFLAGS += -I src -I .
+PKG_CFLAGS := $(shell pkg-config --cflags sdl2 freetype2 libpng libjpeg 2>/dev/null)
+PKG_LIBS   := $(shell pkg-config --libs sdl2 freetype2 libpng libjpeg 2>/dev/null)
+CPPFLAGS += -I src -I . -MMD -MP $(PKG_CFLAGS)
 LDFLAGS  += -pthread
-LDLIBS   +=
+LDLIBS   += $(PKG_LIBS)
 
 BUILD    := build
 APP      := $(BUILD)/vlcflix
 TESTBIN  := $(BUILD)/native-tests
 
-LIBSRC   := $(shell find src/core src/library src/platform -name '*.cpp' 2>/dev/null)
+LIBSRC   := $(shell find src/core src/library src/platform src/render src/ui -name '*.cpp' 2>/dev/null)
 APPSRC   := src/main.cpp
-TESTSRC  := tests/run_tests.cpp
+TESTSRC  := tests/run_tests.cpp tests/ui_tests.cpp
 
 LIBOBJ   := $(patsubst %.cpp,$(BUILD)/%.o,$(LIBSRC))
 APPOBJ   := $(patsubst %.cpp,$(BUILD)/%.o,$(APPSRC))
 TESTOBJ  := $(patsubst %.cpp,$(BUILD)/%.o,$(TESTSRC))
+
+# Header dependencies. Without these, editing a header relinked objects compiled
+# against the previous layout: that produced a crash inside a destructor, and it is
+# the kind of bug that looks like a compiler fault.
+DEPS     := $(LIBOBJ:.o=.d) $(APPOBJ:.o=.d) $(TESTOBJ:.o=.d)
 
 .PHONY: all test clean scan doctor
 
@@ -52,3 +59,5 @@ doctor: $(APP)
 
 clean:
 	rm -rf $(BUILD)
+
+-include $(DEPS)

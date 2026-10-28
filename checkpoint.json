@@ -5,10 +5,10 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "8c3fbb9",
-  "remote_sha": "8c3fbb924919579f2abacf4d598b4f9a1f8d9a66",
+  "local_head": "5a3bab3",
+  "remote_sha": "5a3bab3c0adb835cef6986330736673c7560fbce",
   "pushed": true,
-  "awaiting": "nothing on cpp. Outstanding: the user re-tests the 2.0.1 installer on real Windows - window size, clicks inside Settings/detail, and the hand cursor. A real Windows 10/11 run is still the last mile for the desktop icon, audio and Add/Remove Programs.",
+  "awaiting": "nothing on cpp. Outstanding: the user re-tests 2.0.2 on real Windows (cursor everywhere, folder browser), and a real Windows 10/11 run remains the last mile for the desktop icon, audio and Add/Remove Programs.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-28",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned 8c3fbb924919579f2abacf4d598b4f9a1f8d9a66 (2026-10-28): 2.0.1 - window fits the screen, sheets clickable, hover cursor. On top of 4f1fb02 (manifest fix), 2b3f72c, 1d2cadf (one-file installer) and de10fc5 (scrolling). main is untouched at d4606a7. Verified: make verify (33 static + 461 test checks + 15 journey steps), make asan 461/461, and the 2.0.1 installer installed + verified under Wine 11.19."
+  "remote_sha_note": "git ls-remote origin cpp returned 5a3bab3c0adb835cef6986330736673c7560fbce (2026-10-28): 2.0.2 - pointer coordinates fixed (canvas follows the window) and the folder browser. On top of 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer) and de10fc5 (scrolling). main is untouched at d4606a7. Verified: make verify (33 static + 513 test checks + 15 journey steps), make asan 513/513, CMake build, a live Xvfb/xdotool run of the real window, and the 2.0.2 installer installed + verified under Wine 11.19."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -79,9 +79,9 @@
   ]
  },
  "next_steps": [
-  "Run scripts/windows-selfcheck.ps1 (it ships inside dist/win-native/VLCFlixStudio-win64.zip) on a real Windows machine: that is the last mile - a real display, real audio, a real Explorer drawing the desktop icon, and a real Add/Remove Programs running the uninstaller.",
-  "Optional: put ffmpeg.exe/ffprobe.exe in the install folder for durations on files with unusual headers (not bundled: 166 MB each).",
-  "The Node app (server/, public/, src/win/) is untouched and is deleted only when the user approves."
+  "The user re-tests 2.0.2 on real Windows: the hand cursor on Home (it should now work everywhere), and Browse... in Settings.",
+  "Run scripts/windows-selfcheck.ps1 on a real Windows machine for the last mile: desktop icon, audio, Add/Remove Programs, side by side with 1.2.0.",
+  "Optional: put ffmpeg.exe/ffprobe.exe in the install folder for durations on files with unusual headers (not bundled)."
  ],
  "git_auth": {
   "token_location": ".secrets/github-token",
@@ -367,7 +367,7 @@
  "native": {
   "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
   "branch": "cpp",
-  "tests": "461 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 461 under AddressSanitizer",
+  "tests": "513 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 513 under AddressSanitizer",
   "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
   "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
   "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
@@ -385,7 +385,7 @@
    "a real Explorer/Start Menu/Add-Remove Programs, and side by side with a genuine 1.2.0"
   ],
   "installer": {
-   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,752,198 bytes, sha256 92bbe997011ae1aed95edbd69e9cfa25ba2ca8e28224a5239b5848e0effcfcf3, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
+   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,762,466 bytes, sha256 b84fcba86efb9d5be8321f9f5640a2ac3704716f60f169079ac6ebfbf78e7d40, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
    "how": "GUI-subsystem stub (miniz) + payload zip appended + 24-byte footer 'VFSUZIP1' + <offset> + <length>; extracts to %LOCALAPPDATA%\\Programs\\VLCFlixStudio on first run",
    "installs": "372 files; Desktop icon; Start Menu entry + uninstall entry; HKCU\\...\\Uninstall\\VLCFlixStudio (DisplayName/DisplayVersion 2.0.0/DisplayIcon/InstallLocation/UninstallString/QuietUninstallString/EstimatedSize/NoModify/NoRepair); launches the app when double-clicked",
    "flags": "--install-only, --uninstall, --verify (exit 0 only when complete), --dir <path>, --quiet",
@@ -403,14 +403,16 @@
     "not_proven": "Microsoft's own parser cannot be run here; sxstrace.exe on the target machine is the arbiter"
    }
   },
-  "version": "2.0.1 (window fits the screen, sheets clickable, cursor says what is clickable)",
+  "version": "2.0.2 (window fits the screen, sheets clickable, cursor on every screen, folder browser)",
   "real_screen_bugs_2026_10_28": {
    "window_too_wide": "opened at the 1600x900 default on any display, putting the title bar (and minimise/maximise/close) off-screen; fit_window_to_display() now clamps to 96%/90% of the usable desktop with a 640x420 floor, plus SDL_SetWindowMinimumSize",
    "sheet_controls_dead": "two bugs: the scrim + click-swallow panel were registered last (hit testing takes the last match) so they covered every control, and add_hit() silently drops Action::Kind::None so the swallow was never registered at all; clicks that missed a control hit the scrim and closed the sheet",
    "no_hover_cursor": "the window never set a cursor; App::pointer_cursor() now picks Arrow/Hand/I-Beam from the same hit areas the click uses and the loop calls Window::set_cursor()",
    "why_the_suite_missed_it": "the old assertion was CHECK(click_action(app, Kind::Play)), which only requires handle() to return true - and it did, because the click closed the sheet",
    "negative_controls": "restoring the old z-order fails six checks; replacing swallow() with add_hit(panel, Action{}) fails both new tests"
-  }
+  },
+  "pointer_coordinates_fixed": "the window shrinks to fit the desktop but the canvas stayed at the requested size, so SDL stretched it and every hit test was ~23% off in window pixels - the cursor stayed an arrow on Home and clicks landed on the wrong control. The canvas now follows the window at startup and every frame.",
+  "folder_browser": "Settings > Browse... opens a folder picker over the sheet (library/fs_browse.{h,cpp}): current path, real subdirectories, '.. up one level', Windows drives, wheel/Page/bar scrolling, Use this folder -> add_library_folder(). Verified by unit tests on a temp tree, UI tests through its hit areas, and four real xdotool clicks on Xvfb that wrote the folder to settings.json."
  },
  "windows_build": {
   "status": "cross-compiled, payload-checked (136 imports, 0 missing), and EXECUTED under Wine 11.19: version/doctor/status/scan (8 items, 0 errors)/artwork (8 of 8)/render (6 screens)/play (state=playing, decoded=99 presented=99)/crash (log has CRASH + stack). Not yet run on real Windows.",

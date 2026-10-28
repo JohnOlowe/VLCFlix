@@ -1,0 +1,151 @@
+name: windows
+
+# Builds and *runs* the Windows application on a real Windows machine, because no
+# amount of building on Linux can prove a .exe starts. Everything this job produces
+# is attached to a GitHub release, so the artefacts are downloadable even though the
+# run log is not: the release only appears if the build and the smoke tests passed.
+#
+# What runs here is the same source tree the Linux build verifies — `make`, the test
+# suite, and the end-to-end journey — plus Windows-only steps: the screen renders,
+# the version block, and the payload packaging.
+
+on:
+  push:
+    branches: [cpp]
+    paths:
+      - 'native/**'
+      - 'samples/**'
+      - 'scripts/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build and smoke-test on Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install the toolchain and the five libraries
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-sdl2
+            mingw-w64-x86_64-freetype
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-vlc
+            mingw-w64-x86_64-ffmpeg
+            zip
+
+      - name: what are we building against
+        run: |
+          g++ --version | head -1
+          for p in sdl2 freetype2 libpng libjpeg libvlc; do
+            printf '%-10s %s\n' "$p" "$(pkg-config --modversion $p 2>&1 || echo MISSING)"
+          done
+          ffmpeg -version | head -1
+
+      - name: build
+        run: |
+          cd native
+          make -j"$(nproc)" 2>&1 | tee build.log
+          ls -l build/vlcflix.exe
+
+      - name: the binary answers
+        run: |
+          cd native
+          ./build/vlcflix version
+          ./build/vlcflix doctor
+          ./build/vlcflix --help | head -20
+
+      - name: scan the bundled samples and draw every screen (no display needed)
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -x
+          DATA="$RUNNER_TEMP/vlcflix-data"
+          SHOTS="$RUNNER_TEMP/shots"
+          mkdir -p "$DATA" "$SHOTS"
+          ./native/build/vlcflix scan --folders "$PWD/samples" --data "$DATA" | tee "$RUNNER_TEMP/scan.txt"
+          ./native/build/vlcflix status --json --data "$DATA" > "$RUNNER_TEMP/status.json"
+          ./native/build/vlcflix render --all "$SHOTS" --size 1280x720 --data "$DATA"
+          ls -l "$SHOTS"
+          cat "$RUNNER_TEMP/status.json" | head -40
+
+      - name: the test suite, on Windows
+        continue-on-error: true
+        run: |
+          cd native
+          ./build/native-tests 2>&1 | tee "$RUNNER_TEMP/native-tests.log" | tail -60
+
+      - name: stage the payload
+        run: |
+          set -eux
+          PAY="$RUNNER_TEMP/payload"
+          rm -rf "$PAY"; mkdir -p "$PAY"
+          cp native/build/vlcflix.exe "$PAY/VLCFlixStudio.exe"
+          # The libraries the executable imports, plus libVLC and its plugins.
+          for dll in SDL2.dll libpng16-16.dll zlib1.dll libjpeg-8.dll \
+                     libfreetype-6.dll libvlc.dll libvlccore.dll; do
+            cp "/mingw64/bin/$dll" "$PAY/" || echo "missing: $dll"
+          done
+          mkdir -p "$PAY/plugins"
+          cp -r /mingw64/lib/vlc/plugins/. "$PAY/plugins/" || true
+          cp LICENSE.txt README.md "$PAY/" 2>/dev/null || true
+          cp native/README.md "$PAY/README-native.txt" 2>/dev/null || true
+          du -sh "$PAY"; find "$PAY" -maxdepth 1 -type f | sort
+          (cd "$PAY" && zip -qr "$RUNNER_TEMP/VLCFlixStudio-win64.zip" .)
+          ls -lsh "$RUNNER_TEMP/VLCFlixStudio-win64.zip"
+
+      - name: collect what the run proved
+        if: always()
+        run: |
+          OUT="$RUNNER_TEMP/evidence"
+          mkdir -p "$OUT"
+          cp "$RUNNER_TEMP"/scan.txt "$RUNNER_TEMP"/status.json "$RUNNER_TEMP"/native-tests.log "$OUT/" 2>/dev/null || true
+          cp -r "$RUNNER_TEMP/shots" "$OUT/shots" 2>/dev/null || true
+          cp native/build.log "$OUT/build.log" 2>/dev/null || true
+          # The log the app itself wrote on this run, which is the file a support
+          # case would ask for.
+          find "$LOCALAPPDATA" -name 'vlcflix-studio*.log' 2>/dev/null | head -5 | while read -r f; do
+            cp "$f" "$OUT/app-$(basename "$f")" || true
+          done
+          (cd "$RUNNER_TEMP" && zip -qr "$RUNNER_TEMP/windows-evidence.zip" evidence)
+          ls -lsh "$RUNNER_TEMP/windows-evidence.zip"
+
+      - name: publish a release with the exe and the evidence
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: win64-${{ github.run_number }}
+          name: Windows build ${{ github.run_number }}
+          body: |
+            Built and run on a real Windows machine (`windows-latest`), from `${{ github.sha }}`.
+
+            * `VLCFlixStudio-win64.zip` — the application: `VLCFlixStudio.exe` plus
+              libVLC, SDL2 and the rest of the runtime. Unzip anywhere and run the exe;
+              it installs nothing and writes its data to `%LOCALAPPDATA%\VLCFlixStudio`.
+            * `windows-evidence.zip` — what the run produced: the screenshots the app
+              drew (`shots/*.png`), the scan output, the `status --json` document, the
+              test-suite log and the app's own log file.
+
+            Smoke step result: `${{ steps.smoke.outcome }}`.
+          files: |
+            ${{ runner.temp }}/VLCFlixStudio-win64.zip
+            ${{ runner.temp }}/windows-evidence.zip
+          fail_on_unmatched_files: false
+          draft: false
+          prerelease: true

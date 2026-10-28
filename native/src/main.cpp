@@ -16,6 +16,12 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+// For RaiseException and EXCEPTION_ACCESS_VIOLATION in the deliberate-crash command.
+// Windows only, so the POSIX build never sees it; SDL headers stay out of this file.
+#include <windows.h>
+#endif
+
 #include "core/brand.h"
 #include "core/catalog.h"
 #include "core/json.h"
@@ -707,6 +713,20 @@ int main(int argc, char** argv) {
     else if (std::strcmp(a, "--console") == 0) log_options.console = true;
   }
   log::init(log_options);
+
+#ifdef _WIN32
+  // The Windows binary is built as a GUI executable, because a double-clicked app
+  // must not open a console window behind itself. The cost of that choice is that a
+  // program run *from* a command prompt has nowhere to write, so attach to the
+  // parent console when there is one: typed at cmd.exe, output appears; double
+  // clicked, nothing happens and the window opens. Neither path affects the log file,
+  // which was already opened above.
+  if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    std::freopen("CONOUT$", "w", stdout);
+    std::freopen("CONOUT$", "w", stderr);
+    std::freopen("CONIN$", "r", stdin);
+  }
+#endif
   // ---- everything below is allowed to fail, and will be logged ---------------
 
   struct ExitGuard {

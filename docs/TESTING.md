@@ -185,7 +185,7 @@ list (`[&, segments]`). Two things keep it fixed:
 ## 7. Layer 6 — static preflight (the part of the checklist a machine can hold)
 
 ```bash
-tools/preflight.sh        # 22 checks, no compiler needed
+tools/preflight.sh        # 28 checks, no compiler needed
 ```
 
 Some rules cannot be checked by building on this machine, but they *can* be checked by
@@ -233,20 +233,22 @@ negative control is what was broken on purpose to see the test go red.
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
 * 339 checks across layers 1, 2 and 4 — `0 failure(s)`
-* 22/22 static preflight checks
+* 28/28 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
 * `make asan`: 339 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
+* the Windows executable **builds** and its payload is complete — 48 imported
+  libraries checked, 0 missing (§11). It has not been *run*.
 
 **Not verified — and not claimed:**
 
 | Area | Why not | How to check it on a machine that has it |
 |---|---|---|
-| The Windows build | no `mingw-w64` (or any Windows toolchain) in this sandbox | `scripts/build-win-native.sh` on a Windows or cross-build machine, then run the checklist in §9 |
-| Every `_WIN32` branch | never compiled | `x86_64-w64-mingw32-g++ -fsyntax-only` on each file, or build on Windows |
+| **Running** the Windows build | the exe is built and payload-checked (§11), but never executed: Wine dies before creating a prefix in this sandbox, and there is no Windows machine here | run `scripts/windows-selfcheck.ps1` from the `win64-cross-1` release, or enable `docs/ci/windows.yml` |
+| Every `_WIN32` branch | compiled by the cross build now, but not executed | build on Windows and run the checklist in §10 |
 | A real display / window manager | no X11 or Wayland here | `./build/vlcflix` on a desktop; resize, full-screen, hover a card, press `f` |
 | Audio | no sound card; libVLC prints `ALSA lib … cannot find card '0'` | play a sample with sound and check the `−/+` latency keys move the sound earlier/later |
 | GPU video decode | no Vulkan video queue on this box; `-hwaccel auto` falls back to software (proven by its exit code and output file) | `hwDecode` on, scan, and check the log for a hardware device |
@@ -307,7 +309,54 @@ are checked statically by `tools/preflight.sh`.
 17. Pull the network drive / rename the folder while a film is playing: the player
     says the file is gone and does not hang.
 
-## 11. How to add a test
+## 11. The Windows build: what was actually done
+
+This started as the largest "not verified" item. It is now half closed.
+
+**Built.** `scripts/build-win-native.sh` produces a real `VLCFlixStudio.exe` from this
+source tree on a Linux box; the result is published as the `win64-cross-1` release.
+The recipe, all of which ran in this session:
+
+| Piece | Where it comes from | Why that one |
+|---|---|---|
+| compiler | llvm-mingw 20261020 (clang + lld, UCRT) | no install, no root: a complete Windows toolchain in a tarball |
+| SDL2 | official `SDL2-devel-2.32.10-mingw` package | the window and input layer |
+| FreeType | built from source here with `--without-harfbuzz` | the MSYS2 build drags in glib, graphite2 and a GCC runtime DLL just to draw text |
+| libpng, zlib, libjpeg-turbo | MSYS2 mingw64 packages (import libraries) | small, standard, their DLLs are shipped |
+| libVLC | VideoLAN's own `vlc-3.0.24-win64.zip` | the app must ship the exact libVLC it linked against; the import library is generated from `libvlc.dll` with `gendef` + `dlltool` |
+
+**Checked.** `scripts/check-win-payload.sh` walks every DLL imported by the exe, by
+SDL2, libpng, libvlc and libvlccore, and requires each one to be in the payload or part
+of Windows: **48 imports, 0 missing**. It also refuses to call the payload complete
+without the plugins libVLC needs (`libavcodec_plugin.dll`, the mp4/mkv/avi demuxers,
+the h264 packetizer, the vmem and d3d11 video outputs, the mmdevice and directsound
+audio outputs). The PE is verified as x86-64, GUI subsystem, with the manifest (DPI
+awareness) and version block embedded as resources.
+
+**Three portability bugs the cross build found**, all fixed in the source: `std::atoi`,
+`std::atof` and `std::strtoul` were used without `<cstdlib>` (libstdc++ on Linux pulls
+it in transitively, libc++ does not), and the deliberate-crash command called
+`RaiseException`/`EXCEPTION_ACCESS_VIOLATION` without `<windows.h>`. It also forced a
+real decision: the exe is a **GUI** executable so a double-click does not open a
+console, and `main()` calls `AttachConsole(ATTACH_PARENT_PROCESS)` so the same binary
+typed into `cmd.exe` still prints.
+
+**Not checked: running it.** Wine will not start in this sandbox — `wineboot` dies with
+SIGSEGV before it creates a prefix, in both the 11.20 and the 11.20-staging builds, so
+the exe has never been executed anywhere. That is stated on the release and here.
+
+Two independent ways to close it:
+
+1. `scripts/windows-selfcheck.ps1`, which ships inside the release zip: it runs the
+   exe, scans a folder, renders every screen, plays a film, and packs the screenshots,
+   the `status --json` document, the app's own log and a pass/fail report into
+   `windows-selfcheck-evidence.zip`.
+2. `docs/ci/windows.yml`: the same thing unattended on `windows-latest`, using MSYS2's
+   mingw-w64 GCC — a *second, independent* toolchain — and attaching the exe and the
+   screenshots to a release. It needs to live at `.github/workflows/windows.yml` and a
+   token with the `workflow` scope; `docs/ci/README.md` has the two-minute version.
+
+## 12. How to add a test
 
 * **A rule with no pixels** → a `TEST(...)` block in `run_tests.cpp`. One test per
   rule; assert the exact expected value, not "not empty".
@@ -320,7 +369,7 @@ are checked statically by `tools/preflight.sh`.
   what the app would have said).
 * **Anything with shared state** → check it under `make asan` before believing it.
 
-## 12. What the suite deliberately does not do
+## 13. What the suite deliberately does not do
 
 * It does not assert on log *text* beyond a few stable phrases, because log wording is
   for humans and should be free to improve.

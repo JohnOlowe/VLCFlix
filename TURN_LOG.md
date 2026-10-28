@@ -1171,3 +1171,71 @@ audio (no sound card; libVLC prints `ALSA lib … cannot find card '0'`); the
 `-hwaccel auto` GPU path (no Vulkan video queue, software fallback proven by output
 file); installing side by side with 1.2.0 (needs Windows). The manual checklist is in
 `docs/TESTING.md` §10.
+
+## 2026-10-28 — Turn 4 continued: an actual Windows exe
+
+The user asked for something they can run, and asked whether GitHub could show the
+outputs. Both were possible; one needed a workaround.
+
+### What was tried, in order
+
+1. **Wine in this sandbox: dead end, measured.** Downloaded two portable Wine 11.20
+   builds (Kron4ek, amd64 and amd64-wow64, plus the staging variant, 95–99 MB each).
+   `wine --version` answers, but any real start — `wine cmd`, `wineboot -u` — either
+   exits silently or dies with SIGSEGV in `virtual_init` before a prefix exists.
+   `setarch -R` made no difference. Recorded as a dead end rather than "it nearly
+   worked": without a Windows-shaped syscall surface, Wine cannot run here.
+2. **Cross-compiling: works.** Installed nothing (no root): llvm-mingw 20261020
+   (clang + lld + mingw-w64 CRT, 81 MB tarball), SDL2's official mingw package,
+   libpng/zlib/libjpeg-turbo import libraries from MSYS2 packages (unpacked with
+   `pip install zstandard`), FreeType 2.13.3 built here `--without-harfbuzz`
+   (the MSYS2 build pulls glib, graphite2 and a GCC runtime DLL into the payload just
+   to draw text), and VideoLAN's own `vlc-3.0.24-win64.zip` with an import library
+   generated from `libvlc.dll` (`gendef` + `dlltool`).
+3. **The cross build found three real portability bugs**, which is the point of
+   building for a second platform at all: `std::atoi`, `std::atof` and `std::strtoul`
+   were used without `<cstdlib>` (libstdc++ pulls it in transitively on Linux, libc++
+   does not) and `command_crash` used `RaiseException`/`EXCEPTION_ACCESS_VIOLATION`
+   without `<windows.h>`. All four files fixed.
+4. **A decision the platform forced:** the exe is a **GUI-subsystem** executable, so
+   double-clicking does not open a console behind the window. `main()` now calls
+   `AttachConsole(ATTACH_PARENT_PROCESS)` (Windows only, immediately after the log is
+   open) so the same binary typed at `cmd.exe` still prints its output.
+
+### What exists now
+
+* `scripts/build-win-native.sh` — the whole recipe, reproducible from a clean machine
+  with network access: fetch, build FreeType, generate the libVLC import library,
+  compile, link (manifest + version resource embedded), stage, verify. `--check`
+  reports what is missing and exits 3.
+* `scripts/check-win-payload.sh` — walks the import table of the exe, SDL2, libpng,
+  libvlc and libvlccore: **48 imports checked, 0 missing**, and it fails if the
+  libVLC plugin modules the app needs are absent. Before this, "the exe opens and
+  closes" was a thing that could only be discovered by running it.
+* **The published exe**: release `win64-cross-1`,
+  `VLCFlixStudio-win64.zip` (67 MB — exe, SDL2, libpng, zlib, libjpeg, libVLC 3.0.24
+  with its 29 plugin modules, and the self-check script). PE64, GUI subsystem,
+  manifest and version block in place.
+* `scripts/windows-selfcheck.ps1`, shipped inside that zip — runs the exe, scans a
+  folder, renders every screen, plays a film, and packs screenshots + `status --json`
+  + the app's own log + a pass/fail report into `windows-selfcheck-evidence.zip`.
+* `docs/ci/windows.yml` — a workflow that does the same unattended on
+  `windows-latest` with MSYS2's mingw-w64 GCC (a second, independent toolchain) and
+  attaches the exe and the screenshots to a release. It is parked in `docs/ci/`,
+  **not** `.github/workflows/`, because this session's fine-grained token has
+  Contents: read/write but not **Workflows: write**, and GitHub rejects the push:
+
+  ```
+  ! [remote rejected] cpp -> cpp (refusing to allow a Personal Access Token to
+    create or update workflow `.github/workflows/windows.yml` without `workflow` scope)
+  ```
+
+  `docs/ci/README.md` gives the two ways to switch it on (add the scope, or paste the
+  file in the browser).
+
+### Still not verified, unchanged
+
+**The exe has never been executed.** Building is not running. Wine cannot start here
+and there is no Windows machine, so the first execution is either the user's or a
+GitHub runner's. Everything else about it is checked mechanically; that part is a
+claim nobody has earned yet, and the release notes say so in the first paragraph.

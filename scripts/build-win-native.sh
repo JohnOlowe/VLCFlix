@@ -1,112 +1,170 @@
 #!/usr/bin/env bash
-# Build the Windows application: VLCFlixStudio.exe, its payload, and the installer.
+# Build the Windows application on Linux, from nothing but network access and a
+# C++17 compiler for the host. Verified: this is the recipe that produced the
+# `win64-cross-1` release asset in this repository.
 #
-# The Windows build is a *new application*, not an upgrade of VLCFlix 1.2.0. See
-# native/packaging/installer.nsi: different executable name, install directory, data
-# directory, uninstall key, AppId and mutex. Anything this script produces must keep
-# that property, which is why the output names below are not parameterised.
+#   scripts/build-win-native.sh --check     # report what is missing, change nothing
+#   scripts/build-win-native.sh            # download, build, stage, verify
+#   scripts/build-win-native.sh --zip      # ... and pack dist/win-native/*.zip
 #
-# Usage:
-#   scripts/build-win-native.sh --check      # report what this machine is missing
-#   scripts/build-win-native.sh              # build dist/win-native/{exe,setup,zip}
+# What it does
+#   1. fetches llvm-mingw (clang + lld + mingw-w64 headers/libs, no install needed)
+#   2. fetches SDL2 (official mingw development package), and libpng / zlib /
+#      libjpeg-turbo (MSYS2 mingw64 packages, whose import libraries are GCC-built
+#      and link cleanly with lld)
+#   3. builds FreeType from source, statically, WITHOUT harfbuzz: the MSYS2 build
+#      drags in glib, graphite2 and a GCC runtime DLL just to render text
+#   4. fetches VideoLAN's own Windows VLC build and generates an import library from
+#      `libvlc.dll` with gendef + dlltool, so the app links against the exact libVLC
+#      binary it ships (3.0.24 at the time of writing)
+#   5. compiles the same sources the Linux build compiles, links a GUI-subsystem exe
+#      with the manifest and version block, stages the payload, and runs
+#      scripts/check-win-payload.sh over it
 #
-# Environment:
-#   VLC_DIR       a Windows VLC installation whose libvlc.dll + plugins/ are shipped
-#                 with the app (normally C:/Program Files/VideoLAN/VLC)
-#   VERSION       version stamp for the installer (default: read from brand.h)
-#
-# What this script cannot do is verify: it does not run the result. Whether the
-# application actually opens, plays and writes its log on Windows is a separate,
-# manual checklist (docs/TESTING.md §9). A build is not a test.
+# What it does NOT do is run the result. A build is not a test: whether the exe opens,
+# scans and plays is checked by scripts/windows-selfcheck.ps1 on Windows. See
+# docs/TESTING.md section 10.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/native/src"
-TESTS="$ROOT/native/tests"
-PKG="$ROOT/native/packaging"
+CACHE="${VLCFLIX_WIN_CACHE:-$ROOT/.cache/win-native}"
 DIST="$ROOT/dist/win-native"
-STAGE="$DIST/payload"
-BUILD="$ROOT/.cache/win-native"
-OUT_EXE="VLCFlixStudio.exe"
+PAYLOAD="$DIST/payload"
+OBJ="$CACHE/obj"
+
+LLVM_MINGW_VER="${LLVM_MINGW_VER:-20261020}"
+SDL_VER="${SDL_VER:-2.32.10}"
+FREETYPE_VER="${FREETYPE_VER:-2.13.3}"
+VLC_VER="${VLC_VER:-3.0.24}"
+MSYS_BASE="${MSYS_BASE:-https://repo.msys2.org/mingw/mingw64}"
+MSYS_PKGS=(
+  mingw-w64-x86_64-zlib-1.3.2-3-any.pkg.tar.zst
+  mingw-w64-x86_64-libpng-1.6.59-2-any.pkg.tar.zst
+  mingw-w64-x86_64-libjpeg-turbo-3.2.0-1-any.pkg.tar.zst
+)
+
+say()  { printf '\n==> %s\n' "$*"; }
+die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
 
 MODE="build"
 case "${1:-}" in
-  --check|-c) MODE="check" ;;
-  "" ) ;;
+  --check) MODE="check" ;;
+  --zip)   MODE="zip" ;;
+  "")      ;;
   *) printf 'unknown argument: %s (try --check)\n' "$1" >&2; exit 2 ;;
 esac
 
-die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
-say() { printf '\n==> %s\n' "$*"; }
-
-VERSION_FROM_SOURCE=$(sed -n 's/.*kVersion = "\([^"]*\)".*/\1/p' "$ROOT/native/src/core/brand.h" | head -1)
-VERSION="${VERSION:-$VERSION_FROM_SOURCE}"
-
-# ---------------------------------------------------------------- requirements
-CXX_BIN=""
-for candidate in x86_64-w64-mingw32-g++ x86_64-w64-mingw32-g++-posix; do
-  if command -v "$candidate" >/dev/null 2>&1; then CXX_BIN="$candidate"; break; fi
-done
-WINDRES=""
-command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 && WINDRES="x86_64-w64-mingw32-windres"
-MAKENSIS=""
-command -v makensis >/dev/null 2>&1 && MAKENSIS="makensis"
-
+# --------------------------------------------------------------- requirements
 missing=()
-[ -n "$CXX_BIN" ]     || missing+=("mingw-w64 g++ (x86_64-w64-mingw32-g++)")
-[ -n "$WINDRES" ]     || missing+=("mingw-w64 windres (embeds the manifest)")
-[ -n "$MAKENSIS" ]    || missing+=("NSIS (makensis)")
-[ -n "${VLC_DIR:-}" ] || missing+=("VLC_DIR (a Windows VLC install to ship libvlc.dll and plugins/)")
-
-# The Windows build needs Windows builds of the five libraries. pkg-config can
-# report them if the cross sysroot is set up; without it there is nothing to link.
-for lib in sdl2 freetype2 libpng libjpeg libvlc; do
-  x86_64-w64-mingw32-pkg-config --exists "$lib" 2>/dev/null || missing+=("$lib for Windows (no cross pkg-config entry)")
-done
+have curl || missing+=("curl")
+have tar  || missing+=("tar")
+have unzip || missing+=("unzip")
+python3 -c 'import zstandard' 2>/dev/null || missing+=("python3 zstandard (pip install zstandard; needed to unpack MSYS2 packages)")
 
 if [ "${#missing[@]}" -gt 0 ]; then
-  printf 'Cannot build the Windows application on this machine.\n\nMissing:\n'
+  printf 'Cannot build the Windows application here.\n\nMissing:\n'
   for item in "${missing[@]}"; do printf '  - %s\n' "$item"; done
-  cat <<'NOTE'
-
-This is not a failure of the source tree. It means the Windows build is
-UNVERIFIED here, and docs/TESTING.md lists it that way rather than pretending a
-Linux build says anything about Windows.
-
-To build it, either:
-  * cross-compile: a mingw-w64 toolchain plus mingw builds of SDL2, FreeType,
-    libpng, libjpeg and libVLC on the pkg-config path, NSIS, and VLC_DIR set; or
-  * build on Windows with MSYS2 (mingw-w64-x86_64-{gcc,sdl2,freetype,libpng,
-    libjpeg-turbo,vlc}) and run this same script from Git Bash.
-Then run the manual checklist in docs/TESTING.md section 9 before calling it done.
-NOTE
-  [ "$MODE" = "check" ] && exit 3
+  printf '\nThis means the Windows build is UNVERIFIED here. docs/TESTING.md says so.\n'
   exit 3
 fi
+[ "$MODE" = "check" ] && { printf 'Ready to build the Windows application (cache: %s)\n' "$CACHE"; exit 0; }
 
-# --------------------------------------------------------------------- build
-say "compiling $OUT_EXE (version $VERSION)"
-mkdir -p "$BUILD/obj" "$STAGE"
-CXXFLAGS_WIN="-std=c++17 -O2 -DNDEBUG -D_WIN32_WINNT=0x0A00 -municode -Wall -Wextra -Wno-unused-parameter"
-PKG_CFLAGS=$(x86_64-w64-mingw32-pkg-config --cflags sdl2 freetype2 libpng libjpeg libvlc)
-PKG_LIBS=$(x86_64-w64-mingw32-pkg-config --libs sdl2 freetype2 libpng libjpeg libvlc)
+mkdir -p "$CACHE" "$OBJ" "$DIST" "$PAYLOAD"
 
-objects=()
-while IFS= read -r source; do
-  object="$BUILD/obj/$(printf '%s' "$source" | sed 's|/|_|g').o"
-  objects+=("$object")
-  [ -f "$object" ] && [ "$object" -nt "$source" ] && continue
+fetch() {  # fetch <url> <file>
+  local url="$1" out="$2"
+  [ -s "$CACHE/$out" ] && { printf '  have %s\n' "$out"; return; }
+  printf '  fetching %s\n' "$out"
+  curl -sSL --retry 2 -o "$CACHE/$out" "$url" || die "download failed: $url"
+}
+
+# ------------------------------------------------------------- 1. toolchain
+say "llvm-mingw $LLVM_MINGW_VER"
+fetch "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VER/llvm-mingw-$LLVM_MINGW_VER-ucrt-ubuntu-22.04-x86_64.tar.xz" llvm-mingw.tar.xz
+TC="$CACHE/llvm-mingw-$LLVM_MINGW_VER-ucrt-ubuntu-22.04-x86_64"
+[ -d "$TC" ] || tar -xf "$CACHE/llvm-mingw.tar.xz" -C "$CACHE"
+CXX="$TC/bin/x86_64-w64-mingw32-g++"
+WINDRES="$TC/bin/x86_64-w64-mingw32-windres"
+[ -x "$CXX" ] || die "no cross compiler at $CXX"
+
+# --------------------------------------------------------------- 2. the libs
+say "SDL2 $SDL_VER"
+fetch "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL2-devel-$SDL_VER-mingw.tar.gz" SDL2-mingw.tar.gz
+SDL="$CACHE/SDL2-$SDL_VER/x86_64-w64-mingw32"
+[ -d "$SDL" ] || tar -xzf "$CACHE/SDL2-mingw.tar.gz" -C "$CACHE"
+
+say "zlib, libpng, libjpeg-turbo (MSYS2 builds, import libraries only)"
+mkdir -p "$CACHE/msys"
+for pkg in "${MSYS_PKGS[@]}"; do
+  fetch "$MSYS_BASE/$pkg" "msys/$pkg"
+  python3 - "$CACHE/msys/$pkg" "$CACHE/msys/root" <<'PY'
+import io, os, sys, tarfile, zstandard
+pkg, out = sys.argv[1], sys.argv[2]
+os.makedirs(out, exist_ok=True)
+with open(pkg, 'rb') as fh, zstandard.ZstdDecompressor().stream_reader(fh) as r:
+    with tarfile.open(fileobj=io.BytesIO(r.read())) as t:
+        t.extractall(out, filter='data')
+PY
+done
+MSYS="$CACHE/msys/root/mingw64"
+
+# ------------------------------------------------------------- 3. FreeType
+say "FreeType $FREETYPE_VER (static, without harfbuzz)"
+fetch "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VER.tar.xz" freetype.tar.xz
+FT_SRC="$CACHE/freetype-$FREETYPE_VER"
+FT_OUT="$CACHE/ft-install"
+if [ ! -f "$FT_OUT/lib/libfreetype.a" ]; then
+  [ -d "$FT_SRC" ] || tar -xf "$CACHE/freetype.tar.xz" -C "$CACHE"
+  ( cd "$FT_SRC" && ./configure --host=x86_64-w64-mingw32 \
+      --without-harfbuzz --without-brotli --without-bzip2 --without-png --with-zlib=no \
+      --prefix="$FT_OUT" CC="$TC/bin/x86_64-w64-mingw32-gcc" AR="$TC/bin/x86_64-w64-mingw32-ar" \
+      > "$CACHE/ft-configure.log" 2>&1 && make -j"$(nproc)" > "$CACHE/ft-make.log" 2>&1 \
+      && make install > "$CACHE/ft-install.log" 2>&1 ) || die "freetype build failed (see $CACHE/ft-*.log)"
+fi
+
+# ------------------------------------------------------------------ 4. libVLC
+say "libVLC $VLC_VER (VideoLAN's own Windows build)"
+fetch "https://get.videolan.org/vlc/$VLC_VER/win64/vlc-$VLC_VER-win64.zip" vlc-win64.zip
+VLC="$CACHE/vlc-$VLC_VER"
+[ -d "$VLC" ] || unzip -q "$CACHE/vlc-win64.zip" -d "$CACHE"
+[ -f "$VLC/libvlc.dll" ] || die "libvlc.dll not found in the VLC zip"
+fetch "https://get.videolan.org/vlc/$VLC_VER/vlc-$VLC_VER.tar.xz" vlc-src.tar.xz
+if [ ! -d "$CACHE/vlc-headers/vlc" ]; then
+  mkdir -p "$CACHE/vlc-headers"
+  tar -xf "$CACHE/vlc-src.tar.xz" -C "$CACHE" "vlc-$VLC_VER/include" 2>/dev/null \
+    || die "could not extract VLC headers"
+  cp -r "$CACHE/vlc-$VLC_VER/include/vlc" "$CACHE/vlc-headers/"
+fi
+if [ ! -f "$CACHE/sdk/lib/libvlc.a" ]; then
+  mkdir -p "$CACHE/sdk/lib"
+  # gendef writes <name>.def into the *current* directory and says nothing on stdout,
+  # so run it in the cache and pick the file up from there. (A redirection to
+  # libvlc.def "works" by producing an empty file, and dlltool then reports
+  # "definition file empty" - which is exactly how this went wrong the first time.)
+  ( cd "$CACHE" && "$TC/bin/gendef" "$VLC/libvlc.dll" >/dev/null 2>&1 ) \
+    || die "gendef failed on libvlc.dll"
+  [ -s "$CACHE/libvlc.def" ] || die "gendef produced no definition file"
+  "$TC/bin/x86_64-w64-mingw32-dlltool" -d "$CACHE/libvlc.def" -l "$CACHE/sdk/lib/libvlc.a" \
+    -D libvlc.dll || die "dlltool failed"
+fi
+
+# ------------------------------------------------------------------ 5. build
+say "compiling"
+INC="-I $SRC -I $CACHE/vlc-headers -I $SDL/include/SDL2 -I $MSYS/include -I $MSYS/include/freetype2 -I $FT_OUT/include/freetype2"
+FLAGS="-std=c++17 -O2 -DNDEBUG -D_WIN32_WINNT=0x0A00 -Wall -Wextra -Wno-unused-parameter"
+objs=()
+for f in $(find "$SRC/core" "$SRC/library" "$SRC/platform" "$SRC/playback" "$SRC/render" "$SRC/ui" -name '*.cpp' | sort) "$SRC/main.cpp"; do
+  o="$OBJ/$(echo "${f#$SRC/}" | tr '/' '_').o"
+  objs+=("$o")
   # shellcheck disable=SC2086
-  "$CXX_BIN" $CXXFLAGS_WIN $PKG_CFLAGS -I "$ROOT/native/src" -c -o "$object" "$source" \
-    || die "compiling $(basename "$source") failed"
-done < <(find "$SRC/core" "$SRC/library" "$SRC/platform" "$SRC/playback" "$SRC/render" "$SRC/ui" "$SRC" \
-           -maxdepth 1 -name '*.cpp' 2>/dev/null; find "$SRC/core" "$SRC/library" "$SRC/platform" \
-           "$SRC/playback" "$SRC/render" "$SRC/ui" -name '*.cpp'; find "$SRC" -maxdepth 1 -name 'main.cpp')
+  "$CXX" $FLAGS $INC -c -o "$o" "$f" || die "compiling ${f#$SRC/} failed"
+done
 
-# The manifest and the version block live in a resource script, which is how an
-# unsigned mingw build gets DPI awareness and a product name in Explorer.
-cat > "$BUILD/version.rc" <<RC
-1 24 "${PKG}/app.manifest"
+say "linking (GUI subsystem: double-click opens the window, not a console)"
+cat > "$CACHE/version.rc" <<RC
+1 24 "$ROOT/native/packaging/app.manifest"
 1 VERSIONINFO
 FILEVERSION 2,0,0,0
 PRODUCTVERSION 2,0,0,0
@@ -119,11 +177,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName",      "VLCFlix"
       VALUE "FileDescription",  "VLCFlix Studio"
-      VALUE "FileVersion",      "${VERSION}"
+      VALUE "FileVersion",      "2.0.0"
       VALUE "InternalName",     "VLCFlixStudio"
       VALUE "OriginalFilename", "VLCFlixStudio.exe"
       VALUE "ProductName",      "VLCFlix Studio"
-      VALUE "ProductVersion",   "${VERSION}"
+      VALUE "ProductVersion",   "2.0.0"
     END
   END
   BLOCK "VarFileInfo"
@@ -132,37 +190,34 @@ BEGIN
   END
 END
 RC
-"$WINDRES" -I "$PKG" -O coff -o "$BUILD/version.res.o" "$BUILD/version.rc" || die "windres failed"
+"$WINDRES" -I "$CACHE" -O coff -o "$OBJ/version.res.o" "$CACHE/version.rc" || die "windres failed"
 
-say "linking"
+LIBS="-L$CACHE/sdk/lib -lvlc -L$SDL/lib -lmingw32 -lSDL2main -lSDL2 \
+ -L$MSYS/lib -lpng16 -ljpeg -lz $FT_OUT/lib/libfreetype.a \
+ -lole32 -luuid -lshell32 -lshlwapi -lversion -ldbghelp -lws2_32 -lwinmm -limm32 \
+ -lgdi32 -lcomdlg32 -ladvapi32 -luser32"
 # shellcheck disable=SC2086
-"$CXX_BIN" -mwindows -o "$STAGE/$OUT_EXE" "${objects[@]}" "$BUILD/version.res.o" $PKG_LIBS \
-  -lole32 -luuid -lshell32 -lshlwapi -lversion -ldbghelp -lws2_32 -static-libgcc -static-libstdc++ \
-  || die "linking failed"
+"$CXX" -o "$PAYLOAD/VLCFlixStudio.exe" "${objs[@]}" "$OBJ/version.res.o" -mwindows $LIBS \
+  -static-libgcc -static-libstdc++ || die "linking failed"
 
 say "staging the payload"
-cp "$ROOT/LICENSE.txt" "$STAGE/LICENSE.txt"
-cp "$ROOT/native/README.md" "$STAGE/README.txt"
-# libVLC is shipped, not assumed: the app is useless without it, and picking up an
-# arbitrary system libvlc would make the same build behave differently per machine.
-cp "$VLC_DIR/libvlc.dll" "$VLC_DIR/libvlccore.dll" "$STAGE/" || die "libvlc.dll not found in VLC_DIR"
-rm -rf "$STAGE/plugins"
-mkdir -p "$STAGE/plugins"
-# Only the modules this app uses; the full plugin folder is ~300 MB.
-for module in codec/avcodec plugin/access/ filesystem video_output audio_output \
-              packetizer/ demux/mpeg demux/avi demux/mp4 demux/ogg demux/mkv \
-              text_renderer/freetype video_filter misc/demux; do
-  [ -e "$VLC_DIR/plugins/$module" ] && cp -r "$VLC_DIR/plugins/$module" "$STAGE/plugins/" 2>/dev/null
-done
+cp "$SDL/bin/SDL2.dll" "$MSYS/bin/libpng16-16.dll" "$MSYS/bin/zlib1.dll" "$MSYS/bin/libjpeg-8.dll" "$PAYLOAD/"
+cp "$VLC/libvlc.dll" "$VLC/libvlccore.dll" "$PAYLOAD/"
+rm -rf "$PAYLOAD/plugins"
+mkdir -p "$PAYLOAD/plugins"
+cp -r "$VLC/plugins/." "$PAYLOAD/plugins/"
+cp "$ROOT/LICENSE.txt" "$PAYLOAD/"
+cp "$ROOT/scripts/windows-selfcheck.ps1" "$PAYLOAD/"
 
-say "building the installer"
-mkdir -p "$DIST"
-"$MAKENSIS" -V2 -DVERSION="$VERSION" -DSTAGE="$STAGE" -DOUTDIR="$DIST" "$PKG/installer.nsi" \
-  || die "makensis failed"
+say "checking that the payload can load at all"
+"$ROOT/scripts/check-win-payload.sh" "$PAYLOAD" | tail -20 || die "the payload is incomplete"
 
-say "packing the portable zip"
-command -v zip >/dev/null 2>&1 && (cd "$STAGE" && zip -qr "$DIST/VLCFlixStudio-portable-$VERSION.zip" .) \
-  || printf 'zip not installed: portable archive skipped\n'
+if [ "$MODE" = "zip" ]; then
+  say "packing"
+  ( cd "$PAYLOAD" && zip -qr "$DIST/VLCFlixStudio-win64.zip" . )
+  ls -lsh "$DIST/VLCFlixStudio-win64.zip"
+fi
 
-printf '\nBuilt (unverified - see docs/TESTING.md section 9):\n'
-ls -1sh "$DIST"
+printf '\nBuilt: %s\n' "$PAYLOAD/VLCFlixStudio.exe"
+printf 'This build has not been RUN. Run scripts/windows-selfcheck.ps1 on Windows\n'
+printf 'and read docs/TESTING.md section 10 before calling it verified.\n'

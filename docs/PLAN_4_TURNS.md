@@ -141,7 +141,7 @@ goes green; anything unsigned off is listed in the README under "not verified".
 **Status: done.** `docs/TESTING.md` exists with six layers instead of five — the
 sanitizer layer (`make asan`) and a static layer (`tools/preflight.sh`) were added
 because building this turn found a bug that only misbehaved *sometimes*, and a rule
-set that no compiler here can check. `make verify` = 22 static checks + 339 test
+set that no compiler here can check. `make verify` = 28 static checks + 339 test
 checks + 15 journey steps, green from a fresh clone; CTest runs the same suites.
 Three real bugs were found and fixed on the way (unreadable file with no marker, a
 zero-decode file written as watched, half of all artwork previews never drawn), each

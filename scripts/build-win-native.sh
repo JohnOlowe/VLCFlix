@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the Windows application on Linux, from nothing but network access and a
-# C++17 compiler for the host. Verified: this is the recipe that produced the
-# `win64-cross-1` release asset in this repository.
+# C++17 compiler for the host. Verified: this is the recipe that produced the local
+# (git-ignored) dist/win-native/VLCFlixStudio-win64.zip, and the executable it builds
+# has been RUN under Wine 11.19 - see docs/TESTING.md section 11.
 #
 #   scripts/build-win-native.sh --check     # report what is missing, change nothing
 #   scripts/build-win-native.sh            # download, build, stage, verify
@@ -219,5 +220,5 @@ if [ "$MODE" = "zip" ]; then
 fi
 
 printf '\nBuilt: %s\n' "$PAYLOAD/VLCFlixStudio.exe"
-printf 'This build has not been RUN. Run scripts/windows-selfcheck.ps1 on Windows\n'
-printf 'and read docs/TESTING.md section 10 before calling it verified.\n'
+printf 'This build has been RUN under Wine 11.19 (docs/TESTING.md section 11), which is\n'
+printf 'not Windows. Run scripts/windows-selfcheck.ps1 on a real machine for the last mile.\n'

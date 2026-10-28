@@ -35,16 +35,24 @@ api-ms-win-crt-process-l1-1-0.dll api-ms-win-crt-runtime-l1-1-0.dll
 api-ms-win-crt-stdio-l1-1-0.dll api-ms-win-crt-string-l1-1-0.dll
 api-ms-win-crt-time-l1-1-0.dll api-ms-win-crt-utility-l1-1-0.dll
 api-ms-win-core-file-l1-1-0.dll api-ms-win-core-synch-l1-1-0.dll
+avicap32.dll cfgmgr32.dll msimg32.dll bcryptprimitives.dll d2d1.dll ncrypt.dll
 "
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 is_system() {
-  local needle; needle="$(lower "$1")"
+  local needle dll; needle="$(lower "$1")"
   for dll in $system_dlls; do [ "$dll" = "$needle" ] && return 0; done
+  # api-ms-win-* / ext-ms-* are API-set contracts, not real files: Windows 10+ and
+  # Wine both resolve them internally. Bundling a copy is what breaks a payload, so
+  # they are system by pattern instead of by an endless enumeration. (Found by the
+  # ffmpeg.exe/ffprobe.exe binaries once they were actually put in the payload.)
+  case "$needle" in
+    api-ms-win-*.dll|ext-ms-*.dll) return 0 ;;
+  esac
   return 1
 }
 in_payload() {
-  local needle; needle="$(lower "$1")"
+  local needle f; needle="$(lower "$1")"
   for f in "$DIR"/*.dll "$DIR"/*.DLL; do
     [ -f "$f" ] || continue
     [ "$(lower "$(basename "$f")")" = "$needle" ] && return 0

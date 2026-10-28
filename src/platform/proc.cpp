@@ -2,6 +2,9 @@
 
 #include <cerrno>
 #include <cstring>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 #include "core/log.h"
 
@@ -157,9 +160,26 @@ bool have_binary(const std::string& name) {
 
 #else  // _WIN32
 
-// Windows: CreateProcess with inherited pipes. Written to be correct but NOT yet
-// executed anywhere - the sandbox has no Windows toolchain, so this path is
-// unverified until the first build on the laptop (stated in docs/PORT_TURNS).
+// Windows: CreateProcess with inherited pipes, drained by two reader threads.
+//
+// This was rewritten after the first real execution of the Windows binary (under
+// Wine 11.19): the previous version polled the pipes with PeekNamedPipe, and every
+// child that did report output - ffprobe, ffmpeg - arrived here with an empty stdout
+// AND an empty stderr, so a library scan called every file unreadable. A process that
+// starts, exits 0 and produces nothing is the worst kind of failure: silent.
+//
+// A blocking read on a thread per pipe is simpler and race-free. The thread returns
+// when the pipe reaches EOF, which happens once the child and every copy of its write
+// handle are gone, so data buffered at exit is still read - no polling, no 40 ms sleep.
+//
+// The handle list below is not optional decoration. bInheritHandles=TRUE inherits EVERY
+// inheritable handle the process owns, so with a scan running eight probes at once one
+// child inherited another child's pipe write end. That pipe then never reached EOF, the
+// reader thread blocked forever, and Windows/Wine refused the launches outright:
+// eight concurrent probes produced "CreateProcess failed, error 1359" and three
+// timeouts, while the same code run one process at a time was perfect. Restricting
+// inheritance to exactly our three handles is the documented fix, and it is what makes
+// scanning a folder faster than one file at a time.
 ProcResult run_process(const std::vector<std::string>& argv, int timeout_ms) {
   ProcResult result;
   if (argv.empty()) {
@@ -176,8 +196,15 @@ ProcResult run_process(const std::vector<std::string>& argv, int timeout_ms) {
     result.start_error = "CreatePipe failed";
     return result;
   }
+  // The read ends must not be inherited, or the pipe can never reach EOF.
   SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
   SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
+
+  // A GUI-subsystem process has no standard handles at all. Give the child a real
+  // (empty) stdin rather than NULL: NULL in STARTUPINFO is not a valid handle, and
+  // tools that check their stdin behave differently when it is missing.
+  HANDLE nul = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                           OPEN_EXISTING, 0, nullptr);
 
   std::string command_line;
   for (const auto& a : argv) {
@@ -187,60 +214,92 @@ ProcResult run_process(const std::vector<std::string>& argv, int timeout_ms) {
   std::vector<char> mutable_line(command_line.begin(), command_line.end());
   mutable_line.push_back('\0');
 
-  STARTUPINFOA si{};
-  si.cb = sizeof si;
-  si.dwFlags = STARTF_USESTDHANDLES;
-  si.hStdOutput = out_w;
-  si.hStdError = err_w;
-  si.hStdInput = nullptr;
+  STARTUPINFOEXA si{};
+  si.StartupInfo.cb = sizeof si;
+  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  si.StartupInfo.hStdOutput = out_w;
+  si.StartupInfo.hStdError = err_w;
+  si.StartupInfo.hStdInput = nul;
+
+  // Only these three handles cross into the child - nothing else the process happens
+  // to have open, which is what made concurrent probes fail.
+  HANDLE inherited[3] = {out_w, err_w, nul};
+  SIZE_T attr_size = 0;
+  InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+  std::vector<char> attr_buffer(attr_size > 0 ? attr_size : 1);
+  si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buffer.data());
+  bool list_ok = InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &attr_size);
+  if (list_ok) {
+    list_ok = UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                        inherited, sizeof inherited, nullptr, nullptr) != FALSE;
+  }
+
   PROCESS_INFORMATION pi{};
-  const BOOL started = CreateProcessA(nullptr, mutable_line.data(), nullptr, nullptr, TRUE,
-                                      CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+  // Process creation itself is serialised. Two threads launching children at the same
+  // moment made Wine 11.19 refuse the second with ERROR_INTERNAL_ERROR (1359) or 731,
+  // roughly at random - 5 of 8 concurrent probes died before they started. Serialising
+  // only the launch costs microseconds and the children still run in parallel, so a
+  // scan is just as fast and the failure mode is gone.
+  static std::mutex spawn_mutex;
+  std::lock_guard<std::mutex> spawn_lock(spawn_mutex);
+  const BOOL started =
+      list_ok ? CreateProcessA(nullptr, mutable_line.data(), nullptr, nullptr, TRUE,
+                               EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, nullptr, nullptr,
+                               &si.StartupInfo, &pi)
+              : FALSE;
+  if (list_ok) DeleteProcThreadAttributeList(si.lpAttributeList);
+  // Our copies of the write ends go immediately: the readers only see EOF once no
+  // process holds them.
   CloseHandle(out_w);
   CloseHandle(err_w);
   if (!started) {
     result.start_error = "CreateProcess failed, error " + std::to_string(GetLastError());
     CloseHandle(out_r);
     CloseHandle(err_r);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
     return result;
   }
   result.started = true;
 
-  const DWORD deadline = GetTickCount() + static_cast<DWORD>(timeout_ms > 0 ? timeout_ms : 0);
-  auto drain = [&](HANDLE pipe, std::string* sink) {
+  auto read_all = [](HANDLE pipe, std::string* sink) {
     char buf[8192];
-    DWORD available = 0;
-    while (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0) {
-      DWORD read_now = 0;
-      if (!ReadFile(pipe, buf, sizeof buf, &read_now, nullptr) || read_now == 0) break;
-      sink->append(buf, read_now);
+    DWORD got = 0;
+    while (ReadFile(pipe, buf, sizeof buf, &got, nullptr) && got > 0) {
+      sink->append(buf, got);
     }
   };
-  for (;;) {
-    drain(out_r, &result.out);
-    drain(err_r, &result.err);
-    if (WaitForSingleObject(pi.hProcess, 40) == WAIT_OBJECT_0) break;
-    if (timeout_ms > 0 && GetTickCount() > deadline) {
-      result.timed_out = true;
-      TerminateProcess(pi.hProcess, 1);
-      break;
-    }
+  std::thread reader_out(read_all, out_r, &result.out);
+  std::thread reader_err(read_all, err_r, &result.err);
+
+  const DWORD wait = WaitForSingleObject(
+      pi.hProcess, timeout_ms > 0 ? static_cast<DWORD>(timeout_ms) : INFINITE);
+  if (wait == WAIT_TIMEOUT) {
+    result.timed_out = true;
+    // Killing the child closes the last write handles, so both readers return.
+    TerminateProcess(pi.hProcess, 1);
+    WaitForSingleObject(pi.hProcess, 5000);
   }
-  drain(out_r, &result.out);
-  drain(err_r, &result.err);
+
   DWORD code = 0;
   GetExitCodeProcess(pi.hProcess, &code);
   result.exit_code = static_cast<int>(code);
-  CloseHandle(pi.hProcess);
-  CloseHandle(pi.hThread);
+
+  reader_out.join();
+  reader_err.join();
   CloseHandle(out_r);
   CloseHandle(err_r);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+  if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
   return result;
 }
 
 bool have_binary(const std::string& name) {
-  const ProcResult r = run_process({name, "-version"}, 5000);
-  return r.started && !r.timed_out;
+  // "-version" must actually succeed and actually print something. Checking only that
+  // a process was created is how doctor once reported "ffmpeg found" on Windows while
+  // every probe came back empty.
+  const ProcResult r = run_process({name, "-version"}, 8000);
+  return r.started && !r.timed_out && r.exit_code == 0 && !r.out.empty();
 }
 
 #endif

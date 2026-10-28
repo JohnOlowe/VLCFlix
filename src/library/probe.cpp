@@ -47,7 +47,9 @@ VideoInfo probe_video(const std::string& path) {
        "format=duration:stream=codec_type,codec_name,width,height,pix_fmt", "-of", "json", path},
       20000);
   if (!r.ok()) {
-    LOG_DEBUG("ffprobe failed for %s: %s", path.c_str(), r.error_line().c_str());
+    LOG_DEBUG("ffprobe failed for %s: %s [started=%d exit=%d timed_out=%d out=%zu err=%zu start_error=%s]",
+              path.c_str(), r.error_line().c_str(), r.started ? 1 : 0, r.exit_code,
+              r.timed_out ? 1 : 0, r.out.size(), r.err.size(), r.start_error.c_str());
     return info;
   }
   Json root;

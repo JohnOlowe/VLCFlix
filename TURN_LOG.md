@@ -1386,3 +1386,33 @@ Remove Programs running this uninstaller, and side-by-side with a genuine 1.2.0 
 `make verify` is green with **30 static checks** (the NSIS draft `installer.nsi` is gone;
 its identity checks now check `native/src/setup/setup.cpp`), 412 tests and 15 journey
 steps. Deliverable: **`native/releases/VLCFlixStudio-Setup.exe`**, 71 MB, git-ignored.
+
+### Turn 6, follow-up: "side-by-side configuration is incorrect"
+
+The first run on a real Windows machine failed before `main()`:
+
+> The application has failed to start because its side-by-side configuration is
+> incorrect.
+
+`ERROR_SXS_CANT_GEN_ACTCTX` (14001): the loader read the embedded manifest, found a
+`description` **attribute** on `<assemblyIdentity>` that Microsoft's schema does not
+define (a description is a child element, and the six legal attributes are `type`,
+`name`, `language`, `processorArchitecture`, `version`, `publicKeyToken`), and refused
+the application. Wine does not validate manifests and no line of our own logging can run
+before `log::init()`, so every test on this machine passed a manifest Windows rejects.
+
+Fixed: the description is a child element now, `processorArchitecture` is `*`, and
+**every `<dependency>` is gone** - nothing here imports `comctl32.dll`, and a dependent
+assembly is the only thing side-by-side has to resolve, so there is nothing left to
+fail. `scripts/check-win-manifest.py` enforces the schema rules, the root namespace and
+version, `asInvoker`, no `--` in comments, the 64 KB limit, and that the built exe
+carries that manifest exactly once, byte for byte. `tools/preflight.sh` runs it **with a
+negative control** (putting the bad attribute back must fail the check), the build runs
+it before `windres` and again against both linked executables, and `make verify` now
+fails on the exact defect that stopped Windows. 33 static checks, 412 tests, 15 journey
+steps, `make asan` clean; the rebuilt installer is still exercised under Wine 11.19
+(install, verify, scan, play).
+
+The honest limit: Microsoft's parser cannot be run here. The manifest is schema-clean
+with no dependent assemblies, which is the strongest statement available from this
+machine; `sxstrace.exe` on the target decides if anything remains.

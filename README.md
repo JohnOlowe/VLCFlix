@@ -52,6 +52,14 @@ from `dist/win-native/VLCFlixStudio-win64.zip`. Either way your data stays in
 `ffprobe.exe` in the install folder (or on `PATH`) if you want durations from files
 whose headers are unusual — `doctor` says plainly when they are missing.
 
+**If Windows says the side-by-side configuration is incorrect**, you have a build older
+than 2026-10-28: its manifest carried a `description` attribute that Microsoft's schema
+does not define, and the loader rejects the whole manifest before the program runs. It
+is fixed — the manifest is now schema-checked and has no dependent assemblies at all —
+and `scripts/check-win-manifest.py` runs inside `make verify` and inside every Windows
+build so it cannot come back. A current installer is sha256
+`d87120586c2670ff898e9f9f3cedf9af802586e4f27c1c3b9d18148387e9a546`.
+
 Both have been **executed** (under Wine 11.19, on this machine): the installer from a
 fresh prefix — install, verify, run the installed app, uninstall — and the app itself:
 scanning, artwork, playback, all six screens and the crash log. Running it is what found

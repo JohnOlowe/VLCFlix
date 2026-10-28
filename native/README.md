@@ -223,7 +223,7 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 ## What the tests prove
 
 `make verify` runs four things and they are not interchangeable:
-`../tools/preflight.sh` (30 static checks a compiler here cannot make), 412 test
+`../tools/preflight.sh` (33 static checks a compiler here cannot make), 412 test
 checks, and the 15-step journey through the real binary. `make asan` runs the same 412
 checks under AddressSanitizer. The reasoning behind each layer, the negative control
 for every layer, and the honest list of what none of them can reach are in

@@ -1,35 +1,33 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
-  Application manifest for VLCFlix Studio (native build).
+  Application manifest for VLCFlix Studio.
 
-  Three things here are load-bearing, and the third is why this file exists at all:
+  This file caused "The application has failed to start because its side-by-side
+  configuration is incorrect" on a real Windows machine, so the rules it follows now
+  are written down here:
 
-  1. per-monitor DPI awareness, so the window is not a blurry bitmap on a 150% display;
-  2. the requested execution level, so the app runs as the user and never prompts;
-  3. a private set of assembly identity fields. Windows uses the assembly identity as
-     part of what makes an application "the same application" for shell integration
-     and side-by-side resolution. VLCFlix Studio must be a *new* application, not an
-     upgrade of VLCFlix 1.2.0, so the name, description and version here are the new
-     product's and share nothing with 1.2.0's manifest.
+  * Only elements and attributes that are in Microsoft's manifest schema are used.
+    The previous version carried a `description` ATTRIBUTE on assemblyIdentity. It is
+    not in the schema (a description is a child element), Windows' side-by-side parser
+    rejects the whole manifest for it, and the process never starts. Wine does not
+    validate manifests, which is why the bug survived every test on this machine.
+
+  * There are no <dependency> elements at all. Nothing here imports comctl32.dll, and
+    a dependent assembly is the only thing side-by-side has to resolve. With none, a
+    "side-by-side configuration is incorrect" failure has nothing left to be about.
+
+  * A comment may not contain a double hyphen. scripts/check-win-manifest.py enforces
+    that, the attribute whitelist, the element order and the embedded bytes, and the
+    build refuses to ship a manifest that fails it.
 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity
       type="win32"
       name="VLCFlixStudio.Desktop"
       version="2.0.0.0"
-      processorArchitecture="amd64"
-      description="VLCFlix Studio - native C++ media library and player" />
-  <dependency>
-    <dependentAssembly>
-      <assemblyIdentity
-          type="win32"
-          name="Microsoft.Windows.Common-Controls"
-          version="6.0.0.0"
-          processorArchitecture="*"
-          publicKeyToken="6595b64144ccf1df"
-          language="*" />
-    </dependentAssembly>
-  </dependency>
+      processorArchitecture="*" />
+  <description>VLCFlix Studio - native C++ media library and player</description>
+
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
@@ -37,6 +35,14 @@
       </requestedPrivileges>
     </security>
   </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and 11. Not an upgrade path: VLCFlix 1.x keeps whatever it has. -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
@@ -44,10 +50,4 @@
       <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
     </windowsSettings>
   </application>
-  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
-    <application>
-      <!-- Windows 10 and 11 only. Not an upgrade path: 1.2.0 keeps whatever it has. -->
-      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
-    </application>
-  </compatibility>
 </assembly>

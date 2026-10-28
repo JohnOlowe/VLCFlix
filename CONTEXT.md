@@ -41,7 +41,7 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 30 static checks + 412
+- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 412
   test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 412
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,

@@ -185,7 +185,7 @@ list (`[&, segments]`). Two things keep it fixed:
 ## 7. Layer 6 — static preflight (the part of the checklist a machine can hold)
 
 ```bash
-tools/preflight.sh        # 30 checks, no compiler needed
+tools/preflight.sh        # 33 checks, no compiler needed
 ```
 
 Some rules cannot be checked by building on this machine, but they *can* be checked by
@@ -257,7 +257,7 @@ difference between "the Play button exists" and "the Play button can be reached"
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
 * 412 checks across layers 1, 2 and 4 — `0 failure(s)`
-* 30/30 static preflight checks
+* 33/33 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
 * `make asan`: 412 checks clean, and the pre-fix code failing under it
@@ -473,6 +473,42 @@ Two things this proves that a test cannot: an uninstaller can delete the directo
 running from (it copies itself to `%TEMP%`, relaunches with `--finish-uninstall`, and
 retries the delete for five seconds because Windows keeps handles open), and no step
 depends on a file the user has to remember to run first.
+
+### The manifest bug: the one failure that happens before `main()`
+
+The first run of the installer on a real Windows machine ended before any of this code
+ran:
+
+> The application has failed to start because its side-by-side configuration is
+> incorrect. Please see the application event log or use the command-line sxstrace.exe
+> tool for more detail.
+
+That is `ERROR_SXS_CANT_GEN_ACTCTX` (14001), raised by the loader while reading the
+application manifest. **Cause:** `native/packaging/app.manifest` carried a
+`description` *attribute* on `<assemblyIdentity>`. Microsoft's manifest schema defines
+exactly six attributes there — `type`, `name`, `language`, `processorArchitecture`,
+`version`, `publicKeyToken` — and a description is a **child element** of `<assembly>`,
+not an attribute. An out-of-schema manifest is rejected whole, so the process never
+starts. Nothing here could see it: Wine does not validate manifests, and the app cannot
+log a failure that happens before `log::init()`.
+
+**Fixed in two independent ways, because one fix is not enough for a failure with no
+log:**
+
+| Change | Why |
+|---|---|
+| `description` moved to a `<description>` child element | the actual defect |
+| every `<dependency>` removed | nothing in the app or the installer imports `comctl32.dll`; a dependent assembly is the only thing side-by-side has to *resolve*, so an empty list removes the failure mode instead of trusting it |
+| `processorArchitecture="*"` | the documented "all platforms" value, instead of naming one |
+| `scripts/check-win-manifest.py` | enforces the attribute whitelist, the root/namespace/version, `requestedExecutionLevel asInvoker`, no comments containing `--`, the 64 KB resource limit, and — given the built exe — that the manifest is embedded **exactly once, byte for byte** |
+| `tools/preflight.sh` runs it, with a negative control | injecting `description="…"` back into a temp copy must make the check **fail**; if the check passes it, the test fails instead |
+| `scripts/build-win-native.sh` runs it twice | once on the file before `windres`, once against the linked `VLCFlixStudio.exe` and `setup-stub.exe`, and refuses to publish either if it fails |
+
+`make verify` therefore now fails on the exact defect that stopped the Windows build.
+What it still cannot do is run Microsoft's own parser: Wine ignores manifests. The
+manifest is schema-clean and has no dependent assemblies to resolve, which is the
+strongest statement available without a Windows machine — and `sxstrace.exe` on the
+target machine is the arbiter if anything remains.
 
 `ffmpeg.exe` and `ffprobe.exe` are **not** bundled (166 MB each, and they are the
 user's choice of build). Without them the scan still runs and lists the films, but

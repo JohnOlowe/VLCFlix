@@ -367,7 +367,7 @@
  "native": {
   "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
   "branch": "cpp",
-  "tests": "412 checks (unit + golden image + fault injection), 30 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 412 under AddressSanitizer",
+  "tests": "412 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 412 under AddressSanitizer",
   "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
   "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
   "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
@@ -385,7 +385,7 @@
    "a real Explorer/Start Menu/Add-Remove Programs, and side by side with a genuine 1.2.0"
   ],
   "installer": {
-   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71 MB, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
+   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,750,712 bytes, sha256 d87120586c2670ff898e9f9f3cedf9af802586e4f27c1c3b9d18148387e9a546, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
    "how": "GUI-subsystem stub (miniz) + payload zip appended + 24-byte footer 'VFSUZIP1' + <offset> + <length>; extracts to %LOCALAPPDATA%\\Programs\\VLCFlixStudio on first run",
    "installs": "372 files; Desktop icon; Start Menu entry + uninstall entry; HKCU\\...\\Uninstall\\VLCFlixStudio (DisplayName/DisplayVersion 2.0.0/DisplayIcon/InstallLocation/UninstallString/QuietUninstallString/EstimatedSize/NoModify/NoRepair); launches the app when double-clicked",
    "flags": "--install-only, --uninstall, --verify (exit 0 only when complete), --dir <path>, --quiet",
@@ -393,7 +393,15 @@
    "uninstall": "removes program + 3 shortcuts + registry key, keeps catalog/media/progress; copies itself to %TEMP% and relaunches with --finish-uninstall, retrying the delete for 5 s",
    "legacy": "VLCFlix 1.x's folder is only read; --dir pointed at it is refused with exit 1",
    "verified_under_wine_11_19": "install (no args) -> 372 files; --verify -> 0; installed app: version, scan 8 items/0 errors, play decoded=70 presented=70, render 58,923 B PNG; reinstall keeps the library; uninstall removes folder + key + shortcuts and leaves user data; stand-in 1.x untouched",
-   "not_verified": "a real Windows shell drawing the icons, a real Add/Remove Programs running the uninstaller, side by side with a genuine 1.2.0"
+   "not_verified": "a real Windows shell drawing the icons, a real Add/Remove Programs running the uninstaller, side by side with a genuine 1.2.0",
+   "manifest_bug": {
+    "symptom": "real Windows: 'The application has failed to start because its side-by-side configuration is incorrect' = ERROR_SXS_CANT_GEN_ACTCTX (14001), before main() ran",
+    "cause": "native/packaging/app.manifest had a `description` ATTRIBUTE on <assemblyIdentity>; Microsoft's schema allows only type, name, language, processorArchitecture, version, publicKeyToken there (description is a child element of <assembly>), so the loader rejects the whole manifest",
+    "why_tests_missed_it": "Wine does not validate manifests, and nothing of ours runs before log::init()",
+    "fix": "description is now a child element; processorArchitecture='*'; ALL <dependency> elements removed (nothing imports comctl32, so side-by-side has nothing to resolve)",
+    "guard": "scripts/check-win-manifest.py (schema attribute whitelist, root/namespace/version, asInvoker, no '--' in comments, 64 KB limit, embedded bytes exactly once) run by tools/preflight.sh (with a negative control that must fail) and by scripts/build-win-native.sh before windres and against both linked exes",
+    "not_proven": "Microsoft's own parser cannot be run here; sxstrace.exe on the target machine is the arbiter"
+   }
   }
  },
  "windows_build": {

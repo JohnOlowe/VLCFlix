@@ -24,6 +24,8 @@ class Window {
   bool open(int width, int height, const std::string& title);
   void close();
   void present(const Canvas& canvas);
+  // Called from the event loop every frame; cheap and idempotent.
+  void set_cursor(PointerCursor kind);
   // Waits up to `timeout_ms` for input. Returns false only when the window asked to
   // close; a timeout with no event returns true and leaves `event` untouched.
   bool poll(ui::InputEvent* event, int timeout_ms = 16);
@@ -35,8 +37,11 @@ class Window {
   int height() const { return height_; }
 
  private:
+  void close_cursors();
   struct Impl;
   Impl* impl_ = nullptr;
+  // One shared cursor per shape: creating them per frame leaks handles on Windows.
+  void* cursors_[8] = {};
   void* window_ = nullptr;
   int width_ = 0;
   int height_ = 0;

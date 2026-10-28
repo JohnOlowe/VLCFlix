@@ -84,6 +84,8 @@ void App::add_hit(const Rect& rect, Action action) {
   hits_.push_back({rect, std::move(action)});
 }
 
+void App::swallow(const Rect& rect) { hits_.push_back({rect, Action{}}); }
+
 Action App::hit_test(float x, float y) const {
   // Last drawn wins, which is what "on top" means for an immediate-mode UI.
   for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
@@ -840,6 +842,12 @@ void App::draw_detail(Canvas& canvas, const Item& item) {
   const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
                    panel_height};
   canvas.fill_round_rect(panel, 14, theme::panel());
+  // Bottom of the sheet's z-order, registered before anything inside it: the scrim
+  // closes the sheet and the panel swallows clicks so they cannot reach the page
+  // behind. Hit testing takes the last match, so registering these two *last* put them
+  // on top of the sheet's own buttons and made every control in here dead.
+  add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
+  swallow(panel);
 
   // The sheet scrolls. Art, title, meta, the whole synopsis and the buttons are one
   // column whose height is measured before anything is drawn, so a long synopsis or a
@@ -922,9 +930,6 @@ void App::draw_detail(Canvas& canvas, const Item& item) {
   canvas.fill_circle(close.x + 17, close.y + 17, 17, rgba(0x000000, 150));
   regular_.draw_centered(canvas, "\u00d7", close, 20, theme::text());
   add_hit(close, Action{Action::Kind::CloseOverlay, -1, ""});
-  // Clicking the scrim also closes.
-  add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
-  add_hit(panel, Action{});
 }
 
 namespace {
@@ -1029,6 +1034,9 @@ void App::draw_settings(Canvas& canvas) {
   const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
                    panel_height};
   canvas.fill_round_rect(panel, 14, theme::panel());
+  // Same rule as the detail sheet: scrim and swallow first, controls after them.
+  add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
+  swallow(panel);
 
   bold_.draw(canvas, "Settings", panel.x + 32, panel.y + 28, 24, theme::text());
   const Rect close{panel.right() - 54, panel.y + 22, 32, 32};
@@ -1125,8 +1133,6 @@ void App::draw_settings(Canvas& canvas) {
 
   draw_scrollbar(canvas, Rect{panel.right() - 16, viewport.y + 4, 4, viewport.h - 8}, "settings");
 
-  add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
-  add_hit(panel, Action{});
 }
 
 void App::draw_footer(Canvas& canvas) {
@@ -1184,7 +1190,26 @@ void App::ensure_layout() {
   draw(scratch);
 }
 
+PointerCursor App::pointer_cursor() const {
+  // A drag in progress is a pointer doing something, so it stays a hand even when it
+  // has wandered off the bar it grabbed.
+  if (!pointer_known_) return PointerCursor::Arrow;
+  if (!drag_region_.empty()) return PointerCursor::Hand;
+  const Action action = hit_test(pointer_x_, pointer_y_);
+  switch (action.kind) {
+    case Action::Kind::None:
+      return PointerCursor::Arrow;  // includes the sheet's click-swallowing panel
+    case Action::Kind::AddFolder:
+      return PointerCursor::IBeam;  // a text field
+    default:
+      return PointerCursor::Hand;
+  }
+}
+
 bool App::handle(const InputEvent& event) {
+  if (event.type == InputEvent::Type::MouseMove || event.type == InputEvent::Type::MouseDown) {
+    set_pointer(event.x, event.y);
+  }
   if (player_open_) {
     // The player's hit areas come from its own drawing pass, so lay it out first if
     // the window has not drawn a frame yet.

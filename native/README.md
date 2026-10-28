@@ -23,7 +23,7 @@ current, and `../docs/TESTING.md` §10 is the checklist for the machine that can
 sudo apt install build-essential pkg-config libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev
 cd native
 make -j2          # build/vlcflix
-make verify       # the gate: static checks, 412 test checks, 15 journey steps
+make verify       # the gate: static checks, 461 test checks, 15 journey steps
 make test         # just the tests (unit, golden image, fault injection)
 make asan         # the same tests under AddressSanitizer
 make preflight    # just the static checks
@@ -103,6 +103,12 @@ should not throw away the collection.
 VLCFlix 1.x, if present, is left exactly where it is: this is a different application
 with its own folder, data directory and uninstall key, and the installer refuses to be
 pointed at 1.x's folder rather than migrating it.
+
+**On a small screen** the window shrinks to fit the desktop (96 % of the width, 90 % of
+the height, never below 640x420) instead of opening wider than the screen and putting its
+own title bar out of reach. Anything clickable under the pointer turns the cursor into a
+hand, text fields into an I-beam, and dead space stays an arrow — the cursor is decided
+by the same hit areas the click uses, so it cannot promise something a click will not do.
 
 The same build also writes a bare `releases/VLCFlixStudio.exe` and
 `dist/win-native/VLCFlixStudio-win64.zip` for running without installing. Put
@@ -223,13 +229,13 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 ## What the tests prove
 
 `make verify` runs four things and they are not interchangeable:
-`../tools/preflight.sh` (33 static checks a compiler here cannot make), 412 test
-checks, and the 15-step journey through the real binary. `make asan` runs the same 412
+`../tools/preflight.sh` (33 static checks a compiler here cannot make), 461 test
+checks, and the 15-step journey through the real binary. `make asan` runs the same 461
 checks under AddressSanitizer. The reasoning behind each layer, the negative control
 for every layer, and the honest list of what none of them can reach are in
 `../docs/TESTING.md`.
 
-**412 checks** (unit + golden image + fault injection):
+**461 checks** (unit + golden image + fault injection):
 
 - every bug from `../docs/AUDIT.md` has a regression test: **A1** year-titled films,
   **A4** a film past 92 % leaves Continue Watching, **A5** `nv12` is not 10-bit,

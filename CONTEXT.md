@@ -41,8 +41,8 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 412
-  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 412
+- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 461
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 461
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
@@ -80,6 +80,16 @@ pushed and verified from a clean clone.
   anything scrolled out of view are dropped so nothing invisible is clickable. Six new
   UI tests cover it, including a negative control (a sheet that fits must report no
   limit) and a pixel-diff proof that the sheet really moved.
+- **2.0.1 fixes the three things the first real-Windows session found** (all invisible
+  to a headless run): the window now shrinks to fit the screen it opens on
+  (`fit_window_to_display()`, 96 %/90 %, floor 640x420) instead of hanging its own title
+  bar off the desktop; the detail and settings sheets are clickable again (their scrim
+  and click-swallowing panel were registered *last*, and hit testing takes the last
+  match, while `add_hit()` silently dropped the `None` swallow - so controls were dead
+  and any other click closed the sheet); and the pointer finally says what is clickable
+  (`App::pointer_cursor()` -> Arrow/Hand/I-Beam from the same hit areas the click uses).
+  The old test only asserted `handle()` returned true, which the scrim satisfied - the
+  tests now assert what is under the pointer.
 - **The Windows build has now been RUN**, under Wine 11.19 (Wine 11.20 and
   11.20-staging are broken upstream: `create_view`/`virtual_alloc_first_thread_data`
   SEGV before a prefix exists). Executed and captured: `version`, `doctor`, `status`,

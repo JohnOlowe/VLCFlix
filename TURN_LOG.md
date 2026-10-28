@@ -1416,3 +1416,43 @@ steps, `make asan` clean; the rebuilt installer is still exercised under Wine 11
 The honest limit: Microsoft's parser cannot be run here. The manifest is schema-clean
 with no dependent assemblies, which is the strongest statement available from this
 machine; `sxstrace.exe` on the target decides if anything remains.
+
+## Turn 7 — the first session on a real screen
+
+The installer from turn 6 ran on the user's Windows machine. Three things were wrong,
+all of them invisible to a headless run, and all three are fixed in **2.0.1**.
+
+**1. The window was wider than the screen.** It opened at the 1600x900 default wherever
+it landed, so on a smaller desktop the title bar - and minimise, maximise and close with
+it - sat off the edge. `fit_window_to_display()` now shrinks the request to 96 % of the
+desktop width and 90 % of its height (never under 640x420) and the window gets a minimum
+size. The rule is a pure function in `platform/window_size.h`, so it is tested against a
+1366x728 laptop, a 2560x1400 desktop, an 800x480 screen and an unknown display.
+
+**2. In Settings nothing responded, and any click closed the sheet.** Two bugs stacked:
+
+| Bug | Effect |
+|---|---|
+| the full-screen scrim and the click-swallowing panel were registered *after* the sheet's controls, and hit testing takes the last match | they sat on top of every control the sheet drew, so Play, the toggles and the folder field were dead |
+| `add_hit()` silently drops `Action::Kind::None` | the swallow area had never been registered at all, so a click that missed a control reached the scrim and closed the sheet - "it always takes you back to the main page" |
+
+Both sheets (detail and settings) had it. The scrim and the swallow are now registered
+first, and the swallow is its own `swallow()` call so a `None` action cannot be dropped by
+accident. The reason the suite missed it is worth recording: the old assertion was
+`CHECK(click_action(app, Kind::Play))`, which only requires `handle()` to return true -
+and it did, because the click closed the sheet. The tests now assert that the thing under
+the pointer **is** the thing that was drawn there.
+
+**3. Nothing told the user what was clickable.** Hovering a poster or a button left the
+arrow cursor. `App::pointer_cursor()` answers Arrow / Hand / I-Beam from the same hit
+areas the click uses, and the event loop hands that to `Window::set_cursor()`, which
+keeps one SDL cursor per shape.
+
+Suite: 412 → **461 checks**, `make verify` green (33 static + 461 + 15 journey steps),
+`make asan` clean. Both halves of the sheet bug were confirmed by re-breaking them: the
+old ordering fails six checks, and `add_hit(panel, Action{})` fails both new tests.
+
+Windows: installer rebuilt as **2.0.1**, installed and `--verify`-ed under Wine 11.19
+(372 files, `version` → `2.0.1`, `DisplayVersion` → `2.0.1`), and the settings sheet
+re-rendered at 1366x728 to check the panel on a laptop-sized screen
+(`docs/evidence/windows-settings-1366.png`).

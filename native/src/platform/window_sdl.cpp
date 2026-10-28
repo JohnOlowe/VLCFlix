@@ -3,10 +3,12 @@
 #include <SDL.h>
 
 #include "core/log.h"
+#include "platform/window_size.h"
 
 namespace vf {
 
 struct Window::Impl {
+  PointerCursor cursor = PointerCursor::Arrow;
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
@@ -27,6 +29,19 @@ bool Window::open(int width, int height, const std::string& title) {
     delete impl_;
     impl_ = nullptr;
     return false;
+  }
+  // Fit the screen we are opening on. On a laptop smaller than the 1600x900 default the
+  // window used to be wider than the desktop, which puts the title bar - and with it
+  // minimise, maximise and close - somewhere the user cannot reach.
+  SDL_Rect usable{0, 0, 0, 0};
+  if (SDL_GetDisplayUsableBounds(0, &usable) == 0) {
+    const WindowSize fitted = fit_window_to_display(width, height, usable.w, usable.h);
+    if (fitted.width != width || fitted.height != height) {
+      LOG_INFO("window %dx%d does not fit the %dx%d desktop; opening %dx%d instead", width,
+               height, usable.w, usable.h, fitted.width, fitted.height);
+    }
+    width = fitted.width;
+    height = fitted.height;
   }
   impl_->window = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                    width, height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
@@ -52,6 +67,7 @@ bool Window::open(int width, int height, const std::string& title) {
     impl_ = nullptr;
     return false;
   }
+  SDL_SetWindowMinimumSize(impl_->window, 640, 420);
   SDL_SetRenderDrawColor(impl_->renderer, 11, 11, 15, 255);
   SDL_StartTextInput();
   window_ = impl_->window;
@@ -59,6 +75,27 @@ bool Window::open(int width, int height, const std::string& title) {
   height_ = height;
   LOG_INFO("window opened %dx%d (%s)", width, height, title.c_str());
   return true;
+}
+
+void Window::set_cursor(PointerCursor kind) {
+  if (impl_ && impl_->cursor == kind) return;  // SDL_SetCursor on every frame is noise
+  SDL_SystemCursor wanted = SDL_SYSTEM_CURSOR_ARROW;
+  if (kind == PointerCursor::Hand) wanted = SDL_SYSTEM_CURSOR_HAND;
+  else if (kind == PointerCursor::IBeam) wanted = SDL_SYSTEM_CURSOR_IBEAM;
+  const int slot = static_cast<int>(wanted);
+  if (!cursors_[slot]) cursors_[slot] = SDL_CreateSystemCursor(wanted);
+  SDL_Cursor* cursor = static_cast<SDL_Cursor*>(cursors_[slot]);
+  if (cursor && impl_) {
+    SDL_SetCursor(cursor);
+    impl_->cursor = kind;
+  }
+}
+
+void Window::close_cursors() {
+  for (void*& cursor : cursors_) {
+    if (cursor) SDL_FreeCursor(static_cast<SDL_Cursor*>(cursor));
+    cursor = nullptr;
+  }
 }
 
 void show_error_box(const std::string& title, const std::string& text) {
@@ -70,6 +107,7 @@ void Window::close() {
   if (impl_->texture) SDL_DestroyTexture(impl_->texture);
   if (impl_->renderer) SDL_DestroyRenderer(impl_->renderer);
   if (impl_->window) SDL_DestroyWindow(impl_->window);
+  close_cursors();
   SDL_Quit();
   delete impl_;
   impl_ = nullptr;

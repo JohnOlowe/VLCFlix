@@ -256,11 +256,11 @@ difference between "the Play button exists" and "the Play button can be reached"
 
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
-* 412 checks across layers 1, 2 and 4 — `0 failure(s)`
+* 461 checks across layers 1, 2 and 4 — `0 failure(s)`
 * 33/33 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
-* `make asan`: 412 checks clean, and the pre-fix code failing under it
+* `make asan`: 461 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
@@ -473,6 +473,27 @@ Two things this proves that a test cannot: an uninstaller can delete the directo
 running from (it copies itself to `%TEMP%`, relaunches with `--finish-uninstall`, and
 retries the delete for five seconds because Windows keeps handles open), and no step
 depends on a file the user has to remember to run first.
+
+### The three bugs only a real screen found
+
+The first session on real Windows (2.0.0) opened, and then behaved badly in three ways.
+None of them is visible from `render` or from a headless test that only asks "did
+`handle()` return true".
+
+| Symptom | Cause | Fix, and the test that now holds it |
+|---|---|---|
+| The window opened **wider than the screen**, so the title bar - minimise, maximise, close - was off the desktop and the window could not be moved or dismissed | `SDL_CreateWindow` was handed the 1600x900 default with no reference to the display it opened on | `fit_window_to_display()` (pure, SDL-free, in `platform/window_size.h`) shrinks the request to 96 % of the desktop's width and 90 % of its height, never below 640x420; the window also gets a minimum size. Tested with a 1366x728 laptop, a 2560x1400 desktop, an 800x480 screen and an unknown display |
+| In **Settings** (and the detail sheet) no control responded, and a click anywhere in the sheet **closed it** | two bugs stacked: (1) the full-screen scrim and the "swallow clicks" panel were registered *after* the sheet's controls, and hit testing takes the **last** match, so they sat on top of everything the sheet drew; (2) `add_hit()` silently drops `Action::Kind::None`, so the swallow area was never registered at all - every click that was not on a control fell through to the scrim and closed the sheet | the scrim and the swallow are now registered **first** (bottom of the z-order) and the swallow is its own `swallow()` call, so a `None` action cannot be dropped by accident. New test: every control in both sheets must be the *topmost* hit at its own centre, the sheet body must return `None` and leave the sheet open, a real click on the hardware-decoding switch must flip it, and the close button must still close |
+| Hovering anything clickable left the **arrow** cursor | the window never set a cursor, and nothing told it what was under the pointer | `App::pointer_cursor()` decides Arrow / Hand / I-Beam from the same hit areas the click uses - so the cursor can never promise what a click will not do - and the event loop passes it to `Window::set_cursor()`, which caches one SDL cursor per shape. Tested over a poster, the settings button, the folder field (I-beam), the sheet's dead space (arrow), and before any move at all |
+
+The reason the old suite missed the sheet bug is worth keeping: the old test asserted
+`CHECK(click_action(app, Kind::Play))`, which only requires `handle()` to return true -
+and it did, because the click hit the scrim and *closed* the sheet. The assertion had to
+become "the thing under the pointer is the thing that was drawn there".
+
+Both halves were confirmed by re-breaking them: with the scrim and swallow moved back to
+the end, six checks fail; with `swallow()` replaced by `add_hit(panel, Action{})`, the
+two new sheet/cursor tests fail.
 
 ### The manifest bug: the one failure that happens before `main()`
 

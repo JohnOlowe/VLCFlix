@@ -367,7 +367,7 @@
  "native": {
   "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
   "branch": "cpp",
-  "tests": "412 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 412 under AddressSanitizer",
+  "tests": "461 checks (unit + golden image + fault injection), 33 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 461 under AddressSanitizer",
   "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
   "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
   "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
@@ -385,7 +385,7 @@
    "a real Explorer/Start Menu/Add-Remove Programs, and side by side with a genuine 1.2.0"
   ],
   "installer": {
-   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,750,712 bytes, sha256 d87120586c2670ff898e9f9f3cedf9af802586e4f27c1c3b9d18148387e9a546, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
+   "artifact": "native/releases/VLCFlixStudio-Setup.exe (71,752,198 bytes, sha256 92bbe997011ae1aed95edbd69e9cfa25ba2ca8e28224a5239b5848e0effcfcf3, git-ignored) - ONE file: the program, SDL2, FreeType, libpng, zlib, libjpeg, libvlc.dll, libvlccore.dll and 29 plugin modules",
    "how": "GUI-subsystem stub (miniz) + payload zip appended + 24-byte footer 'VFSUZIP1' + <offset> + <length>; extracts to %LOCALAPPDATA%\\Programs\\VLCFlixStudio on first run",
    "installs": "372 files; Desktop icon; Start Menu entry + uninstall entry; HKCU\\...\\Uninstall\\VLCFlixStudio (DisplayName/DisplayVersion 2.0.0/DisplayIcon/InstallLocation/UninstallString/QuietUninstallString/EstimatedSize/NoModify/NoRepair); launches the app when double-clicked",
    "flags": "--install-only, --uninstall, --verify (exit 0 only when complete), --dir <path>, --quiet",
@@ -402,6 +402,14 @@
     "guard": "scripts/check-win-manifest.py (schema attribute whitelist, root/namespace/version, asInvoker, no '--' in comments, 64 KB limit, embedded bytes exactly once) run by tools/preflight.sh (with a negative control that must fail) and by scripts/build-win-native.sh before windres and against both linked exes",
     "not_proven": "Microsoft's own parser cannot be run here; sxstrace.exe on the target machine is the arbiter"
    }
+  },
+  "version": "2.0.1 (window fits the screen, sheets clickable, cursor says what is clickable)",
+  "real_screen_bugs_2026_10_28": {
+   "window_too_wide": "opened at the 1600x900 default on any display, putting the title bar (and minimise/maximise/close) off-screen; fit_window_to_display() now clamps to 96%/90% of the usable desktop with a 640x420 floor, plus SDL_SetWindowMinimumSize",
+   "sheet_controls_dead": "two bugs: the scrim + click-swallow panel were registered last (hit testing takes the last match) so they covered every control, and add_hit() silently drops Action::Kind::None so the swallow was never registered at all; clicks that missed a control hit the scrim and closed the sheet",
+   "no_hover_cursor": "the window never set a cursor; App::pointer_cursor() now picks Arrow/Hand/I-Beam from the same hit areas the click uses and the loop calls Window::set_cursor()",
+   "why_the_suite_missed_it": "the old assertion was CHECK(click_action(app, Kind::Play)), which only requires handle() to return true - and it did, because the click closed the sheet",
+   "negative_controls": "restoring the old z-order fails six checks; replacing swallow() with add_hit(panel, Action{}) fails both new tests"
   }
  },
  "windows_build": {

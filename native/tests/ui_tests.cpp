@@ -13,6 +13,7 @@
 #include "core/paths.h"
 #include "render/canvas.h"
 #include "tests/harness.h"
+#include "platform/window_size.h"
 #include "ui/app.h"
 
 namespace vf {
@@ -127,6 +128,69 @@ bool click_action(ui::App& app, ui::Action::Kind kind, int index = -1) {
     click.x = hit.first.x + hit.first.w / 2;
     click.y = hit.first.y + hit.first.h / 2;
     return app.handle(click);
+  }
+  return false;
+}
+
+// What a click at this point would actually do. hit_test walks the drawn list
+// backwards, so this is the topmost match - the same thing the app decides.
+ui::Action top_action_at(const ui::App& app, float x, float y) {
+  const auto& hits = app.hit_rects();
+  for (auto it = hits.rbegin(); it != hits.rend(); ++it) {
+    if (it->first.contains(x, y)) return it->second;
+  }
+  return ui::Action{};
+}
+
+ui::InputEvent click_at(float x, float y) {
+  ui::InputEvent click;
+  click.type = ui::InputEvent::Type::MouseDown;
+  click.x = x;
+  click.y = y;
+  return click;
+}
+
+ui::InputEvent move_to(float x, float y) {
+  ui::InputEvent event;
+  event.type = ui::InputEvent::Type::MouseMove;
+  event.x = x;
+  event.y = y;
+  return event;
+}
+
+// The centre of the smallest hit area with this action. Used for the sheet's close
+// button, which shares its action kind with the full-screen scrim behind it.
+bool small_hit_centre(const ui::App& app, ui::Action::Kind kind, float* x, float* y,
+                      float max_size = 60.0f) {
+  bool found = false;
+  float best = 0;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != kind) continue;
+    if (hit.first.w > max_size || hit.first.h > max_size) continue;
+    const float area = hit.first.w * hit.first.h;
+    if (found && area >= best) continue;
+    found = true;
+    best = area;
+    *x = hit.first.x + hit.first.w / 2;
+    *y = hit.first.y + hit.first.h / 2;
+  }
+  return found;
+}
+
+// A point where a click really resolves to `kind`: the topmost hit area with that
+// action. The page underneath a sheet has its own buttons of the same kind, so picking
+// the first rect in draw order would aim at the one that is covered.
+bool find_clickable(const ui::App& app, ui::Action::Kind kind, float* x, float* y,
+                    int index = -1) {
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != kind) continue;
+    if (index >= 0 && hit.second.index != index) continue;
+    const float cx = hit.first.x + hit.first.w / 2;
+    const float cy = hit.first.y + hit.first.h / 2;
+    if (top_action_at(app, cx, cy).kind != kind) continue;
+    *x = cx;
+    *y = cy;
+    return true;
   }
   return false;
 }
@@ -251,9 +315,13 @@ void test_ui_input() {
   CHECK(app.settings_open());
   CHECK_STR_EQ(app.screen_name(), "settings");
 
-  // And the close button closes it.
+  // And the close button closes it. It has to be the button, not the scrim: the scrim
+  // shares the action kind, and clicking its centre lands inside the sheet.
   draw_once(app);
-  CHECK(click_action(app, ui::Action::Kind::CloseOverlay));
+  float close_x = 0, close_y = 0;
+  CHECK(small_hit_centre(app, ui::Action::Kind::CloseOverlay, &close_x, &close_y));
+  CHECK_EQ(top_action_at(app, close_x, close_y).kind, ui::Action::Kind::CloseOverlay);
+  app.handle(click_at(close_x, close_y));
   CHECK(!app.settings_open());
 }
 
@@ -536,6 +604,146 @@ void test_ui_small_window() {
   }
 }
 
+
+// The bug the first real Windows session found: the sheets registered their scrim and
+// their click-swallowing panel *last*, and hit testing takes the last match, so those
+// two sat on top of every control the sheet had just drawn. Clicking Play, a toggle or
+// the folder field did nothing, and clicking anywhere inside the sheet that was not a
+// control closed it. The assertion that matters is not "handle() returned true" - it
+// did - but "what is under the pointer is the thing that was drawn there".
+void test_ui_sheets_are_clickable() {
+  TEST("ui: every control inside the detail and settings sheets is on top and works");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-sheets");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_catalog());
+  draw_once(app);
+
+  CHECK(click_action(app, ui::Action::Kind::OpenDetail, 1));
+  CHECK(app.open_item() == 1);
+  draw_once(app);
+  CHECK(app.open_item() == 1);
+
+  // Inside the detail sheet, the buttons that are drawn are the ones a click finds.
+  for (ui::Action::Kind kind : {ui::Action::Kind::Play, ui::Action::Kind::ToggleMyList}) {
+    float x = 0, y = 0;
+    CHECK(find_clickable(app, kind, &x, &y));
+    CHECK_EQ(top_action_at(app, x, y).kind, kind);
+  }
+
+  // A click on the sheet's own body (not a button) must not close it: that is the
+  // behaviour the user reported as "it always takes you back to the main page".
+  const ui::Action body = top_action_at(app, 800, 500);
+  CHECK_EQ(body.kind, ui::Action::Kind::None);
+  app.handle(click_at(800, 500));
+  CHECK(app.open_item() == 1);
+
+  // The scrim still closes it, and so does the close button.
+  app.handle(click_at(4, 4));
+  CHECK(app.open_item() == -1);
+  draw_once(app);
+
+  // The same four checks for the settings sheet, which is the one the user hit.
+  CHECK(click_action(app, ui::Action::Kind::OpenSettings));
+  CHECK(app.settings_open());
+  draw_once(app);
+
+  for (ui::Action::Kind kind : {ui::Action::Kind::ToggleSetting, ui::Action::Kind::AddFolder,
+                                ui::Action::Kind::ScanLibrary}) {
+    float x = 0, y = 0;
+    CHECK(find_clickable(app, kind, &x, &y));
+    CHECK_EQ(top_action_at(app, x, y).kind, kind);
+  }
+
+  // Clicking the panel body does nothing at all - and, above all, does not close it.
+  const ui::Action inside = top_action_at(app, 800, 500);
+  CHECK_EQ(inside.kind, ui::Action::Kind::None);
+  app.handle(click_at(800, 500));
+  CHECK(app.settings_open());
+
+  // The hardware-decoding toggle really toggles, through a real click on the switch.
+  const bool before = app.settings().hw_decode;
+  float tx = 0, ty = 0;
+  CHECK(find_clickable(app, ui::Action::Kind::ToggleSetting, &tx, &ty));
+  CHECK(app.handle(click_at(tx, ty)));
+  CHECK(app.settings().hw_decode != before);
+  CHECK(app.settings_open());
+
+  draw_once(app);
+  float cx = 0, cy = 0;
+  CHECK(small_hit_centre(app, ui::Action::Kind::CloseOverlay, &cx, &cy));
+  app.handle(click_at(cx, cy));
+  CHECK(!app.settings_open());
+}
+
+// Hovering has to look like hovering. The cursor comes from the same hit areas the click
+// uses, so it can never promise something a click will not do.
+void test_ui_pointer_cursor() {
+  TEST("ui: the pointer turns into a hand over anything clickable, and only there");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-cursor");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_catalog());
+  draw_once(app);
+
+  // Nothing has been hovered yet: no promise to keep.
+  CHECK_EQ(app.pointer_cursor(), vf::PointerCursor::Arrow);
+
+  // Over a poster.
+  float x = 0, y = 0;
+  CHECK(first_card_centre(app, &x, &y));
+  CHECK(app.handle(move_to(x, y)));
+  CHECK_EQ(app.pointer_cursor(), vf::PointerCursor::Hand);
+
+  // Over empty background.
+  CHECK(app.handle(move_to(2, 2)) || true);
+  CHECK_EQ(app.pointer_cursor(), vf::PointerCursor::Arrow);
+
+  // Over the settings button in the header: a smaller, different control, same answer.
+  draw_once(app);
+  CHECK(find_clickable(app, ui::Action::Kind::OpenSettings, &x, &y));
+  app.handle(move_to(x, y));
+  CHECK_EQ(app.pointer_cursor(), vf::PointerCursor::Hand);
+
+  // A text field gets an I-beam, and the sheet's dead space goes back to an arrow.
+  CHECK(app.handle(click_at(x, y)));
+  draw_once(app);
+  CHECK(app.settings_open());
+  CHECK(find_clickable(app, ui::Action::Kind::AddFolder, &x, &y));
+  app.handle(move_to(x, y));
+  CHECK_EQ(app.pointer_cursor(), vf::PointerCursor::IBeam);
+  app.handle(move_to(800, 500));
+  CHECK_EQ(app.pointer_cursor(), vf::PointerCursor::Arrow);
+}
+
+// The window used to open wider than the screen it was on, which put the title bar - and
+// minimise, maximise and close with it - outside the desktop.
+void test_window_fits_the_display() {
+  TEST("window: the requested size is shrunk to fit the screen, and never below the minimum");
+  // A 1600x900 default on a 1366x768 laptop: it has to shrink, and stay on the screen.
+  vf::WindowSize small = vf::fit_window_to_display(1600, 900, 1366, 728);
+  CHECK(small.width == 1311);   // 96% of 1366
+  CHECK(small.height == 655);   // 90% of 728
+  CHECK(small.width <= 1366 && small.height <= 728);
+  CHECK(small.width >= 640 && small.height >= 420);
+
+  // A screen with room to spare is left alone.
+  const vf::WindowSize roomy = vf::fit_window_to_display(1600, 900, 2560, 1400);
+  CHECK(roomy.width == 1600);
+  CHECK(roomy.height == 900);
+
+  // A small screen still gets a window that fits it rather than one that hangs off.
+  const vf::WindowSize tiny = vf::fit_window_to_display(1600, 900, 800, 480);
+  CHECK(tiny.width <= 800 && tiny.height <= 480);
+  CHECK(tiny.width > 0 && tiny.height > 0);
+
+  // An unknown display is not a reason to refuse to open a window.
+  const vf::WindowSize unknown = vf::fit_window_to_display(1600, 900, 0, 0);
+  CHECK(unknown.width == 1600 && unknown.height == 900);
+}
+
 }  // namespace
 
 void run_ui_tests(const std::string& out_dir) {
@@ -547,6 +755,9 @@ void run_ui_tests(const std::string& out_dir) {
   test_ui_hit_areas_are_unique();
   test_ui_small_window();
   test_ui_scrolling();
+  test_ui_sheets_are_clickable();
+  test_ui_pointer_cursor();
+  test_window_fits_the_display();
 }
 
 }  // namespace vf

@@ -5,17 +5,18 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "cpp",
     "tracking_branch": "origin/cpp",
-    "local_head": "ba31e15",
-    "remote_sha": "ba31e153049c04f070aeef6d4d0e48fc34507e38",
+    "local_head": "2876c06 (this checkpoint commit)",
+    "remote_sha": "2876c06",
     "pushed": true,
     "awaiting": "user runs tools/hwdecode-probe.cmd on the laptop and sends back vlcflix-hwdecode-report.txt; and confirms 1.2.0 still plays with the switch off",
     "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
-    "remote_sha_verified_at": "2026-10-26",
+    "remote_sha_verified_at": "2026-10-28",
     "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
     "remote_sha_ref": "origin/cpp via git ls-remote, 2026-10-28",
     "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
     "base_commit": "d4606a7 (main, v1.2.0)",
-    "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75"
+    "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
+    "remote_sha_note": "git ls-remote origin cpp returned 2876c0690d50fc237d58600f7103c13e5501d5f3 after the push; main is untouched at d4606a7"
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -110,7 +111,8 @@
       "conclusion": "effective scope is Contents: read/write on VLCFlix only",
       "retracted_claim": "an earlier note said the token was broader than one repository; that was wrong - the 15 visible repos are all public, which requires no permission"
     },
-    "recommend_rotation_reason": "chat exposure only, not over-scoping"
+    "recommend_rotation_reason": "chat exposure only, not over-scoping",
+    "token_scrub": "fresh clone of cpp greps clean for github_pat_; no .secrets and no .git-credentials in the tree"
   },
   "windows_app": {
     "status": "built and verified under Wine; not yet run on real Windows",

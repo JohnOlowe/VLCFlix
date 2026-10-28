@@ -5,10 +5,10 @@
     "remote": "https://github.com/JohnOlowe/VLCFlix.git",
     "branch": "cpp",
     "tracking_branch": "origin/cpp",
-    "local_head": "7200e85",
-    "remote_sha": "7200e8506cc739558be68f0c6cd7b7f0153c6573",
+    "local_head": "4e32c18",
+    "remote_sha": "4e32c186c1623e66d67a39c176ead7187df9d6a1",
     "pushed": true,
-    "awaiting": "user runs tools/hwdecode-probe.cmd on the laptop and sends back vlcflix-hwdecode-report.txt \u2014 still open from v1.2.0; turn 3 (player, sync, subtitles) and turn 4 (polish, bug confirmation, test strategy) remain",
+    "awaiting": "turn 4 only: polish, confirm there are no bugs, write docs/TESTING.md and make `make verify` green from a fresh clone. Still open from v1.2.0: the user runs tools/hwdecode-probe.cmd on the laptop.",
     "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
     "remote_sha_verified_at": "2026-10-28",
     "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
@@ -16,7 +16,7 @@
     "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
     "base_commit": "d4606a7 (main, v1.2.0)",
     "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-    "remote_sha_note": "git ls-remote origin cpp returned 7200e85 after the turn-2 push; main is untouched at d4606a7. Turn 2 (window + browsing UI) is committed and verified from a clean clone (build + 210/210 tests)."
+    "remote_sha_note": "git ls-remote origin cpp returned 4e32c18 after the turn-3 push; main is untouched at d4606a7. Turns 1-3 committed and verified from a clean clone (build + 281/281 tests + scan + play). Turn 4 (polish, bug confirmation, test strategy, `make verify`) remains."
   },
   "scope": {
     "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -365,16 +365,17 @@
     "as_instructed": true
   },
   "native": {
-    "state": "turn 2 of 4 complete: the window and the browsing UI",
+    "state": "turn 3 of 4 complete: playback, sync, subtitles, honest finish",
     "branch": "cpp",
-    "commit": "7200e85",
-    "tests": "210 checks, 0 failures (make test and ctest)",
+    "commit": "4e32c18",
+    "tests": "281 checks, 0 failures (make test and ctest)",
     "builds": "CMake and plain make, both from a clean clone",
-    "ui": "home, browse, mylist, search, detail, settings, empty state, hover preview, keyboard focus; own software renderer, headless PNG rendering",
+    "playback": "libVLC in-process: frames into our buffer, presenter pays a picture-side sync delay, our compositor draws subtitles off the engine clock",
     "not_verified": [
+      "audio (no sound card in this machine)",
+      "automatic device-latency compensation (libVLC 3 cannot report output latency, so autoLatency is inert)",
       "the window on a real display (headless SDL_VIDEODRIVER=dummy only)",
-      "Windows build and every _WIN32 branch",
-      "playback: libVLC, sync, subtitles (turn 3)"
+      "Windows build and every _WIN32 branch"
     ]
   }
 }

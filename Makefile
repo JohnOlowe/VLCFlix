@@ -17,7 +17,7 @@ BUILD    := build
 APP      := $(BUILD)/vlcflix
 TESTBIN  := $(BUILD)/native-tests
 
-LIBSRC   := $(shell find src/core src/media src/platform -name '*.cpp' 2>/dev/null)
+LIBSRC   := $(shell find src/core src/library src/platform -name '*.cpp' 2>/dev/null)
 APPSRC   := src/main.cpp
 TESTSRC  := tests/run_tests.cpp
 

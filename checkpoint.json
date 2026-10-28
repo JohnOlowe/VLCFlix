@@ -5,10 +5,10 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "5a3bab3",
-  "remote_sha": "5a3bab3c0adb835cef6986330736673c7560fbce",
+  "local_head": "e4809ae",
+  "remote_sha": "e4809ae9ba319f6ade8ee56fdab0bc0bd3d138df",
   "pushed": true,
-  "awaiting": "nothing on cpp. Outstanding: the user re-tests 2.0.2 on real Windows (cursor everywhere, folder browser), and a real Windows 10/11 run remains the last mile for the desktop icon, audio and Add/Remove Programs.",
+  "awaiting": "nothing on cpp. Outstanding: the user runs 2.0.3 on the real machine - it must now open (software renderer), then the hand cursor on Home and Browse... in Settings. A real Windows run stays the last mile for audio, the desktop icon and Add/Remove Programs.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-28",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned 5a3bab3c0adb835cef6986330736673c7560fbce (2026-10-28): 2.0.2 - pointer coordinates fixed (canvas follows the window) and the folder browser. On top of 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer) and de10fc5 (scrolling). main is untouched at d4606a7. Verified: make verify (33 static + 513 test checks + 15 journey steps), make asan 513/513, CMake build, a live Xvfb/xdotool run of the real window, and the 2.0.2 installer installed + verified under Wine 11.19."
+  "remote_sha_note": "git ls-remote origin cpp returned e4809ae9ba319f6ade8ee56fdab0bc0bd3d138df (2026-10-28): 2.0.3 - the renderer is chosen by name and defaults to software, which removes the Direct3D 9 driver crash that killed 2.0.2. On top of 5a3bab3 (2.0.2: pointer coordinates + folder browser), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 529 test checks + 15 journey steps), make asan 529/529, a live Xvfb/xdotool run, and the 2.0.3 installer installed + verified under Wine 11.19."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

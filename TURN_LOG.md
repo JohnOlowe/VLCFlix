@@ -859,3 +859,51 @@ Also added `tools/hwdecode-probe.cmd` for the laptop: it runs the same eight pla
 against a real film (or a 3-second 10-bit HEVC clip it makes itself) and writes a
 report of which ones produce frames. **Not yet run on Windows** — that is the next
 thing to do with it.
+
+## 2026-10-28 — Audit + port plan, branch `cpp` (no code written yet)
+
+User direction: rewrite the whole product in pure C++ — everything that is there,
+plus everything the web version could not do — working on a second branch, under
+the rules in `AGENTS.md`. The repo has **one** branch (`main`); created `cpp` from
+`d4606a7` and stated the assumption in the reply so it can be renamed for free.
+
+Read before acting (AGENTS §6): `AGENTS.md`, `CONTEXT.md`, `TURN_LOG.md`,
+`checkpoint.json`, then the source — `server/{index,library,store,vlc}.js`,
+`public/js/{app,sync-math}.js`, `public/index.html`, `README.md`.
+
+Environment prepared (all ephemeral, none survives a snapshot): `cmake`,
+`ninja-build`, `libsdl2-dev`, `libvlc-dev`, `ffmpeg`, `vlc-bin`,
+`vlc-plugin-base`, `zlib1g-dev`, `libfreetype-dev`. Verified: g++ 14.2, SDL2 2.32,
+libVLC 3.0.24 headers, ffmpeg 7.1.5, 2 cores, 1.9 GB RAM, 21 GB free.
+
+**Verified, not assumed** (`docs/AUDIT.md` §2 has the commands):
+
+- `npm install` + `npm test` → **72/72 pass**; the shipped suite misses every bug
+  below.
+- A1 `parseName` destroys titles that are years: `1917.2019.2160p` → title
+  `"1917 2019 2160p WEB-DL"`, year 1917; `Blade.Runner.2049.2017` → year 2049.
+- A2 the ffmpeg copy engine cannot seek the bundled clips: they have **1 I-frame in
+  480 frames**, so `-ss 4 -c copy` emits `duration=16.000000` (the whole clip).
+  With a dense GOP (g=24) the same command emits `12.000000`.
+- A3 `Range: bytes=-500` is answered `Content-Range: bytes 0-500/217238`.
+- A4 `setProgress(id, 97, 100)` keeps the entry; nothing ever marks a film finished.
+- A5 `/10|12/` classifies `nv12` as 10-bit.
+- A6 `POST /api/settings {"vlcPassword":{"a":1}}` → 200.
+- A7 README/API drift (subtitle route, "23 tests" vs 72).
+- Checked and **withdrew** a suspected unit bug in `subtitleClock()`: `sub.audio`
+  is stored in seconds, the arithmetic is correct.
+
+**Spike that the plan depends on** (`/tmp`, throwaway): 40-line libVLC
+`set_callbacks` program played `samples/the-silent-coast.mp4` into a `std::vector`:
+`frames=22 luma=132`, `length_ms=16000`, and `set_time(12000)` → `time_ms=12390`
+with 18 new frames — i.e. exact seeking on the same file A2 cannot seek. That is
+the reason to move playback in-process.
+
+Deliverables this turn: `docs/AUDIT.md`, `docs/PORT_PLAN.md` (phases P0–P8, each
+with a verification), this entry, `CONTEXT.md` and `checkpoint.json` updated.
+
+Not done, and why: no C++ code, no build, **no push**. A fresh clone has no
+credential (`.secrets/github-token` is correctly git-ignored and absent), so the
+`cpp` branch exists locally only; `git ls-remote` still shows `main` alone. Asked
+the user for the three decisions the first line of code depends on (branch name,
+UI toolkit, whether to keep the external-VLC mode at all).

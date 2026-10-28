@@ -2,10 +2,12 @@
 
 #include <SDL.h>
 
+#include <cmath>
 #include <cstdlib>
 
 #include "core/log.h"
 #include "platform/render_driver.h"
+#include "platform/wheel.h"
 #include "platform/window_size.h"
 
 namespace vf {
@@ -217,24 +219,40 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         }
         break;
       case SDL_MOUSEWHEEL: {
-        event->type = ui::InputEvent::Type::Wheel;
         // Both axes, and both directions: a trackpad swipe is a horizontal wheel, and
         // a "natural scrolling" device reports the opposite sign.
         float y = static_cast<float>(sdl_event.wheel.y);
         float x = static_cast<float>(sdl_event.wheel.x);
-        if (sdl_event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
-          y = -y;
-          x = -x;
-        }
-        event->wheel = y;
-        event->wheel_x = x;
+        // A precision touchpad does not scroll in notches: Windows sends small
+        // fractional deltas, SDL puts them in preciseX/preciseY and rounds the integer
+        // fields to zero. Reading only wheel.y therefore made two-finger scrolling do
+        // *nothing at all*, on every screen. platform/wheel.h takes the precise value
+        // when there is one and adds the fractions up.
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+        x = wheel_axis(sdl_event.wheel.preciseX, x);
+        y = wheel_axis(sdl_event.wheel.preciseY, y);
+#endif
+        x = wheel_direction(x, sdl_event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED);
+        y = wheel_direction(y, sdl_event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED);
+        float flush_x = 0.0f;
+        float flush_y = 0.0f;
+        if (!wheel_.push(x, y, &flush_x, &flush_y)) break;  // not yet worth a scroll
+        event->type = ui::InputEvent::Type::Wheel;
+        event->wheel = flush_y;
+        event->wheel_x = flush_x;
         // Which rail the pointer is over decides whether the wheel goes sideways, so
         // the event needs a position. SDL reports one from 2.26; older versions report
         // 0,0, and the last motion position is the right fallback.
-        event->x = sdl_event.wheel.mouseX != 0 ? static_cast<float>(sdl_event.wheel.mouseX)
-                                               : last_mouse_x_;
-        event->y = sdl_event.wheel.mouseY != 0 ? static_cast<float>(sdl_event.wheel.mouseY)
-                                               : last_mouse_y_;
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+        if (sdl_event.wheel.mouseX != 0 || sdl_event.wheel.mouseY != 0) {
+          event->x = static_cast<float>(sdl_event.wheel.mouseX);
+          event->y = static_cast<float>(sdl_event.wheel.mouseY);
+        } else
+#endif
+        {
+          event->x = last_mouse_x_;
+          event->y = last_mouse_y_;
+        }
         return true;
       }
       case SDL_KEYDOWN:

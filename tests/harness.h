@@ -1,6 +1,7 @@
 // A deliberately tiny test harness: no dependency to reinstall after a snapshot,
 // and `make test` works from a bare clone.
 #pragma once
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -67,6 +68,20 @@ inline int summary(const char* suite) {
     } else {                                                                   \
       vftest::Registry::instance().fail(__FILE__, __LINE__,                    \
                                         std::string(#actual) + " == " + #expected); \
+    }                                                                          \
+  } while (0)
+
+#define CHECK_NEAR(actual, expected, tolerance)                                  \
+  do {                                                                         \
+    const double a_ = static_cast<double>(actual);                             \
+    const double e_ = static_cast<double>(expected);                           \
+    if (std::fabs(a_ - e_) <= static_cast<double>(tolerance)) {                \
+      vftest::Registry::instance().pass();                                     \
+    } else {                                                                   \
+      vftest::Registry::instance().fail(                                       \
+          __FILE__, __LINE__,                                                  \
+          std::string(#actual) + " ~= " + #expected + " (" + std::to_string(a_) + \
+              " vs " + std::to_string(e_) + ")");                              \
     }                                                                          \
   } while (0)
 

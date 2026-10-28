@@ -143,6 +143,12 @@ class App {
   std::string scroll_region_at(float x, float y) const;
   static const char* page_region() { return "page"; }
 
+  // Where Home puts its two halves at a given scroll: the hero, and the rails below it.
+  // Public because the scroll behaviour ("does the page move, or does it come apart") is
+  // exactly what these two rectangles decide, and testing it needs to see them.
+  Rect hero_rect(float scroll) const;
+  Rect rails_rect(float scroll) const;
+
   // The hit areas produced by the last draw. Used by tests so they click the real
   // geometry instead of guessed pixel coordinates.
   const std::vector<std::pair<Rect, Action>>& hit_rects() const { return hits_; }
@@ -240,9 +246,6 @@ class App {
   void draw_toast(Canvas& canvas);
   void draw_footer(Canvas& canvas);
 
-  Rect hero_rect(float scroll) const;
-  Rect rails_rect(float scroll) const;
-
   void draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, bool wide,
                         float scroll);
   void draw_button(Canvas& canvas, const Rect& rect, const std::string& label, bool primary,
@@ -310,6 +313,15 @@ class App {
   bool preview_has_frame_ = false;
   int preview_index_ = -1;
   double preview_started_ = 0;
+  // Playing a whole film as a preview must not seek before the demuxer knows the
+  // length; a seek into nothing leaves the engine sitting there with no picture, which
+  // is exactly what "the preview does not work" looked like on the Windows machine.
+  double preview_seek_at_ = -1;
+  // Where the hovered card was drawn this pass, so the hover can grow it in place.
+  Rect hover_card_rect_{};
+  bool hover_card_valid_ = false;
+  bool preview_warned_ = false;
+  void draw_hover_card(Canvas& canvas);
   Presenter presenter_;
   EngineStatus player_status_;
   bool player_open_ = false;       // a film is loaded in the player view

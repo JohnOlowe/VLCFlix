@@ -41,8 +41,8 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 22 static checks + 339
-  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 339
+- **Verified from a clean clone on GitHub**: `make verify` = 28 static checks + 364
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 364
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
@@ -70,14 +70,33 @@ pushed and verified from a clean clone.
   block had closed, so roughly half of all scans drew no preview at all (ffmpeg got an
   absurd `-t`). All three have regression tests; the third is proved by ASan reporting
   `stack-use-after-scope` on the old code and nothing on the new.
-- **Windows packaging now exists but is unverified**: `native/packaging/installer.nsi`
-  (new AppId, install dir, uninstall key, refuses to install over 1.x, never touches
-  1.x data), `native/packaging/app.manifest`, and `scripts/build-win-native.sh`, whose
-  `--check` mode reports on this machine that no mingw, NSIS or Windows VLC is present
-  and exits 3.
-- **Still not verified:** the Windows build and every `_WIN32` branch (no toolchain
-  here); a real display (the window has only ever run headless); audio (no sound card);
-  the `-hwaccel auto` GPU path (no Vulkan video queue here, software fallback proven).
+- **The Windows build has now been RUN**, under Wine 11.19 (Wine 11.20 and
+  11.20-staging are broken upstream: `create_view`/`virtual_alloc_first_thread_data`
+  SEGV before a prefix exists). Executed and captured: `version`, `doctor`, `status`,
+  `scan --no-art` (8 items, 0 errors, real 0:16 / 1280x720), a full artwork scan
+  (8 of 8 sets drawn by 8 concurrent ffmpeg children), `render` for all six screens
+  (`docs/evidence/windows-browse.png`, `windows-detail.png`), `play 1 --wait 4`
+  (`state=playing … decoded=99 presented=99`), and `crash` (log carries the `CRASH`
+  record and a 21-frame stack). Evidence and the exact recipe: `docs/TESTING.md` §11.
+- **Executing it found four Windows-only bugs the cross build could not see**, all
+  fixed: (1) `run_process` drained its pipes with `PeekNamedPipe` and returned nothing,
+  so every film was "unreadable"; (2) `CreateProcess(bInheritHandles=TRUE)` let eight
+  concurrent probes inherit each other's pipe ends — pipes never reached EOF and Wine
+  refused launches with error 1359, fixed with an explicit
+  `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` plus serialised spawning; (3) `write_png` handed
+  libpng a `FILE*` from a different C runtime, so every byte failed to write and
+  `render` died with an integer divide-by-zero in `msvcrt`, fixed by writing through a
+  libpng callback into memory and reading the file back to check it; (4)
+  `have_binary()` trusted a process that printed nothing.
+- **Windows packaging** (`native/packaging/installer.nsi` with a new AppId, install
+  dir, uninstall key, refusing to install over 1.x; `app.manifest`;
+  `scripts/build-win-native.sh` whose `--check` exits 3) is written and the payload is
+  machine-checked (`scripts/check-win-payload.sh`: 136 imports, 0 missing), but the
+  installer itself has never been built or run.
+- **Still not verified:** Windows 10/11 itself (Wine is an impression, not the real
+  thing), the window on a real display (only headless SDL and off-screen renders), audio
+  (no sound card), the `-hwaccel auto` GPU path (no Vulkan video queue here, software
+  fallback proven), and installing side by side with 1.2.0.
   Automatic device-latency compensation is not implemented because libVLC 3 cannot
   report output latency — the UI says so instead of offering a toggle that did
   nothing (`autoLatency` is gone from the code, the settings file and the CLI). Do not

@@ -1110,14 +1110,14 @@ mostly *running* the thing until it broke, and it broke three times.
 | 2 golden image | `native/tests/golden_tests.cpp` + `native/tests/golden/*.png` | seven screens compared pixel by pixel, tolerance 6/255 per channel and 0.15 % of pixels; the comparator self-checks (identical image = 0 changed, a 4×4 nudge = exactly 16) |
 | 3 journey | `native/tests/journey.sh` | 15 steps through the real binary on a library built by ffmpeg during the run — no sample file touches it |
 | 4 faults | `native/tests/fault_tests.cpp` | corrupt inputs, read-only data dir, junk video, deleted file mid-playback: no crash, and every one says why |
-| 5 sanitizer | `make asan` | the same 339 checks under AddressSanitizer |
+| 5 sanitizer | `make asan` | the same 364 checks under AddressSanitizer |
 | 6 static | `tools/preflight.sh` | 22 checks no compiler here can make: build-system parity, `#if` balance, the Windows identity, `AGENTS.md` house rules, the documentation's own promises |
 
 `make verify` chains preflight → tests → journey. It is green from a fresh clone with
 nothing but g++, pkg-config, ffmpeg and libVLC. CTest runs the same two suites from a
 build directory outside the tree.
 
-Totals: turn 1 = 132 checks, turn 2 = 210, turn 3 = 281, **turn 4 = 339 + 22 static +
+Totals: turn 1 = 132 checks, turn 2 = 210, turn 3 = 281, **turn 4 = 364 + 28 static +
 15 journey steps**.
 
 ### Three real bugs found by the new layers
@@ -1209,7 +1209,7 @@ outputs. Both were possible; one needed a workaround.
   compile, link (manifest + version resource embedded), stage, verify. `--check`
   reports what is missing and exits 3.
 * `scripts/check-win-payload.sh` — walks the import table of the exe, SDL2, libpng,
-  libvlc and libvlccore: **48 imports checked, 0 missing**, and it fails if the
+  libvlc and libvlccore: **136 imports checked, 0 missing**, and it fails if the
   libVLC plugin modules the app needs are absent. Before this, "the exe opens and
   closes" was a thing that could only be discovered by running it.
 * **The published exe**: release `win64-cross-2`,
@@ -1233,9 +1233,66 @@ outputs. Both were possible; one needed a workaround.
   `docs/ci/README.md` gives the two ways to switch it on (add the scope, or paste the
   file in the browser).
 
-### Still not verified, unchanged
+### Superseded the same day — see the addendum below
 
-**The exe has never been executed.** Building is not running. Wine cannot start here
-and there is no Windows machine, so the first execution is either the user's or a
-GitHub runner's. Everything else about it is checked mechanically; that part is a
-claim nobody has earned yet, and the release notes say so in the first paragraph.
+**Reproduced by executing the Windows exe, found by doing it, and worth keeping:**
+
+Four Windows-only bugs were invisible until it ran: `run_process` used `PeekNamedPipe`
+polling and returned empty output for every child; concurrent `CreateProcess` calls with
+`bInheritHandles = TRUE` let children inherit each other's pipe ends; `write_png` passed
+a `FILE*` across a CRT boundary so no byte was ever written; and `have_binary()` trusted
+a process that printed nothing. All four are fixed and covered by tests — see
+`docs/TESTING.md` section 11.
+
+---
+
+## Addendum, 2026-10-28 (turn 4, after the paragraph above was written)
+
+**The exe was executed.** Two things had to change first, and neither was a sandbox
+limit:
+
+1. **Wine 11.20 and 11.20-staging are broken upstream** — `wineboot` dies with
+   `virtual_init host addr space limit: 0xffffffffffff0000` and a SIGSEGV in
+   `create_view → map_view → virtual_alloc_first_thread_data` before a prefix exists.
+   Bottles (`bottlesdevs/Bottles#4903`) and Paint.NET's Wine tracker
+   (`paintdotnet/Paint.NET-on-Wine#58`) report the identical crash on exactly those
+   versions. The sandbox was ruled out by measurement: a fixed `mmap` succeeds at both
+   `0x7ffe0000` and `0x7ff000000000`, `mmap_min_addr` is 4096, `max_map_count` 65530,
+   the stack is 8 MB. **Wine 11.19 amd64-wow64 works.**
+2. **The Windows code paths had never run**, so they were wrong in four places (below).
+
+What the executed Windows binary did, with the bundled libVLC 3.0.24 payload:
+
+| Command | Result |
+|---|---|
+| `version` | `VLCFlix Studio 2.0.0-turn1` |
+| `scan --no-art` | 8 items, **0 errors**, `0:16`, `1280x720` on every row |
+| `scan` (artwork) | **8 of 8 artwork sets drawn** by 8 concurrent ffmpeg children |
+| `render` ×6 | six real screens written as PNG (`docs/evidence/`) |
+| `play 1 --wait 4` | `state=playing time=3.15 s length=16.00 s decoded=99 presented=99` |
+| `crash` | the log carries the `CRASH` record and a 21-frame stack |
+| `ui --frames 3` | `could not create a window` → exit 5 (Wine has no display; correct) |
+
+Three of the four bugs were found *because* the app logs honestly and the harness
+compared what came back, not because it looked fine:
+
+* `run_process` polled with `PeekNamedPipe` and drained nothing → every child's output
+  was empty → "8 item(s) … could not be read and will not play". Rewritten to a blocking
+  `ReadFile` on one thread per pipe.
+* Eight concurrent probes lost output or hung (three 20 s timeouts): `bInheritHandles =
+  TRUE` inherits *every* inheritable handle, so each child also got another child's pipe
+  write end. Fixed with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` and serialised spawning:
+  8/8 concurrent probes now succeed in 10.5 s.
+* `write_png` passed libpng (built against a different C runtime) a `FILE*` from ours:
+  `libpng error: Write Error`, zero-byte screenshots, then an integer divide-by-zero in
+  `msvcrt`. Fixed by writing through a libpng callback into memory and reading the file
+  back to prove the size.
+* `have_binary()` was satisfied by any process that started, even one that printed
+  nothing — which is how `doctor` said "ffmpeg found" while every probe returned empty.
+
+New tests for the first three: `processes: eight children started at once each keep
+their own output`, `png: written bytes are real, complete, and decode to the same size`.
+Suite size: 339 → **364 checks**; payload check 48 → **136 imports**, 0 missing.
+
+Still open after this, and stated as such: Windows 10/11 itself, the window on a real
+display, real audio, and the installer side by side with 1.2.0.

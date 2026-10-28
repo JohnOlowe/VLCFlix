@@ -30,18 +30,27 @@ overwrites or migrates 1.x, and the two can be installed side by side.
 ```bash
 cd native
 make -j2          # build/vlcflix   (or: cmake -S . -B build && cmake --build build)
-make verify       # static checks + 339 tests + 15-step end-to-end journey
+make verify       # static checks + 364 tests + 15-step end-to-end journey
 make asan         # the same tests under AddressSanitizer
 ```
 
-**Windows:** there is a ready-to-run build —
-[**VLCFlixStudio-win64.zip**](https://github.com/JohnOlowe/VLCFlix/releases/download/win64-cross-2/VLCFlixStudio-win64.zip)
-on the `win64-cross-2` release. Unzip anywhere and run `VLCFlixStudio.exe`; nothing is
-installed and your data stays in `%LOCALAPPDATA%\VLCFlixStudio`. It is cross-compiled
-and **has not been executed yet** — the release page says exactly what is and is not
-proven, and the zip contains `windows-selfcheck.ps1`, which runs the app on your machine
-and writes a report with screenshots. To rebuild it from source:
-`scripts/build-win-native.sh --zip`.
+**Windows:** `scripts/build-win-native.sh --zip` cross-compiles `VLCFlixStudio.exe`
+from this tree with llvm-mingw and packs a complete payload (libVLC, SDL2, FreeType,
+libpng, libjpeg) into `dist/win-native/VLCFlixStudio-win64.zip`. Build artifacts are
+git-ignored and are not published as releases; build your own from source. Unzip
+anywhere and run `VLCFlixStudio.exe` — nothing is installed and your data stays in
+`%LOCALAPPDATA%\VLCFlixStudio`, next to 1.x rather than over it.
+
+The Windows executable has been **executed** (under Wine 11.19, on this machine): it
+scans a real folder with correct durations and resolutions, draws all 8 artwork sets,
+renders all six screens, and plays a film — `state=playing … decoded=99 presented=99`.
+Running it is what found the four Windows-only bugs the cross build could not see
+(empty child-process output, children stealing each other's pipes, zero-byte PNG
+writes across a CRT boundary, and `have_binary` trusting a process that printed
+nothing). It has **not** run on Windows itself, which is why the zip ships
+`windows-selfcheck.ps1`: run it on a real machine and it writes a pass/fail report with
+screenshots. Everything proven, and everything not, is in
+[`docs/TESTING.md`](docs/TESTING.md) section 11.
 
 How it is tested — six layers, a regression test per known bug with its negative
 control, and the honest list of what could not be verified here — is

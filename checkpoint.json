@@ -8,7 +8,7 @@
   "local_head": "0f6d117",
   "remote_sha": "0f6d117d14ec847529698ec0902abadd0a276344",
   "pushed": true,
-  "awaiting": "nothing on cpp: all four turns are complete; the Windows build and the manual checklist remain for a Windows machine",
+  "awaiting": "nothing on cpp: all four turns are complete. The Windows exe has been executed under Wine 11.19; the last mile is windows-selfcheck.ps1 on a real Windows machine (installer, display, audio).",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-28",
   "note": "local_head is the v1.2.0 feature commit; this checkpoint update is the follow-up commit on top of it",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned 0f6d117 after the turn-4 push; main is untouched at d4606a7. All four turns are committed and verified from a fresh clone: make verify (22 static + 339 test checks + 15 journey steps), ctest 2/2, make asan 339/339."
+  "remote_sha_note": "git ls-remote origin cpp returned 0f6d117 after the turn-4 push; main is untouched at d4606a7. All four turns are committed and verified from a fresh clone: make verify (28 static + 364 test checks + 15 journey steps), ctest 2/2, make asan 364/364."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -79,7 +79,7 @@
   ]
  },
  "next_steps": [
-  "Run scripts/windows-selfcheck.ps1 from the win64-cross-2 zip on a Windows machine and send back windows-selfcheck-evidence.zip - that is the last mile of the Windows verification.",
+  "Run scripts/windows-selfcheck.ps1 (it ships inside dist/win-native/VLCFlixStudio-win64.zip) on a real Windows machine and send back windows-selfcheck-evidence.zip - that is the last mile: a real display, real audio, and the installer side by side with 1.2.0.",
   "Or enable docs/ci/windows.yml (needs a token with the Workflows permission, or paste it in the browser) and the same evidence is produced unattended and published to a release.",
   "Open from v1.2.0: the user runs tools/hwdecode-probe.cmd on the laptop.",
   "The Node app (server/, public/, src/win/) is untouched and is deleted only when the user approves."
@@ -368,7 +368,7 @@
  "native": {
   "state": "all 4 turns complete: foundation, window+browsing, playback/sync/subtitles, polish + bug confirmation + test strategy",
   "branch": "cpp",
-  "tests": "339 checks (unit + golden image + fault injection), 22 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 339 under AddressSanitizer",
+  "tests": "364 checks (unit + golden image + fault injection), 28 static preflight checks, 15 end-to-end journey steps; `make asan` runs the same 364 under AddressSanitizer",
   "builds": "CMake and plain make, both from a clean clone; CTest runs native-tests and the journey",
   "gate": "`make verify` = preflight + tests + journey, green from a fresh clone",
   "test_strategy": "docs/TESTING.md: six layers, a regression test per known bug with its negative control, the not-verified table and the manual checklist",
@@ -381,19 +381,19 @@
   "not_verified": [
    "audio (no sound card in this machine)",
    "the window on a real display (headless SDL_VIDEODRIVER=dummy only)",
-   "Windows build and every _WIN32 branch (no mingw/NSIS toolchain here)",
+   "real Windows 10/11 itself (the exe runs under Wine 11.19; that is not Windows)",
    "-hwaccel auto GPU path (no Vulkan video queue; software fallback proven by output file)",
    "installing side by side with 1.2.0 (needs Windows)"
   ]
  },
  "windows_build": {
-  "status": "cross-compiled, payload-checked, published; NEVER EXECUTED",
-  "release": "win64-cross-2 -> VLCFlixStudio-win64.zip (67 MB)",
-  "url": "https://github.com/JohnOlowe/VLCFlix/releases/download/win64-cross-2/VLCFlixStudio-win64.zip",
+  "status": "cross-compiled, payload-checked (136 imports, 0 missing), and EXECUTED under Wine 11.19: version/doctor/status/scan (8 items, 0 errors)/artwork (8 of 8)/render (6 screens)/play (state=playing, decoded=99 presented=99)/crash (log has CRASH + stack). Not yet run on real Windows.",
   "toolchain": "llvm-mingw 20261020 (clang+lld, UCRT) + SDL2 2.32.10 + FreeType 2.13.3 (source, no harfbuzz) + libpng 1.6.59 + zlib 1.3.2 + libjpeg-turbo 3.2.0 + VLC 3.0.24 (VideoLAN win64)",
-  "scripts": "scripts/build-win-native.sh (--check exits 3), scripts/check-win-payload.sh (48 imports, 0 missing), scripts/windows-selfcheck.ps1",
-  "wine": "dead end in this sandbox: wine --version works, wineboot/cmd die with SIGSEGV before a prefix; tried amd64, wow64 and staging 11.20 builds plus setarch -R",
+  "scripts": "scripts/build-win-native.sh (--check exits 3), scripts/check-win-payload.sh (136 imports, 0 missing), scripts/windows-selfcheck.ps1",
+  "wine": "WORKS with Kron4ek Wine 11.19 amd64-wow64 (prefix wp19, WINEDLLOVERRIDES='mscoree,mshtml='). Wine 11.20 and 11.20-staging are broken upstream: virtual_init -> create_view -> map_view SEGV before a prefix (bottlesdevs/Bottles#4903, paintdotnet/Paint.NET-on-Wine#58). The sandbox is not the constraint (fixed mmap at 0x7ffe0000 and 0x7ff000000000, mmap_min_addr 4096, max_map_count 65530, 8 MB stack).",
   "ci": "docs/ci/windows.yml is a complete GitHub Actions workflow but cannot be pushed: the fine-grained token has Contents: read/write, not Workflows: write. docs/ci/README.md explains the two ways to enable it.",
-  "portability_fixes": "<cstdlib> needed for std::atoi/atof/strtoul under libc++; <windows.h> needed for RaiseException in main.cpp; GUI-subsystem exe + AttachConsole(ATTACH_PARENT_PROCESS) so cmd.exe output still works"
+  "portability_fixes": "<cstdlib> for std::atoi/atof/strtoul under libc++; <windows.h> for RaiseException; GUI-subsystem exe + AttachConsole(ATTACH_PARENT_PROCESS) so cmd.exe output still works; run_process rewritten from PeekNamedPipe polling to blocking per-pipe reader threads; explicit PROC_THREAD_ATTRIBUTE_HANDLE_LIST + serialised CreateProcess (concurrent probes were inheriting each other's pipes, error 1359); write_png writes through a libpng callback instead of a FILE* (CRT mismatch: every write failed and render died with a divide-by-zero in msvcrt); have_binary now requires exit code 0 and non-empty output",
+  "artifact": "dist/win-native/VLCFlixStudio-win64.zip (69.6 MB, 401 files, sha256 7bf4c97d75d558a18fbd6d866ea3d6060388bbdd03df5e65fda2b6c81e24357b) - git-ignored, local only; nothing is published to GitHub releases",
+  "evidence": "docs/TESTING.md section 11; docs/evidence/windows-browse.png, docs/evidence/windows-detail.png"
  }
 }

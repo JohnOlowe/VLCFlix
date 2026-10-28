@@ -225,6 +225,9 @@ negative control is what was broken on purpose to see the test go red.
 | Zero-decode file reported as `Ended` and written as watched (found turn 4) | `faults: a film deleted while it is playing…`, `faults: the UI survives nonsense input…` neighbours, journey step 10 | treat `Ended` as success |
 | Lost artwork preview (found turn 4) | `faults: a full artwork pass draws all three pieces, every single time` + `make asan` | capture `[&]` instead of `[&, segments]` |
 | `autoLatency` toggle that changed nothing | settings golden baseline + `settings` sheet render | re-add the row and watch the golden diff |
+| `run_process` returned empty output for every Windows child (found by running the exe, §11) | `processes: eight children started at once each keep their own output` | the old `PeekNamedPipe` drain: every child came back with `out=0 err=0` |
+| concurrent children inherited each other's pipes (found by running the exe, §11) | same test — 8 children at once, each must return *its own* text | `bInheritHandles = TRUE` without a handle list: under Wine, 3 failures + 3 timeouts out of 8 |
+| `write_png` wrote zero bytes across a CRT boundary (found by running the exe, §11) | `png: written bytes are real, complete, and decode to the same size` | pass a `FILE*` to `png_init_io` instead of a callback |
 | a crash left no log (requirement 2) | journey steps 12–14 | disable the crash handlers, or write the log after the window opens |
 | `--json` output polluted by the banner | journey step 4 (`{"` must be the first byte of stdout) | print the banner to stdout unconditionally |
 
@@ -232,28 +235,29 @@ negative control is what was broken on purpose to see the test go red.
 
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
-* 339 checks across layers 1, 2 and 4 — `0 failure(s)`
+* 364 checks across layers 1, 2 and 4 — `0 failure(s)`
 * 28/28 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
-* `make asan`: 339 checks clean, and the pre-fix code failing under it
+* `make asan`: 364 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
-* the Windows executable **builds** and its payload is complete — 48 imported
-  libraries checked, 0 missing (§11). It has not been *run*.
+* the Windows executable **builds**, its payload is complete (136 imported libraries
+  checked, 0 missing), and it **runs**: under Wine 11.19 it scans a real folder,
+  draws artwork, plays a film, renders all six screens and logs a crash — §11
 
 **Not verified — and not claimed:**
 
 | Area | Why not | How to check it on a machine that has it |
 |---|---|---|
-| **Running** the Windows build | the exe is built and payload-checked (§11), but never executed: Wine dies before creating a prefix in this sandbox, and there is no Windows machine here | run `scripts/windows-selfcheck.ps1` from the `win64-cross-2` release, or enable `docs/ci/windows.yml` |
-| Every `_WIN32` branch | compiled by the cross build now, but not executed | build on Windows and run the checklist in §10 |
-| A real display / window manager | no X11 or Wayland here | `./build/vlcflix` on a desktop; resize, full-screen, hover a card, press `f` |
-| Audio | no sound card; libVLC prints `ALSA lib … cannot find card '0'` | play a sample with sound and check the `−/+` latency keys move the sound earlier/later |
+| **Windows 10/11 itself** | the exe is executed under Wine 11.19 (§11), which is an impression of Windows, not Windows | run `scripts/windows-selfcheck.ps1` (it ships in the zip) on a real machine, or enable `docs/ci/windows.yml` |
+| The window on a display | no X11/Wayland here, and Wine's `ui` command correctly refuses to open one | `./build/vlcflix` on a desktop; resize, full-screen, hover a card, press `f` |
+| Audio | no sound card; libVLC prints `ALSA lib … cannot find card '0'`. Playback itself is verified (decoded/presented advance) | play a sample with sound and check the `−/+` latency keys move the sound earlier/later |
 | GPU video decode | no Vulkan video queue on this box; `-hwaccel auto` falls back to software (proven by its exit code and output file) | `hwDecode` on, scan, and check the log for a hardware device |
 | Automatic device-latency compensation | libVLC 3 cannot report output latency | nothing to do — the UI now says so instead of offering a toggle that does nothing |
-| Installer behaviour side by side with 1.2.0 | no NSIS, no Windows toolchain here; `scripts/build-win-native.sh --check` reports exactly what is missing and exits 3 | §10 |
+| Installer behaviour side by side with 1.2.0 | no NSIS, no Windows machine; `scripts/build-win-native.sh --check` reports exactly what is missing and exits 3 | §10 |
+| Code signing / SmartScreen | out of scope | — |
 
 The rule for the future is the one in `AGENTS.md`: if it was not run, it is not
 verified, and it gets listed here rather than described as working.
@@ -309,13 +313,14 @@ are checked statically by `tools/preflight.sh`.
 17. Pull the network drive / rename the folder while a film is playing: the player
     says the file is gone and does not hang.
 
-## 11. The Windows build: what was actually done
+## 11. The Windows build: built, executed, and the four bugs that found
 
-This started as the largest "not verified" item. It is now half closed.
+This was the largest "not verified" item in section 9. It is now closed for everything
+that can run without a Windows desktop: the executable has been **run**, repeatedly,
+and every command below is a transcript of a real execution.
 
 **Built.** `scripts/build-win-native.sh` produces a real `VLCFlixStudio.exe` from this
-source tree on a Linux box; the result is published as the `win64-cross-2` release.
-The recipe, all of which ran in this session:
+source tree on a Linux box. The recipe, all of which ran in this session:
 
 | Piece | Where it comes from | Why that one |
 |---|---|---|
@@ -326,35 +331,102 @@ The recipe, all of which ran in this session:
 | libVLC | VideoLAN's own `vlc-3.0.24-win64.zip` | the app must ship the exact libVLC it linked against; the import library is generated from `libvlc.dll` with `gendef` + `dlltool` |
 
 **Checked.** `scripts/check-win-payload.sh` walks every DLL imported by the exe, by
-SDL2, libpng, libvlc and libvlccore, and requires each one to be in the payload or part
-of Windows: **48 imports, 0 missing**. It also refuses to call the payload complete
-without the plugins libVLC needs (`libavcodec_plugin.dll`, the mp4/mkv/avi demuxers,
-the h264 packetizer, the vmem and d3d11 video outputs, the mmdevice and directsound
-audio outputs). The PE is verified as x86-64, GUI subsystem, with the manifest (DPI
-awareness) and version block embedded as resources.
+SDL2, libpng, libpng16, libjpeg, libvlc, libvlccore *and* by any `ffmpeg.exe` /
+`ffprobe.exe` staged next to it, and requires each one to be in the payload or part of
+Windows: **136 imports, 0 missing**. It also refuses to call the payload complete
+without the plugins libVLC needs (`libavcodec_plugin.dll`, the mp4/mkv/avi demuxers, the
+h264 packetizer, the vmem and d3d11 video outputs, the mmdevice and directsound audio
+outputs). The PE is verified as x86-64, GUI subsystem, with the manifest (DPI awareness)
+and version block embedded as resources.
 
-**Three portability bugs the cross build found**, all fixed in the source: `std::atoi`,
-`std::atof` and `std::strtoul` were used without `<cstdlib>` (libstdc++ on Linux pulls
-it in transitively, libc++ does not), and the deliberate-crash command called
-`RaiseException`/`EXCEPTION_ACCESS_VIOLATION` without `<windows.h>`. It also forced a
-real decision: the exe is a **GUI** executable so a double-click does not open a
-console, and `main()` calls `AttachConsole(ATTACH_PARENT_PROCESS)` so the same binary
-typed into `cmd.exe` still prints.
+### How it is executed here, without Windows
 
-**Not checked: running it.** Wine will not start in this sandbox — `wineboot` dies with
-SIGSEGV before it creates a prefix, in both the 11.20 and the 11.20-staging builds, so
-the exe has never been executed anywhere. That is stated on the release and here.
+Wine, one specific version, in one specific way — this is written down because the
+first attempt failed and cost most of a turn:
 
-Two independent ways to close it:
+```
+# Kron4ek Wine 11.19 amd64-wow64 (11.20 is BROKEN: see below)
+export WINEPREFIX=$PWD/wp19 WINEARCH=win64 WINEDEBUG=-all
+export WINEDLLOVERRIDES="mscoree,mshtml="
+mkdir -p "$WINEPREFIX" && ./bin/wineboot -u
+cd .../dist/win-native/payload
+wine ./VLCFlixStudio.exe scan --folders 'Z:\home\user\VLCFlix\samples'
+```
 
-1. `scripts/windows-selfcheck.ps1`, which ships inside the release zip: it runs the
-   exe, scans a folder, renders every screen, plays a film, and packs the screenshots,
-   the `status --json` document, the app's own log and a pass/fail report into
-   `windows-selfcheck-evidence.zip`.
-2. `docs/ci/windows.yml`: the same thing unattended on `windows-latest`, using MSYS2's
-   mingw-w64 GCC — a *second, independent* toolchain — and attaching the exe and the
-   screenshots to a release. It needs to live at `.github/workflows/windows.yml` and a
-   token with the `workflow` scope; `docs/ci/README.md` has the two-minute version.
+*Wine 11.20 and 11.20-staging die before creating a prefix*, with
+`virtual_init host addr space limit: 0xffffffffffff0000` followed by a SIGSEGV in
+`create_view → map_view → virtual_alloc_first_thread_data`. That is an upstream
+regression, not this sandbox: it reproduces in Bottles (bottlesdevs/Bottles#4903) and
+in Paint.NET's Wine tracker (paintdotnet/Paint.NET-on-Wine#58), both on exactly those
+two versions. A fixed `mmap` at both `0x7ffe0000` and `0x7ff000000000`, `mmap_min_addr
+= 4096`, `max_map_count = 65530` and an 8 MB stack were all checked and are fine. **Wine
+11.19 works**, and that is what the evidence below was produced with.
+
+### What was executed, and what it printed
+
+| Command | Result |
+|---|---|
+| `version` | `VLCFlix Studio 2.0.0-turn1` |
+| `doctor` | log path, data dir, media dir, exe dir, `ffmpeg found`, `ffprobe found`, `catalog 8 item(s)`, `previous run clean` |
+| `scan --folders Z:\…\samples --no-art` | **8 item(s), 0 error(s)** — every film with its real length (`0:16`) and resolution (`1280x720`) |
+| `scan` (with artwork, 8 ffmpeg children at once) | **8 of 8 artwork set(s) drawn**, `poster backdrop preview` on every row |
+| `render --screen home|browse|mylist|search|detail|settings` | six PNGs written, 25 kB – 361 kB each (`docs/evidence/windows-browse.png`, `windows-detail.png`) |
+| `play 1 --wait 4` | `state=playing time=3.15 s length=16.00 s decoded=99 presented=99 sync(video=0 audio=0)` |
+| `crash` | process dies with the deliberate access violation, **and the log has the `CRASH` record with a 21-frame stack** — the requirement that a crash still leaves a log, proved on Windows |
+| `ui --frames 3` | `could not create a window` → exit 5. Correct: Wine here has no display, and the app reports it instead of vanishing |
+
+The rendered screens are the real UI, drawn by the Windows binary: real fonts from
+FreeType, real posters decoded from the JPEG/PNG files ffmpeg had just produced on
+Windows, real text layout. That is a much stronger statement than "it compiles".
+
+### The four bugs that only running it could find
+
+None of these could be seen from Linux, from the cross build, or from the tests:
+
+1. **`run_process` returned empty output for every child.** The Windows branch polled
+   the pipes with `PeekNamedPipe` and drained nothing, so `ffprobe` looked like it
+   printed nothing, every film was "unreadable video", and `have_binary()` said
+   "ffmpeg found" for a binary that could have been anything. Fixed by reading each
+   pipe with a blocking `ReadFile` on its own thread; EOF then happens exactly when the
+   child and every copy of its write handle are gone.
+2. **Concurrent children stole each other's pipes.** `CreateProcess` was called with
+   `bInheritHandles = TRUE`, which inherits *every* inheritable handle in the process:
+   with a scan running eight probes at once, each child also received another child's
+   pipe write end, so pipes never reached EOF and Wine refused launches outright
+   (`CreateProcess failed, error 1359`, and three timeouts). Fixed with an explicit
+   `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, and process *creation* is serialised (children
+   still run in parallel, so a scan is no slower). Measured: eight concurrent probes
+   went from 3 failures + 3 timeouts out of 8, to 8/8 in 10.5 s.
+3. **`write_png` could not write a single byte.** Our `libpng` on Windows is built
+   against a different C runtime from the app, so passing it a `FILE*` from our CRT is
+   undefined behaviour between two runtimes: libpng's `fwrite` failed
+   (`libpng error: Write Error`), screenshots stayed at zero bytes, and `render` died
+   with an integer divide-by-zero inside `msvcrt`. Fixed by writing through a libpng
+   callback into memory and writing the file ourselves, then reading it back to prove
+   the size matches.
+4. **A one-line honesty bug**: `doctor` claimed the tools were present because a process
+   had started. `have_binary()` now requires `exit code 0` *and* non-empty output.
+
+Bugs 1 and 3 were found only because the app's own log recorded the failure honestly
+(`ffprobe failed … : `, `cannot open … for writing`) instead of swallowing it.
+
+### Still not verified, and still not claimed
+
+| Area | Why not |
+|---|---|
+| Real Windows 10/11 itself | Wine is a very good impression of Windows, not Windows; `kernel32` behaviour under Wine is not proof about the real thing |
+| The window on screen | Wine here has no display; `ui` is exercised on Linux with SDL's dummy driver and the *drawing* is exercised by `render` on Windows |
+| Audio output | no sound card under Wine (`ALSA lib … Unknown PCM default`); playback itself is verified (decoded/presented counters advance) |
+| Installer, side-by-side with 1.2.0, uninstall | needs NSIS and a real registry; `scripts/build-win-native.sh --check` names exactly what is missing and exits 3 |
+| Code signing, SmartScreen | out of scope, and stated on the download page |
+
+Two independent ways to close the rest: `scripts/windows-selfcheck.ps1` (ships inside
+the release zip: it runs the exe, scans, renders every screen, plays a film and packs
+the screenshots, `status --json`, the app log and a pass/fail report into
+`windows-selfcheck-evidence.zip`), and `docs/ci/windows.yml` (the same, unattended on
+`windows-latest` with MSYS2's mingw-w64 GCC — a second, independent toolchain). The
+workflow is parked under `docs/` because GitHub refused the push without the `workflow`
+scope; it needs to be copied to `.github/workflows/windows.yml` to go live.
 
 ## 12. How to add a test
 

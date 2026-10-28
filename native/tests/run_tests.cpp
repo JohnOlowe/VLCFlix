@@ -4,11 +4,13 @@
 // Every bug in docs/AUDIT.md gets a regression test here, and the buggy behaviour
 // gets a *negative control*: a copy of the old algorithm is run against the same
 // input and asserted to fail, so the test proves it is testing something.
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <map>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/catalog.h"
@@ -22,6 +24,9 @@
 #include "library/artwork.h"
 #include "library/subtitles.h"
 #include "library/walk.h"
+#include "platform/proc.h"
+#include "render/canvas.h"
+#include "render/image.h"
 #include "tests/harness.h"
 
 namespace vf {
@@ -434,6 +439,72 @@ void test_artwork_rules() {
   CHECK(adopted.poster == basename(paths.poster));
 }
 
+/* ------------------------- processes and PNG output ---------------------- */
+
+// Two bugs found by running the Windows binary under Wine on 2026-10-28, both of them
+// invisible on Linux:
+//
+//  1. run_process launched children with bInheritHandles = TRUE, so when eight probes
+//     ran at once each child also inherited the other children's pipe write ends. Pipes
+//     never reached EOF and Wine refused launches outright ("CreateProcess failed,
+//     error 1359"). This test runs eight children at once and requires every one of them
+//     to come back with its own output: with the old code, at least one lost its output
+//     or never returned at all.
+//  2. write_png handed libpng a FILE* from our CRT while the Windows libpng is built
+//     against a different one, so every write failed and the file stayed at zero bytes.
+//     This test requires the bytes to be there and to decode back to the same size.
+void test_concurrent_children() {
+  TEST("processes: eight children started at once each keep their own output");
+  const int kChildren = 8;
+  std::vector<std::string> outs(static_cast<std::size_t>(kChildren));
+  std::vector<int> codes(static_cast<std::size_t>(kChildren), -99);
+  std::vector<std::thread> threads;
+  for (int i = 0; i < kChildren; ++i) {
+    threads.emplace_back([i, &outs, &codes] {
+#ifdef _WIN32
+      // cmd is the only shell that is certainly present on Windows.
+      const ProcResult r = run_process({"cmd", "/c", "echo", "child" + std::to_string(i)}, 20000);
+#else
+      const ProcResult r = run_process({"/bin/sh", "-c", "echo child" + std::to_string(i)}, 20000);
+#endif
+      outs[static_cast<std::size_t>(i)] = r.out;
+      codes[static_cast<std::size_t>(i)] = r.started ? r.exit_code : -1;
+    });
+  }
+  for (auto& t : threads) t.join();
+  for (int i = 0; i < kChildren; ++i) {
+    CHECK_EQ(codes[static_cast<std::size_t>(i)], 0);
+    // Each child must see its own argument, not another child's: that is what the
+    // shared, unlisted handles destroyed.
+    CHECK(outs[static_cast<std::size_t>(i)].find("child" + std::to_string(i)) !=
+          std::string::npos);
+  }
+}
+
+void test_png_roundtrip() {
+  TEST("png: written bytes are real, complete, and decode to the same size");
+  Canvas canvas(97, 61);
+  canvas.clear(Color{12, 34, 56, 255});
+  const std::string path = join(temp_dir(), "png-roundtrip.png");
+  CHECK(write_png(path, canvas));
+  std::string bytes;
+  CHECK(read_file(path, &bytes));
+  CHECK(bytes.size() > 100);  // a header and nothing else would not decode
+  const Image decoded = decode_image(bytes);
+  CHECK(decoded.valid());
+  CHECK_EQ(decoded.width, 97);
+  CHECK_EQ(decoded.height, 61);
+  // A screenshot into a folder that does not exist yet must land there, not vanish: the
+  // render command happily accepts an output path in a new directory.
+  const std::string nested = join(join(temp_dir(), "fresh-sub-dir"), "shot.png");
+  CHECK(write_png(nested, canvas));
+  std::string nested_bytes;
+  CHECK(read_file(nested, &nested_bytes));
+  CHECK(nested_bytes.size() > 100);
+  remove_file(nested);
+  remove_file(path);
+}
+
 /* --------------------------------- misc --------------------------------- */
 
 void test_misc() {
@@ -463,6 +534,8 @@ int main() {
   test_subtitles();
   test_rails();
   test_artwork_rules();
+  test_concurrent_children();
+  test_png_roundtrip();
   test_misc();
   // UI tests draw real screens into a temporary directory: no display, no window.
   const std::string ui_out = join(temp_dir(), "vlcflix-studio-shots");

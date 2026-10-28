@@ -41,6 +41,10 @@ written into the release notes, so an empty release list is itself a signal.
 ## Why bother when a build already exists
 
 A cross-compiled exe proves the source compiles for Windows. Only running it proves
-the app opens a window, loads libVLC's plugins and decodes a frame on Windows. That is
-the difference this workflow closes, and it is why the release notes on
-`win64-cross-2` say "not verified: never executed".
+the app opens a window, loads libVLC's plugins and decodes a frame on Windows.
+
+Some of that has since been proved under Wine 11.19 on a Linux box
+(`docs/TESTING.md` section 11): scanning, artwork, playback, all six rendered screens
+and the crash log. What Wine cannot prove is the window on a real display, real audio,
+and the installer — which is exactly what this workflow closes, and why the cross build
+no longer claims "never executed" but "not yet run on Windows itself".

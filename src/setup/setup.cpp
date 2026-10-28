@@ -38,7 +38,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kVersion = "2.0.0";
+constexpr const char* kVersion = "2.0.1";
 constexpr const wchar_t* kProductName = L"VLCFlix Studio";
 constexpr const wchar_t* kExeName = L"VLCFlixStudio.exe";
 constexpr const wchar_t* kSetupName = L"VLCFlixStudio-Setup.exe";

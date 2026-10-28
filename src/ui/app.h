@@ -23,6 +23,12 @@
 #include "ui/theme.h"
 
 namespace vf {
+
+// What the pointer should look like over a given pixel. Defined here rather than in the
+// window layer so the UI can decide it (the UI is what knows what is under the pointer)
+// without knowing that SDL exists; the window turns it into a real cursor.
+enum class PointerCursor { Arrow, Hand, IBeam };
+
 namespace ui {
 
 enum class View { Home, Browse, MyList, Search };
@@ -127,6 +133,15 @@ class App {
   // The hit areas produced by the last draw. Used by tests so they click the real
   // geometry instead of guessed pixel coordinates.
   const std::vector<std::pair<Rect, Action>>& hit_rects() const { return hits_; }
+
+  // Hovering must say "this is clickable". The answer comes from the same hit areas the
+  // click uses, so the cursor can never promise something a click will not do.
+  PointerCursor pointer_cursor() const;
+  void set_pointer(float x, float y) {
+    pointer_x_ = x;
+    pointer_y_ = y;
+    pointer_known_ = true;
+  }
   std::string hover_title() const;
 
   // Reported after a Play click, whether or not the player could be started. The
@@ -228,6 +243,11 @@ class App {
   const Image* poster_for(const Item& item);
 
   void add_hit(const Rect& rect, Action action);
+  // An area that belongs to something already drawn and must not pass the click on to
+  // what is behind it (the body of a sheet over the page, or over the sheet's scrim).
+  // add_hit() drops Action::Kind::None, which is why this exists: the sheets used to
+  // call add_hit() with a None action and silently registered nothing at all.
+  void swallow(const Rect& rect);
   Action hit_test(float x, float y) const;
 
   /* -------------------------------- scrolling ------------------------------ */
@@ -317,6 +337,9 @@ class App {
   std::vector<std::pair<Rect, std::string>> rail_bands_;
   std::vector<Rect> order_rects_;  // drawn position of each card in order_
   int hover_item_ = -1;
+  float pointer_x_ = 0;
+  float pointer_y_ = 0;
+  bool pointer_known_ = false;
   int focus_item_ = -1;
   std::vector<int> order_;   // catalog indices in drawing order, rebuilt every frame
   int order_columns_ = 1;

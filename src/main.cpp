@@ -416,6 +416,9 @@ int command_ui(const Args& args) {
       window.present(canvas);
       dirty = false;
     }
+    // The cursor is decided by what the UI has under the pointer, so it is updated
+    // after the frame it describes: hovering a poster or a button must look clickable.
+    window.set_cursor(app->pointer_cursor());
     if (app->playing()) dirty = true;  // a player needs a frame even when nothing changed
   }
 

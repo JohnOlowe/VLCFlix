@@ -47,6 +47,13 @@ int adopt_existing_art(Item& item, const std::string& media_dir);
 // Half-written files from a killed pass are never shown and never reused.
 int sweep_temp_art(const std::string& media_dir);
 
+// Hardware decoding for the artwork passes. This is the real meaning of the
+// `hwDecode` setting: ffmpeg gets `-hwaccel auto`, which uses the GPU when the machine
+// has a usable device and silently falls back to software when it does not (verified:
+// on a machine with no Vulkan video queue the command still produces the still).
+void set_hwaccel_decoding(bool enabled);
+bool hwaccel_decoding();
+
 // Mean luma (0-255) via ffmpeg's signalstats; -1 when it cannot be measured.
 double measure_luma(const std::string& file);
 

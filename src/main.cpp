@@ -437,6 +437,8 @@ int command_scan(const Args& args) {
     LOG_INFO("scan %s %d/%d %s", p.phase.c_str(), p.done, p.total, p.current.c_str());
   };
   options.on_catalog = [&](const Catalog& catalog) { store.save_catalog(catalog); };
+  ArtRunResult art;
+  options.art_result = &art;
 
   const Catalog catalog = scan_library(options);
   store.save_catalog(catalog);
@@ -455,9 +457,26 @@ int command_scan(const Args& args) {
                 item.year ? std::to_string(item.year).c_str() : "-", human_duration(item.duration).c_str(),
                 resolution, art.c_str());
   }
-  std::printf("%s\n%zu item(s), %zu error(s), catalog at %s\n", std::string(74, '-').c_str(),
-              catalog.items.size(), catalog.errors.size(),
-              store.file_for("catalog").c_str());
+  int unreadable = 0;
+  for (const auto& item : catalog.items) {
+    if (item.unreadable) ++unreadable;
+  }
+  if (!catalog.errors.empty()) {
+    // A count alone sends people to the log; the reasons belong on the screen, next to
+    // the library they are about.
+    std::printf("%s\n", std::string(74, '-').c_str());
+    for (const auto& error : catalog.errors) std::printf("  ! %s\n", error.c_str());
+  }
+  std::printf("%s\n", std::string(74, '-').c_str());
+  // "0 drawn" is the honest way to say that a rescan reused the artwork on disk: a
+  // count of finished work would look the same whether it was drawn or adopted.
+  std::printf("%d of %d artwork set(s) drawn, %d still missing\n", art.drawn, art.total,
+              art.remaining);
+  if (unreadable) {
+    std::printf("%d item(s) in the library could not be read and will not play\n", unreadable);
+  }
+  std::printf("%zu item(s), %zu error(s), catalog at %s\n", catalog.items.size(),
+              catalog.errors.size(), store.file_for("catalog").c_str());
   return 0;
 }
 
@@ -474,6 +493,37 @@ int command_status(const Args& args) {
     root.set("mediaDir", media_dir());
     root.set("logFile", log::path());
     root.set("items", static_cast<long long>(catalog.items.size()));
+    Json library = Json::array();
+    for (const auto& item : catalog.items) {
+      Json entry = Json::object();
+      entry.set("id", item.id);
+      entry.set("title", item.title);
+      entry.set("year", static_cast<long long>(item.year));
+      entry.set("path", item.path);
+      entry.set("duration", item.duration);
+      entry.set("pixFmt", item.pix_fmt);
+      entry.set("width", static_cast<long long>(item.width));
+      entry.set("height", static_cast<long long>(item.height));
+      entry.set("rating", item.rating);
+      entry.set("poster", item.poster);
+      entry.set("backdrop", item.backdrop);
+      entry.set("preview", item.preview);
+      entry.set("unreadable", item.unreadable);
+      Json genres = Json::array();
+      for (const auto& g : item.genres) genres.push(Json(g));
+      entry.set("genres", genres);
+      Json subs = Json::array();
+      for (const auto& t : item.subtitles) {
+        Json sub = Json::object();
+        sub.set("lang", t.lang);
+        sub.set("label", t.label);
+        sub.set("name", t.name);
+        subs.push(sub);
+      }
+      entry.set("subtitles", subs);
+      library.push(entry);
+    }
+    root.set("library", library);
     root.set("scannedAt", static_cast<long long>(catalog.scanned_at));
     Json folders = Json::array();
     for (const auto& f : settings.library_folders) folders.push(Json(f));
@@ -517,7 +567,6 @@ int command_settings(const Args& args) {
     out.set("vlcPasswordSet", !settings.vlc_password.empty());
     out.set("playMode", settings.play_mode);
     out.set("vlcFullscreen", settings.vlc_fullscreen);
-    out.set("autoLatency", settings.auto_latency);
     out.set("hwDecode", settings.hw_decode);
     std::printf("%s\n", out.dump(2).c_str());
     return 0;
@@ -667,10 +716,14 @@ int main(int argc, char** argv) {
   }
   LOG_INFO("command: %s", args.command.c_str());
 
-  std::printf("%s %s\n", kProductName, kVersion);
-  std::printf("log: %s\n", log::path().empty() ? "(stderr only)" : log::path().c_str());
+  // In --json mode the banner goes to stderr: a caller parsing stdout must get JSON and
+  // nothing else, and the banner must still be visible to a human watching the terminal.
+  FILE* banner = args.json ? stderr : stdout;
+  std::fprintf(banner, "%s %s\n", kProductName, kVersion);
+  std::fprintf(banner, "log: %s\n", log::path().empty() ? "(stderr only)" : log::path().c_str());
   if (log::previous_run_crashed()) {
-    std::printf("NOTE: the previous run ended unexpectedly; see the lines above the last run-start\n");
+    std::fprintf(banner,
+                 "NOTE: the previous run ended unexpectedly; see the lines above the last run-start\n");
   }
 
   int code = 0;

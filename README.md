@@ -15,6 +15,9 @@ sudo apt install build-essential pkg-config cmake libsdl2-dev libfreetype-dev li
 ```bash
 make -j2
 make test
+make preflight
+make verify
+make asan
 ```
 
 Or use CMake:
@@ -37,6 +40,12 @@ ctest --test-dir build --output-on-failure
 ```
 
 Library settings, progress and generated artwork are kept in the application data directory. `--data` or `VLCFLIX_STUDIO_DATA` can select a different data directory. The `samples/` folder contains small media fixtures used by the tests.
+
+## Windows build
+
+`scripts/build-win-native.sh --check` checks the build prerequisites. `scripts/build-win-native.sh --setup` builds an installer when the required toolchain is available. Release executables are local build artifacts and are not committed.
+
+See [Testing](docs/TESTING.md) for the test layers and manual checks.
 
 ## License
 

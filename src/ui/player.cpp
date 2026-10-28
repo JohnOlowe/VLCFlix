@@ -65,10 +65,20 @@ bool App::start_playback(int index) {
   stop_playback();
   player_error_.clear();
   player_finished_ = false;
+  player_failed_ = false;
   subtitle_tracks_.clear();
   subtitle_cues_.clear();
   subtitle_track_ = -1;
   subtitle_offset_ms_ = 0;
+
+  if (item.unreadable) {
+    // Known bad before we even open it: a partial download or a container the prober
+    // rejected. Saying so beats a black window and a spinner.
+    player_error_ = "This file could not be read when the library was scanned: " + item.filename;
+    notify(player_error_);
+    LOG_ERROR("player: refusing unreadable item %s", item.filename.c_str());
+    return false;
+  }
 
   const std::string absolute = item.path;
   if (!file_exists(absolute)) {
@@ -103,6 +113,7 @@ bool App::start_playback(int index) {
   }
 
   engine_.play();
+  playback_started_at_ = clock_now();
   player_open_ = true;
   playing_index_ = index;
   chrome_visible_ = true;
@@ -131,6 +142,7 @@ void App::stop_playback() {
   presenter_.clear();
   player_open_ = false;
   player_chrome_ = false;
+  playback_started_at_ = 0;
   playing_index_ = -1;
   subtitle_cues_.clear();
   LOG_INFO("player: stopped at %.1f s", status.time);
@@ -257,14 +269,46 @@ bool App::tick(double now) {
     changed = true;
   }
 
-  if (status.state == PlayState::Ended && !player_finished_) {
-    finish_film();
+  if (status.state == PlayState::Ended && !player_finished_ && !player_failed_) {
+    if (status.frames_decoded == 0) {
+      // A file libVLC "plays" and immediately ends without one decoded picture is a
+      // broken file, not a finished film. Finishing it would write it as watched and
+      // drop it from Continue Watching - the film would vanish because it was corrupt.
+      player_error_ = "This file ended without producing a single picture: " +
+                      (playing_index_ >= 0 &&
+                               static_cast<std::size_t>(playing_index_) < catalog_.items.size()
+                           ? catalog_.items[static_cast<std::size_t>(playing_index_)].filename
+                           : std::string("this file"));
+      player_failed_ = true;
+      notify(player_error_);
+      LOG_ERROR("player: ended with no frames, treating as failure: %s", player_error_.c_str());
+    } else {
+      finish_film();
+    }
     changed = true;
   }
   if (status.state == PlayState::Error && player_error_.empty()) {
     player_error_ = status.error.empty() ? "the engine reported an error" : status.error;
+    player_failed_ = true;
     notify(player_error_);
     LOG_ERROR("player: %s", player_error_.c_str());
+    changed = true;
+  }
+
+  // A file libVLC accepts but cannot decode never reports an error on its own: it
+  // sits in "playing" with no pictures. Six seconds of that is a failure, and saying
+  // so is the difference between a bug report and a mystery.
+  if (status.state == PlayState::Playing && status.frames_decoded == 0 && player_error_.empty() &&
+      playback_started_at_ > 0 && now - playback_started_at_ > 6.0) {
+    player_error_ = "The engine produced no picture for 6 seconds: " +
+                      (playing_index_ >= 0 &&
+                               static_cast<std::size_t>(playing_index_) < catalog_.items.size()
+                           ? catalog_.items[static_cast<std::size_t>(playing_index_)].filename
+                           : std::string("this file"));
+    notify(player_error_);
+    LOG_ERROR("player: no picture after 6 s on %s", player_error_.c_str());
+    player_failed_ = true;
+    engine_.pause();
     changed = true;
   }
 
@@ -288,7 +332,14 @@ bool App::tick(double now) {
     chrome_visible_ = true;
     changed = true;
   }
-  if (previous_state != status.state) changed = true;
+  if (player_failed_ && player_status_.state != PlayState::Error) {
+    // The engine may still claim it is playing; from the user's point of view the
+    // player has failed, and the state machine has to say the same thing as the
+    // message on screen.
+    player_status_.state = PlayState::Error;
+    player_status_.error = player_error_;
+  }
+  if (previous_state != player_status_.state) changed = true;
   return changed;
 }
 

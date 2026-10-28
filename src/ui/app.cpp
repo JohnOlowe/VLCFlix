@@ -318,6 +318,16 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
                              rgba(theme::kAccent, focused ? 255 : 220));
   }
 
+  if (item.unreadable) {
+    // A file the prober could not read: say so on the card, so the user is not left
+    // wondering why this one cannot be played.
+    const std::string badge = "unreadable";
+    const float badge_width = regular_.measure(badge, theme::kFontTiny).width + 16;
+    const Rect badge_rect{card.x + 8, card.y + 8, badge_width, 20};
+    canvas.fill_round_rect(badge_rect, 10, rgba(0xff5a5a, 220));
+    regular_.draw_centered(canvas, badge, badge_rect, theme::kFontTiny, rgb(0x1a0505));
+  }
+
   const Rect label{card.x, card.bottom() + 8, card.w, 18};
   bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontSmall, card.w), label.x, label.y,
              theme::kFontSmall, theme::text());
@@ -747,6 +757,7 @@ int App::scan_now() {
   options.media_dir = media_dir_;
   options.previous = store_.load_catalog();
   options.render_artwork = true;
+  options.hw_decode = settings_.hw_decode;
   const double started = now_seconds();
   options.on_progress = [&](const ScanProgress& progress) {
     scan_label_ = progress.phase == "read"
@@ -781,7 +792,8 @@ void App::draw_settings(Canvas& canvas) {
   const float folder_rows = 22.0f * static_cast<float>(settings_.library_folders.size());
   const float samples_row =
       (!sample_folder_.empty() && settings_.library_folders.empty()) ? 38.0f : 0.0f;
-  const float needed = 84 + 34 + folder_rows + 42 + samples_row + 8 + 34 * 3 + 44 * 2 + 26 + 42 + 34;
+  const float needed =
+      84 + 34 + folder_rows + 42 + samples_row + 8 + 34 * 3 + 44 /*toggle*/ + 34 /*latency*/ + 26 + 42 + 34;
   const float panel_height = std::min(static_cast<float>(height_) - 100.0f, needed);
   const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
                    panel_height};
@@ -854,8 +866,14 @@ void App::draw_settings(Canvas& canvas) {
             Action{Action::Kind::ToggleSetting, -1, key});
     y += 44;
   };
-  toggle("Hardware decoding (for artwork)", settings_.hw_decode, "hwDecode");
-  toggle("Audio latency compensation", settings_.auto_latency, "autoLatency");
+  toggle("Hardware decoding for artwork (ffmpeg)", settings_.hw_decode, "hwDecode");
+  // No switch for device-latency compensation: libVLC 3 cannot report the output
+  // latency, so a switch would be a lie. The player's sync control is the real one.
+  regular_.draw(canvas, "Device latency compensation",
+                panel.x + 32, y + 4, theme::kFontBody, theme::faint());
+  regular_.draw_right(canvas, "not available with libVLC 3 — use − / + in the player",
+                      Rect{panel.x + 32, y + 4, row_width, 22}, theme::kFontTiny, theme::faint());
+  y += 34;
 
   y += 6;
   const Rect scan_button{panel.x + 32, panel.bottom() - 78, button_width("Scan library", true), 42};
@@ -1002,10 +1020,10 @@ bool App::handle(const InputEvent& event) {
         }
         case Action::Kind::ToggleSetting: {
           if (action.value == "hwDecode") settings_.hw_decode = !settings_.hw_decode;
-          if (action.value == "autoLatency") settings_.auto_latency = !settings_.auto_latency;
+
           notify(action.value == "hwDecode"
                      ? std::string("Hardware decoding ") + (settings_.hw_decode ? "on" : "off")
-                     : std::string("Latency compensation ") + (settings_.auto_latency ? "on" : "off"));
+                     : std::string("Unknown setting"));
           return true;
         }
         case Action::Kind::FocusSearch:

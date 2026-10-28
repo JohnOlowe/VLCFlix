@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/model.h"
+#include "library/artwork.h"
 
 namespace vf {
 
@@ -24,9 +25,15 @@ struct ScanOptions {
   std::string media_dir;
   Catalog previous;  // used to skip unchanged files
   bool render_artwork = true;
+  // ffmpeg gets `-hwaccel auto` when true (the `hwDecode` setting). Off by default:
+  // software decoding is predictable, and the setting exists to opt in.
+  bool hw_decode = false;
   std::function<void(const ScanProgress&)> on_progress;
   std::function<void(const Catalog&)> on_catalog;
   std::function<bool()> cancel;
+  // Filled in by the artwork pass so the caller can say what it drew instead of
+  // guessing. A second scan over an unchanged library fills this with 0 drawn.
+  ArtRunResult* art_result = nullptr;
 };
 
 Catalog scan_library(const ScanOptions& options);

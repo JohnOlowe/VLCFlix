@@ -54,7 +54,6 @@ Settings Store::load_settings() const {
   settings.vlc_password = root.str("vlcPassword", settings.vlc_password);
   settings.play_mode = root.str("playMode", settings.play_mode);
   settings.vlc_fullscreen = root.flag("vlcFullscreen", settings.vlc_fullscreen);
-  settings.auto_latency = root.flag("autoLatency", settings.auto_latency);
   settings.hw_decode = root.flag("hwDecode", settings.hw_decode);
   return settings;
 }
@@ -102,11 +101,10 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
       return fail("playMode must be 'vlc', 'ffmpeg' or 'browser'");
     current.play_mode = mode;
   }
-  for (const char* key : {"vlcFullscreen", "autoLatency", "hwDecode"}) {
+  for (const char* key : {"vlcFullscreen", "hwDecode"}) {
     if (const Json* v = patch.find(key); v) {
       if (!v->isBool()) return fail(std::string(key) + " must be true or false");
       if (std::string(key) == "vlcFullscreen") current.vlc_fullscreen = v->asBool();
-      if (std::string(key) == "autoLatency") current.auto_latency = v->asBool();
       if (std::string(key) == "hwDecode") current.hw_decode = v->asBool();
     }
   }
@@ -120,7 +118,6 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
   out_json.set("vlcPassword", current.vlc_password);
   out_json.set("playMode", current.play_mode);
   out_json.set("vlcFullscreen", current.vlc_fullscreen);
-  out_json.set("autoLatency", current.auto_latency);
   out_json.set("hwDecode", current.hw_decode);
 
   if (!write_file_atomic(file_for("settings"), out_json.dump(2))) {
@@ -180,6 +177,7 @@ Catalog Store::load_catalog() const {
       item.preview_version = static_cast<int>(j.integer("previewVersion", 0));
       item.art_attempts = static_cast<int>(j.integer("artAttempts", 0));
       item.art_error = j.str("artError");
+      item.unreadable = j.flag("unreadable", false);
       if (const Json* genres = j.find("genres"); genres && genres->isArray()) {
         for (const auto& g : genres->items()) {
           if (g.isString()) item.genres.push_back(g.asString());
@@ -253,6 +251,7 @@ bool Store::save_catalog(const Catalog& catalog) const {
     j.set("previewVersion", item.preview_version);
     if (item.art_attempts) j.set("artAttempts", item.art_attempts);
     if (!item.art_error.empty()) j.set("artError", item.art_error);
+    if (item.unreadable) j.set("unreadable", true);
     items.push(j);
   }
   root.set("items", items);

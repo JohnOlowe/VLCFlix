@@ -21,6 +21,8 @@
 namespace vf {
 void run_ui_tests(const std::string& out_dir);
 void run_player_tests();
+void run_golden_tests(const std::string& baseline_dir);
+void run_fault_tests();
 }
 
 using namespace vf;
@@ -459,6 +461,33 @@ int main() {
   const std::string ui_out = join(temp_dir(), "vlcflix-studio-shots");
   vf::run_ui_tests(ui_out);
   vf::run_player_tests();
+  // Golden images: baselines live in the repository, so a layout change is reviewable
+  // in the diff instead of being invisible.
+  {
+    // Baselines live beside the tests, in the repository.
+    // Build output also has a tests/ directory. Identify the source tree by its
+    // test source, not by the first directory named tests.
+    std::string tests_dir;
+    const std::vector<std::string> starts = {vf::absolute_path("."), vf::exe_dir()};
+    for (const auto& start : starts) {
+      std::string current = start;
+      for (int level = 0; level <= 6; ++level) {
+        const std::string candidate = vf::join(current, "tests");
+        if (vf::file_exists(vf::join(candidate, "golden_tests.cpp"))) {
+          tests_dir = candidate;
+          break;
+        }
+        const std::string parent = vf::dirname(current);
+        if (parent.empty() || parent == current) break;
+        current = parent;
+      }
+      if (!tests_dir.empty()) break;
+    }
+    const std::string golden_dir = tests_dir.empty() ? std::string("tests/golden")
+                                                    : vf::join(tests_dir, "golden");
+    vf::run_golden_tests(golden_dir);
+  }
+  vf::run_fault_tests();
   std::printf("\n(UI screenshots written to %s)\n", ui_out.c_str());
   return vftest::summary("native tests");
 }

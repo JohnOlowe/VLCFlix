@@ -39,7 +39,10 @@ using namespace vf;
 namespace {
 
 struct Args {
-  std::string command = "help";
+  // No arguments at all means "open the window": that is what happens when the desktop
+  // or Start Menu shortcut is double-clicked, and it is what people expect of an app.
+  // `help` still prints the full command list.
+  std::string command;
   std::string log_path;
   std::string data_dir;
   std::string folders;  // comma-separated
@@ -74,7 +77,7 @@ Args parse_args(int argc, char** argv) {
   std::vector<std::string> positional;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
-    if (args.command == "help" && a.size() && a[0] != '-') {
+    if (args.command.empty() && a.size() && a[0] != '-') {
       args.command = a;  // the command name
       continue;
     }
@@ -89,6 +92,10 @@ Args parse_args(int argc, char** argv) {
       }
       return argv[++i];
     };
+    if (a == "--help" || a == "-h") {
+      args.command = "help";
+      continue;
+    }
     if (a == "--log") args.log_path = value("--log");
     else if (a == "--data") args.data_dir = value("--data");
     else if (a == "--folders") args.folders = value("--folders");
@@ -359,6 +366,9 @@ int command_ui(const Args& args) {
   Window window;
   if (!window.open(args.width, args.height, "VLCFlix Studio")) {
     LOG_ERROR("window could not be opened");
+    show_error_box("VLCFlix Studio",
+                   std::string("VLCFlix Studio could not open its window.\n\n") +
+                       "The full log is here:\n" + log::path());
     return 5;
   }
 
@@ -729,7 +739,7 @@ int main(int argc, char** argv) {
     }
   } guard;
 
-  const Args args = parse_args(argc, argv);
+  Args args = parse_args(argc, argv);
   if (!args.data_dir.empty()) {
     set_data_dir(args.data_dir);
     LOG_INFO("data directory overridden: %s", args.data_dir.c_str());
@@ -746,6 +756,7 @@ int main(int argc, char** argv) {
                  "NOTE: the previous run ended unexpectedly; see the lines above the last run-start\n");
   }
 
+  if (args.command.empty()) args.command = "ui";  // double-clicked: open the window
   int code = 0;
   if (args.command == "scan") code = command_scan(args);
   else if (args.command == "status") code = command_status(args);

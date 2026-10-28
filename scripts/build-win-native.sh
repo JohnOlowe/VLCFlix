@@ -7,6 +7,7 @@
 #   scripts/build-win-native.sh --check     # report what is missing, change nothing
 #   scripts/build-win-native.sh            # download, build, stage, verify
 #   scripts/build-win-native.sh --zip      # ... and pack dist/win-native/*.zip
+#   scripts/build-win-native.sh --setup    # ... and build releases/VLCFlixStudio-Setup.exe
 #
 # What it does
 #   1. fetches llvm-mingw (clang + lld + mingw-w64 headers/libs, no install needed)
@@ -53,6 +54,9 @@ MODE="build"
 case "${1:-}" in
   --check) MODE="check" ;;
   --zip)   MODE="zip" ;;
+  # --setup builds the one-file installer that carries the whole application and
+  # registers it as a normal Windows app (Desktop + Start Menu icons, Apps & features).
+  --setup) MODE="setup" ;;
   "")      ;;
   *) printf 'unknown argument: %s (try --check)\n' "$1" >&2; exit 2 ;;
 esac
@@ -86,6 +90,7 @@ say "llvm-mingw $LLVM_MINGW_VER"
 fetch "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VER/llvm-mingw-$LLVM_MINGW_VER-ucrt-ubuntu-22.04-x86_64.tar.xz" llvm-mingw.tar.xz
 TC="$CACHE/llvm-mingw-$LLVM_MINGW_VER-ucrt-ubuntu-22.04-x86_64"
 [ -d "$TC" ] || tar -xf "$CACHE/llvm-mingw.tar.xz" -C "$CACHE"
+CC="$TC/bin/x86_64-w64-mingw32-gcc"
 CXX="$TC/bin/x86_64-w64-mingw32-g++"
 WINDRES="$TC/bin/x86_64-w64-mingw32-windres"
 [ -x "$CXX" ] || die "no cross compiler at $CXX"
@@ -166,6 +171,7 @@ done
 say "linking (GUI subsystem: double-click opens the window, not a console)"
 cat > "$CACHE/version.rc" <<RC
 1 24 "$ROOT/packaging/app.manifest"
+1 ICON "$ROOT/packaging/vlcflix.ico"
 1 VERSIONINFO
 FILEVERSION 2,0,0,0
 PRODUCTVERSION 2,0,0,0
@@ -213,10 +219,87 @@ cp "$ROOT/scripts/windows-selfcheck.ps1" "$PAYLOAD/"
 say "checking that the payload can load at all"
 "$ROOT/scripts/check-win-payload.sh" "$PAYLOAD" | tail -20 || die "the payload is incomplete"
 
-if [ "$MODE" = "zip" ]; then
+if [ "$MODE" = "zip" ] || [ "$MODE" = "setup" ]; then
   say "packing"
+  rm -f "$DIST/VLCFlixStudio-win64.zip"
   ( cd "$PAYLOAD" && zip -qr "$DIST/VLCFlixStudio-win64.zip" . )
   ls -lsh "$DIST/VLCFlixStudio-win64.zip"
+fi
+
+if [ "$MODE" = "setup" ]; then
+  # ---------------------------------------------------------------- installer
+  # The application can never be literally one file: libVLC loads its codecs from a
+  # plugins directory at runtime. So the whole directory is packed into a zip that is
+  # appended to a small installer stub, and the stub unpacks it on first run and
+  # registers the app like any other Windows program.
+  say "miniz (zip reading + inflate, one file, public domain)"
+  fetch "https://github.com/richgel999/miniz/releases/download/3.0.2/miniz-3.0.2.zip" miniz.zip
+  if [ ! -f "$CACHE/miniz/miniz.c" ]; then
+    mkdir -p "$CACHE/miniz"
+    unzip -qo "$CACHE/miniz.zip" -d "$CACHE/miniz" || die "could not unpack miniz"
+  fi
+
+  say "packing the application for the installer"
+  rm -f "$DIST/payload.zip"
+  ( cd "$PAYLOAD" && zip -qr "$DIST/payload.zip" . ) || die "could not pack the payload"
+
+  say "building the installer"
+  cat > "$CACHE/setup.rc" <<RC
+1 24 "$ROOT/packaging/app.manifest"
+1 ICON "$ROOT/packaging/vlcflix.ico"
+1 VERSIONINFO
+FILEVERSION 2,0,0,0
+PRODUCTVERSION 2,0,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName",      "VLCFlix"
+      VALUE "FileDescription",  "VLCFlix Studio setup"
+      VALUE "FileVersion",      "2.0.0"
+      VALUE "InternalName",     "VLCFlixStudioSetup"
+      VALUE "OriginalFilename", "VLCFlixStudio-Setup.exe"
+      VALUE "ProductName",      "VLCFlix Studio"
+      VALUE "ProductVersion",   "2.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+RC
+  "$WINDRES" -I "$CACHE" -O coff -o "$OBJ/setup.res.o" "$CACHE/setup.rc" || die "windres failed"
+  "$CC" -O2 -c -o "$OBJ/miniz.o" "$CACHE/miniz/miniz.c" || die "compiling miniz failed"
+  # shellcheck disable=SC2086
+  "$CXX" -std=c++17 -O2 -DNDEBUG -D_WIN32_WINNT=0x0A00 -municode -I "$CACHE/miniz" \
+    -o "$DIST/setup-stub.exe" "$SRC/setup/setup.cpp" "$OBJ/miniz.o" "$OBJ/setup.res.o" \
+    -mwindows -lole32 -luuid -lshell32 -lshlwapi -ladvapi32 -luser32 -static-libgcc \
+    -static-libstdc++ || die "linking the installer failed"
+
+  say "attaching the application to the installer"
+  python3 - "$DIST/setup-stub.exe" "$DIST/payload.zip" "$DIST/VLCFlixStudio-Setup.exe" <<'APPEND'
+import struct, sys
+
+stub_path, payload_path, out_path = sys.argv[1:4]
+stub = open(stub_path, "rb").read()
+payload = open(payload_path, "rb").read()
+# The stub finds the payload from the last 24 bytes of its own file, so the payload has
+# to be appended after the linker is finished with the exe.
+with open(out_path, "wb") as out:
+    out.write(stub)
+    out.write(payload)
+    out.write(b"VFSUZIP1")
+    out.write(struct.pack("<QQ", len(stub), len(payload)))
+print("installer: %d bytes of stub + %d bytes of payload" % (len(stub), len(payload)))
+APPEND
+  [ -s "$DIST/VLCFlixStudio-Setup.exe" ] || die "the installer was not produced"
+  mkdir -p "$ROOT/releases"
+  cp "$DIST/VLCFlixStudio-Setup.exe" "$ROOT/releases/VLCFlixStudio-Setup.exe"
+  ls -lsh "$ROOT/releases/VLCFlixStudio-Setup.exe"
 fi
 
 # The handout copy: the exe on its own, in a git-ignored folder, so it can be picked
@@ -228,5 +311,9 @@ cp "$PAYLOAD/VLCFlixStudio.exe" "$ROOT/releases/VLCFlixStudio.exe"
 
 printf '\nBuilt: %s\n' "$PAYLOAD/VLCFlixStudio.exe"
 printf 'Exe:   %s (git-ignored)\n' "$ROOT/releases/VLCFlixStudio.exe"
+if [ -f "$ROOT/releases/VLCFlixStudio-Setup.exe" ]; then
+  printf 'Setup: %s (git-ignored, one file, installs the app with its icons)\n' \
+    "$ROOT/releases/VLCFlixStudio-Setup.exe"
+fi
 printf 'This build has been RUN under Wine 11.19 (docs/TESTING.md section 11), which is\n'
 printf 'not Windows. Run scripts/windows-selfcheck.ps1 on a real machine for the last mile.\n'

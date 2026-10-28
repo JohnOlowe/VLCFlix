@@ -45,6 +45,8 @@ Library settings, progress and generated artwork are kept in the application dat
 
 `scripts/build-win-native.sh --check` checks the build prerequisites. `scripts/build-win-native.sh --setup` builds an installer when the required toolchain is available. Release executables are local build artifacts and are not committed.
 
+The setup output is `releases/VLCFlixStudio-Setup.exe`. It installs under `%LOCALAPPDATA%\Programs\VLCFlixStudio` by default and keeps library data when uninstalled. FFmpeg and ffprobe may be installed separately or placed on `PATH`.
+
 See [Testing](docs/TESTING.md) for the test layers and manual checks.
 
 ## License

@@ -73,28 +73,30 @@ if [ "$slug" = "VLCFlix" ] || [ "$data" = "VLCFlix" ] || [ "$product" = "VLCFlix
 else
   ok "product '$product', slug '$slug', data dir '$data' - set for this application"
 fi
-if [ ! -f packaging/installer.nsi ]; then
-  bad "packaging/installer.nsi is missing"
+# The installer is src/setup/setup.cpp: one self-contained .exe that unpacks the
+# payload, makes the shortcuts and writes the uninstall entry. It replaced an NSIS
+# draft, so the checks moved with it - same invariants, checked in the real thing.
+SETUP=src/setup/setup.cpp
+if [ ! -f $SETUP ]; then
+  bad "$SETUP is missing"
 else
-  # The paths are built from ${APP_SLUG} on purpose (one place to rename the product),
-  # so the check is that the define is the slug and that the paths are built from it.
-  grep -qE "^!define APP_SLUG +\"$slug\"" packaging/installer.nsi \
-    && ok "installer APP_SLUG is '$slug'" || bad "installer APP_SLUG is not '$slug'"
-  grep -qF 'InstallDir "$LOCALAPPDATA\Programs\${APP_SLUG}"' packaging/installer.nsi \
-    && ok "install directory is built from the new slug" || bad "install directory does not use the new slug"
-  grep -qF "Uninstall\\$slug\"" packaging/installer.nsi \
-    && ok "uninstall key is the application's own (…\\Uninstall\\$slug)" \
-    || bad "uninstall key is not the application's"
-  grep -qF 'PROTECTED_DIR' packaging/installer.nsi \
-    && ok "the installer names a protected directory" \
-    || bad "the installer does not protect the reserved directory"
-  grep -qF "$slug.exe" packaging/installer.nsi 2>/dev/null || true
-  grep -qE '^!define APP_EXE +"VLCFlixStudio.exe"' packaging/installer.nsi \
+  grep -qF "constexpr const wchar_t* kExeName = L\"VLCFlixStudio.exe\";" $SETUP \
     && ok "installer executable is VLCFlixStudio.exe" \
     || bad "installer executable name is not the product's"
-  grep -qE '^!define APP_ID +"VLCFlixStudio' packaging/installer.nsi \
-    && ok "installer AppId is the application's, so Windows cannot treat it as an upgrade" \
-    || bad "installer AppId does not identify a new application"
+  grep -qF "Programs\" / kProtectedDirName" $SETUP \
+    && ok "install directory is %LOCALAPPDATA%\\Programs\\VLCFlixStudio (its own folder)" \
+    || bad "install directory does not use the product's own folder"
+  grep -qF 'Uninstall\\VLCFlixStudio"' $SETUP \
+    && ok "uninstall key is the application's own (…\\Uninstall\\VLCFlixStudio)" \
+    || bad "uninstall key is not the application's"
+  grep -qF 'constexpr const wchar_t* kProtectedDirName = L"VLCFlix";' $SETUP \
+    && ok "the installer names a protected directory" \
+    || bad "the installer does not protect the reserved directory"
+  grep -qF 'Refusing to install into' $SETUP \
+    && ok "installing into the protected folder is refused" \
+    || bad "the installer would use the protected folder"
+  grep -qF 'Uninstall\\VLCFlixStudio"' $SETUP \
+    && ok "the application uses its own uninstall key" || true
   if [ -f packaging/app.manifest ]; then
     grep -q 'VLCFlixStudio' packaging/app.manifest \
       && ok "the manifest's assembly identity is the product's" \
@@ -102,6 +104,9 @@ else
   else
     bad "packaging/app.manifest is missing"
   fi
+  grep -q 'vlcflix.ico' scripts/build-win-native.sh \
+    && ok "the build gives the app and the installer the product icon" \
+    || bad "the build does not attach the product icon"
 fi
 
 # --------------------------------------------------------------- house rules
@@ -137,8 +142,8 @@ done
 for script in scripts/build-win-native.sh scripts/check-win-payload.sh; do
   [ -x "$script" ] && ok "$script is executable" || bad "$script is not executable"
 done
-for file in scripts/windows-selfcheck.ps1 packaging/installer.nsi \
-            packaging/app.manifest docs/ci/windows.yml; do
+for file in scripts/windows-selfcheck.ps1 src/setup/setup.cpp \
+            packaging/vlcflix.ico packaging/app.manifest docs/ci/windows.yml; do
   [ -f "$file" ] && ok "$file exists" || bad "$file is missing"
 done
 # The workflow is kept out of .github/workflows only because this session's token has

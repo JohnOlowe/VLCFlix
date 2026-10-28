@@ -61,6 +61,10 @@ bool Window::open(int width, int height, const std::string& title) {
   return true;
 }
 
+void show_error_box(const std::string& title, const std::string& text) {
+  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), text.c_str(), nullptr);
+}
+
 void Window::close() {
   if (!impl_) return;
   if (impl_->texture) SDL_DestroyTexture(impl_->texture);

@@ -41,8 +41,8 @@ pushed and verified from a clean clone.
   writes every screen to a PNG with no display, and the UI tests measure pixels
   instead of describing intent. Hit areas come from the drawing pass, so what is
   painted is what is clickable.
-- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 461
-  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 461
+- **Verified from a clean clone on GitHub**: `make verify` = 33 static checks + 513
+  test checks + 15 end-to-end journey steps, all green; `make asan` runs the same 513
   checks under AddressSanitizer; CTest runs both suites.
 - Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
   0 errors, all artwork.
@@ -90,6 +90,20 @@ pushed and verified from a clean clone.
   (`App::pointer_cursor()` -> Arrow/Hand/I-Beam from the same hit areas the click uses).
   The old test only asserted `handle()` returned true, which the scrim satisfied - the
   tests now assert what is under the pointer.
+- **2.0.2 fixes the pointer, and adds a folder browser.** The cursor was right in the
+  settings sheet but not on Home, because that was never a cursor bug: the window shrank
+  to fit the desktop while the canvas stayed at the requested 1600x900 and SDL stretched
+  it into a 1228x900 window, so every hit test was ~23 % away from the pixel aimed at.
+  The canvas now follows the window on every frame (a window can resize without an event).
+  This session also added the missing test layer: **Xvfb + xdotool**, so the real window
+  is opened, clicked and photographed on a virtual display — that is how the fix was
+  proved (2.0.1: clicking the visible Settings button did nothing; 2.0.2: it opens).
+  Library folders can now be **chosen** instead of typed: **Browse...** opens a picker
+  (`library/fs_browse.{h,cpp}`, plain std::filesystem) with the current path, the real
+  subdirectories, ".. up one level" and, on Windows, every drive; *Use this folder* goes
+  through the same `add_library_folder()` validation as a typed path. Verified in unit
+  tests on a temp tree, through the UI's own hit areas, and by four real clicks on the
+  virtual display that put the folder in `settings.json`.
 - **The Windows build has now been RUN**, under Wine 11.19 (Wine 11.20 and
   11.20-staging are broken upstream: `create_view`/`virtual_alloc_first_thread_data`
   SEGV before a prefix exists). Executed and captured: `version`, `doctor`, `status`,

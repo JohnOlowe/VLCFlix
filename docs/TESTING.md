@@ -256,11 +256,11 @@ difference between "the Play button exists" and "the Play button can be reached"
 
 Verified on this machine (Linux, no display, no sound card), in this turn:
 
-* 461 checks across layers 1, 2 and 4 — `0 failure(s)`
+* 513 checks across layers 1, 2 and 4 — `0 failure(s)`
 * 33/33 static preflight checks
 * 15/15 journey steps through the real binary, run repeatedly, including three
   consecutive clean artwork passes
-* `make asan`: 461 checks clean, and the pre-fix code failing under it
+* `make asan`: 513 checks clean, and the pre-fix code failing under it
 * CMake/CTest: 2/2 tests pass (`native-tests`, `journey`) from a build directory
   outside the tree
 * `make verify` green from a fresh clone
@@ -494,6 +494,65 @@ become "the thing under the pointer is the thing that was drawn there".
 Both halves were confirmed by re-breaking them: with the scrim and swallow moved back to
 the end, six checks fail; with `swallow()` replaced by `add_hit(panel, Action{})`, the
 two new sheet/cursor tests fail.
+
+### 2.0.1 was still wrong on one screen: pointer coordinates
+
+The 2.0.1 window fitted the screen, the sheets were clickable, and the cursor changed to
+a hand *inside the settings sheet* — but not on the Home screen, where the cards and the
+header buttons kept the arrow. The cause was not the cursor at all:
+
+> the window shrinks itself to fit the desktop, but `command_ui` drew and hit-tested a
+> canvas at the size that was **requested** (1600x900) and SDL then stretched it into the
+> window that actually existed (1228x900). Mouse positions arrive in window pixels, so
+> every hit test was ~23 % away from the pixel the user aimed at. On Home that meant no
+> hit area under the pointer, hence an arrow; in the settings sheet, whose panel is
+> centred, the error was absorbed by the panel's own click-swallowing area, so it still
+> looked right.
+
+The canvas now follows the window — at startup and on every frame, because a window can
+be resized without a `SIZE_CHANGED` event (and this one is shrunk before the first
+frame). Everything down to `hit_test` is in window pixels: drawn where it is clicked.
+
+**Proved on a real display, not just in a unit test.** This session added the missing
+layer: `Xvfb` (1280x1024) plus `xdotool`, so the *real* window can be opened, clicked and
+photographed. Comparing the two builds on the same display:
+
+| | 2.0.1 | 2.0.2 |
+|---|---|---|
+| window / canvas | `1228x900` / `1600x900` | `1228x900` / `1228x900` |
+| click on the visible **Settings** button (1130,34) | nothing happens | `ui: settings open` |
+| hover over a poster | arrow | hand |
+
+Method: `vlcflix ui` under `Xvfb :99`, `xdotool mousemove --window <id> x y` then
+`xdotool click`, and the app's own log (`cursor: hand at …`, `ui: settings open`) as the
+oracle. The screenshots are real window captures (`import -window`). Wine cannot show a
+window on this machine, which is exactly why this gap existed; it does not exist any more.
+
+### Choosing a library folder without typing a path
+
+The settings sheet used to be a text field only: you had to know the path of your own
+film folder and type it. There is now a **Browse...** button beside it which opens a
+folder picker over the sheet: the current path, one row per real subdirectory, ".. up one
+level", and — on Windows — the other drives, so a library on `D:` is reachable. It
+scrolls with the wheel, Page keys and its own bar, and *Use this folder* adds the folder
+shown through the same `add_library_folder()` call the typed path uses, so there is one
+set of validation rules, one duplicate check and one error message.
+
+Under the hood: `library/fs_browse.{h,cpp}`, plain `std::filesystem` with no UI in it —
+`list_folders()` (sorted, folders only, dot names skipped, permission errors reported
+rather than thrown), `parent_folder()`, `join_folder()`, `folder_roots()` (real drive
+letters on Windows, `/` elsewhere), `browse_start()` (the first library folder that still
+exists, then home).
+
+Verified three ways: unit tests against a real temporary tree (sorted, files excluded,
+`.hidden` excluded, unreadable path reports an error); UI tests that drive the picker
+through its own hit areas (open → into a folder → ".." → *Use this folder* → the folder
+is in `settings.json`, adding it twice is refused with a message, Cancel changes
+nothing); and a **live window** run on the virtual display, where four real clicks
+(`Settings` → `Browse...` → `..` → a folder → `Use this folder`) put
+`"libraryFolders": ["/home/user/VLCFlix/native"]` in `settings.json`. The Windows build
+renders the same picker (`C:/users/user`, with AppData, Documents, Downloads … and a
+scroll bar) — `docs/evidence/windows-folder-picker.png`.
 
 ### The manifest bug: the one failure that happens before `main()`
 

@@ -58,6 +58,11 @@ struct Action {
     ClearSearch,
     ScanLibrary,
     AddFolder,      // value = the typed path
+    BrowseForFolder,  // open the folder picker
+    BrowseInto,       // value = child folder name (".." goes up)
+    BrowseRoot,       // value = a drive/volume root
+    BrowseUse,        // add the folder the picker is showing
+    BrowseClose,
     Replay,
     ClosePlayer,
     Seek,           // x position of the click decides
@@ -118,6 +123,14 @@ class App {
   const std::string& query() const { return query_; }
   int open_item() const { return open_item_; }
   bool settings_open() const { return settings_open_; }
+  bool browser_open() const { return browser_open_; }
+  // What the folder picker is showing, and what it found there. Read by the tests.
+  const std::string& browser_path() const { return browser_path_; }
+  const std::vector<std::string>& browser_folders() const { return browser_folders_; }
+  const std::string& browser_error() const { return browser_error_; }
+  // Opens the picker at `start` (or at a sensible place when the path is unusable).
+  void open_folder_browser(const std::string& start);
+  void browse_to(const std::string& path);
   const std::string& last_message() const { return last_message_; }
   std::string screen_name() const;
 
@@ -137,6 +150,8 @@ class App {
   // Hovering must say "this is clickable". The answer comes from the same hit areas the
   // click uses, so the cursor can never promise something a click will not do.
   PointerCursor pointer_cursor() const;
+  float pointer_x() const { return pointer_x_; }
+  float pointer_y() const { return pointer_y_; }
   void set_pointer(float x, float y) {
     pointer_x_ = x;
     pointer_y_ = y;
@@ -221,6 +236,7 @@ class App {
                       const std::vector<std::size_t>& items, const std::string& subtitle);
   void draw_detail(Canvas& canvas, const Item& item);
   void draw_settings(Canvas& canvas);
+  void draw_folder_browser(Canvas& canvas);
   void draw_toast(Canvas& canvas);
   void draw_footer(Canvas& canvas);
 
@@ -333,6 +349,12 @@ class App {
   bool settings_open_ = false;
   std::map<std::string, ScrollState> scrolls_;
   std::string drag_region_;      // the scroll bar being dragged, if any
+  // The folder picker: what it is showing, what is in it, and why it may be empty.
+  bool browser_open_ = false;
+  std::string browser_path_;
+  std::vector<std::string> browser_folders_;
+  std::string browser_error_;
+  bool browser_truncated_ = false;
   float drag_grab_ = 0;          // pointer offset inside the thumb when the drag began
   std::vector<std::pair<Rect, std::string>> rail_bands_;
   std::vector<Rect> order_rects_;  // drawn position of each card in order_

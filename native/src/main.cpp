@@ -46,6 +46,19 @@ using namespace vf;
 
 namespace {
 
+const char* cursor_name(PointerCursor kind) {
+  switch (kind) {
+    case PointerCursor::Hand: return "hand";
+    case PointerCursor::IBeam: return "ibeam";
+    case PointerCursor::Arrow: return "arrow";
+  }
+  return "arrow";
+}
+
+}  // namespace
+
+namespace {
+
 struct Args {
   // No arguments at all means "open the window": that is what happens when the desktop
   // or Start Menu shortcut is double-clicked, and it is what people expect of an app.
@@ -380,7 +393,20 @@ int command_ui(const Args& args) {
     return 5;
   }
 
-  Canvas canvas(args.width, args.height);
+  // The canvas must be the size the window *actually* is, not the size that was asked
+  // for: the window shrinks itself to fit the desktop, and SDL reports mouse positions
+  // in window pixels. A 1600x900 canvas stretched into a 1228x900 window put every hit
+  // area ~23 % away from where it was drawn - clicks landed on the wrong control and
+  // the cursor over a button stayed an arrow, because nothing was under the pointer at
+  // the coordinates the UI was testing.
+  app->resize(window.width(), window.height());
+  Canvas canvas(app->width(), app->height());
+  LOG_INFO("window %dx%d, canvas %dx%d", window.width(), window.height(), app->width(),
+           app->height());
+  if (window.width() != args.width || window.height() != args.height) {
+    LOG_INFO("window is %dx%d rather than %dx%d: drawing and hit testing both use the real size",
+             window.width(), window.height(), args.width, args.height);
+  }
   bool dirty = true;
   // `ui --play <index>` starts a film inside the real window loop. With --frames it
   // becomes a headless end-to-end run: window, engine, presenter, drawing, exit.
@@ -396,6 +422,7 @@ int command_ui(const Args& args) {
     window.present(canvas);
   };
   int ticks = 0;
+  PointerCursor last_cursor = PointerCursor::Arrow;
   for (;;) {
     // In --frames mode each iteration counts and each iteration draws, so a
     // headless run terminates even with no input to react to.
@@ -406,6 +433,14 @@ int command_ui(const Args& args) {
     }
     ui::InputEvent event;
     if (!window.poll(&event, dirty ? 0 : 16)) break;  // false = the window closed
+    // Some platforms resize the window without a SIZE_CHANGED event (and the window may
+    // have been shrunk before the first frame). The canvas follows the window, always:
+    // hit testing is in window coordinates.
+    if (window.width() != app->width() || window.height() != app->height()) {
+      app->resize(window.width(), window.height());
+      canvas = Canvas(app->width(), app->height());
+      dirty = true;
+    }
     if (event.type == ui::InputEvent::Type::Resize) {
       app->resize(static_cast<int>(event.x), static_cast<int>(event.y));
       canvas = Canvas(app->width(), app->height());
@@ -426,7 +461,13 @@ int command_ui(const Args& args) {
     }
     // The cursor is decided by what the UI has under the pointer, so it is updated
     // after the frame it describes: hovering a poster or a button must look clickable.
-    window.set_cursor(app->pointer_cursor());
+    const PointerCursor cursor = app->pointer_cursor();
+    if (cursor != last_cursor) {
+      last_cursor = cursor;
+      LOG_INFO("cursor: %s at %.0f,%.0f", cursor_name(cursor), app->pointer_x(),
+               app->pointer_y());
+    }
+    window.set_cursor(cursor);
     if (app->playing()) dirty = true;  // a player needs a frame even when nothing changed
   }
 

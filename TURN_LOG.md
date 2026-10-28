@@ -1456,3 +1456,49 @@ Windows: installer rebuilt as **2.0.1**, installed and `--verify`-ed under Wine 
 (372 files, `version` → `2.0.1`, `DisplayVersion` → `2.0.1`), and the settings sheet
 re-rendered at 1366x728 to check the panel on a laptop-sized screen
 (`docs/evidence/windows-settings-1366.png`).
+
+## Turn 8 — the cursor on Home, and choosing a folder
+
+**1. "The cursor still doesn't change, that's only in the main screen."** It was not a
+cursor bug. The window shrinks itself to fit the desktop (2.0.1) but `command_ui` kept
+drawing and hit-testing a canvas at the *requested* size and SDL stretched it into the
+window that actually existed: 1600x900 of canvas in a 1228x900 window. Mouse positions
+arrive in window pixels, so every hit test was ~23 % away from the pixel the user aimed
+at. On Home that meant no hit area under the pointer, hence the arrow; in the settings
+sheet the centred panel's own click-swallowing area absorbed the error, which is why that
+screen looked fine. The canvas now follows the window at startup and on every frame
+(a window can resize without a `SIZE_CHANGED` event, and this one is shrunk before the
+first frame).
+
+**The test layer that was missing.** Everything about this bug is about a real window, so
+this session installed `Xvfb` + `xdotool` and drove the actual application: open it on a
+1280x1024 virtual screen, move the pointer, click, photograph the window, and read the
+app's own log (`cursor: hand at …`, `ui: settings open`, `browser: now at …`). Same
+sequence, both builds:
+
+| | 2.0.1 | 2.0.2 |
+|---|---|---|
+| canvas | 1600x900 (window 1228x900) | 1228x900 |
+| click the visible Settings button | nothing | `ui: settings open` |
+| hover a poster | arrow | hand |
+
+**2. "Add the ability to select a folder I can browse to, instead of pasting a path."**
+The settings sheet now has **Browse...** next to the path field. It opens a picker over
+the sheet: the current path, one row per real folder, ".. up one level", the other drives
+on Windows, wheel/Page-key/bar scrolling, *Use this folder* and *Cancel*. Adding goes
+through the same `add_library_folder()` as a typed path, so validation, duplicate
+detection and error messages are the same code. `library/fs_browse.{h,cpp}` is plain
+`std::filesystem` with no UI in it, so the listing is tested against a real temporary
+tree.
+
+Verified: unit tests (sorted, files excluded, dot names excluded, missing path reported),
+UI tests through the picker's own hit areas (open, into a folder, "..", use, duplicate
+refused, cancel), and a live run on the virtual display where four real clicks put
+`"libraryFolders": ["/home/user/VLCFlix/native"]` into `settings.json`. The Windows build
+renders it too: `docs/evidence/windows-folder-picker.png` (`C:/users/user`, Documents,
+Downloads … and a scroll bar).
+
+Suite: 461 → **513 checks**, `make verify` green (33 static + 513 + 15 journey steps),
+`make asan` clean, CMake build clean. Installer rebuilt as **2.0.2**, installed and
+verified under Wine 11.19 (372 files, `version` → 2.0.2), the picker rendered on Windows
+and a film still plays (`decoded=76 presented=76`).

@@ -1,5 +1,7 @@
 #include "ui/app.h"
 
+#include "library/fs_browse.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -147,6 +149,7 @@ const std::string& App::rail_at(float x, float y) const {
 }
 
 std::string App::scroll_region_at(float x, float y) const {
+  if (browser_open_) return "browser";
   if (open_item_ >= 0) return "detail";
   if (settings_open_) return "settings";
   const std::string& rail = rail_at(x, y);
@@ -329,6 +332,7 @@ void App::draw(Canvas& canvas) {
     draw_detail(canvas, catalog_.items[static_cast<std::size_t>(open_item_)]);
   }
   if (settings_open_) draw_settings(canvas);
+  if (browser_open_) draw_folder_browser(canvas);  // over the settings sheet
   draw_toast(canvas);
 }
 
@@ -1018,6 +1022,145 @@ int App::scan_now() {
   return static_cast<int>(result.items.size());
 }
 
+/* ------------------------------ folder picker ----------------------------- */
+// The settings sheet used to be a text field: you had to know and type a path. This is
+// a small browser over the real filesystem - drives/volumes, the folders inside them,
+// ".." to go up - that ends in the same add_library_folder() call the typed path used,
+// so there is one set of validation rules rather than two.
+
+void App::browse_to(const std::string& path) {
+  const FolderListing listing = list_folders(path);
+  browser_path_ = listing.path.empty() ? path : listing.path;
+  browser_folders_ = listing.folders;
+  browser_error_ = listing.error;
+  browser_truncated_ = listing.truncated;
+  set_scroll("browser", 0);
+  if (!listing.ok()) LOG_WARN("browser: %s", listing.error.c_str());
+}
+
+void App::open_folder_browser(const std::string& start) {
+  browser_open_ = true;
+  folder_input_focused_ = false;
+  // Prefer where the user pointed us; otherwise the folder they typed, then their
+  // library, then home.
+  std::string first = start;
+  if (first.empty() || !is_folder(first)) first = folder_input_;
+  if (first.empty() || !is_folder(first)) first = browse_start(settings_.library_folders);
+  browse_to(first);
+  LOG_INFO("browser: opened at %s (%zu folder(s))", browser_path_.c_str(),
+           browser_folders_.size());
+}
+
+void App::draw_folder_browser(Canvas& canvas) {
+  canvas.fill_rect(Rect{0, 0, float(width_), float(height_)}, rgba(0x000000, 200));
+  const float panel_width = std::min(width_ - 120.0f, 720.0f);
+  const float panel_height = std::min(static_cast<float>(height_) - 120.0f, 560.0f);
+  const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
+                   panel_height};
+  canvas.fill_round_rect(panel, 14, theme::panel());
+  // Bottom of this sheet's z-order; everything inside it is registered after this.
+  add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::BrowseClose, -1, ""});
+  swallow(panel);
+
+  bold_.draw(canvas, "Choose a folder", panel.x + 32, panel.y + 26, 22, theme::text());
+  const Rect close{panel.right() - 54, panel.y + 22, 32, 32};
+  canvas.fill_circle(close.x + 16, close.y + 16, 16, rgba(0xffffff, 18));
+  regular_.draw_centered(canvas, "\u00d7", close, 20, theme::text());
+  add_hit(close, Action{Action::Kind::BrowseClose, -1, ""});
+
+  // Where we are. The tail of a long path is the part that says where you are, so the
+  // front is what gets dropped when it does not fit.
+  std::string shown = browser_path_;
+  const float path_width = panel.w - 64;
+  if (regular_.measure(shown, theme::kFontSmall).width > path_width) {
+    while (shown.size() > 12 && regular_.measure("..." + shown, theme::kFontSmall).width > path_width) {
+      shown.erase(0, 1);
+    }
+    shown = "..." + shown;
+  }
+  regular_.draw(canvas, shown, panel.x + 32, panel.y + 62, theme::kFontSmall, theme::faint());
+
+  const Rect viewport{panel.x + 1, panel.y + 88, panel.w - 2, panel.h - 88 - 76};
+  const float row_height = 34.0f;
+  const float row_width = panel.w - 64 - 12;
+  const std::string parent = parent_folder(browser_path_);
+  const std::vector<std::string> roots = folder_roots();
+  const bool show_roots = roots.size() > 1;
+
+  // The content height is known before anything is drawn, so the scroll limit is the
+  // real one rather than a guess made afterwards (a bar that cannot reach the last row
+  // is worse than no bar).
+  float content = 6.0f;
+  if (!parent.empty()) content += row_height;
+  content += row_height * static_cast<float>(browser_folders_.size());
+  if (!browser_error_.empty() || browser_folders_.empty()) content += 30.0f;
+  if (browser_truncated_) content += 30.0f;
+  if (show_roots) content += 8.0f + 22.0f + row_height * static_cast<float>(roots.size());
+  content += 8.0f;
+  declare_scroll("browser", content - viewport.h, viewport, false);
+  const float scroll = scroll_offset("browser");
+
+  canvas.push_clip(viewport);
+  float y = viewport.y + 6 - scroll;
+
+  // A row: a folder glyph drawn as shapes (no icon font, no image), the name, and the
+  // hit area that navigates into it. Rows scrolled out of view are neither drawn nor
+  // clickable.
+  auto folder_row = [&](const std::string& label, const std::string& value,
+                        const Action::Kind kind, bool muted) {
+    const Rect row{panel.x + 24, y, row_width, row_height - 4};
+    const bool visible = row.bottom() > viewport.y && row.y < viewport.bottom();
+    if (visible) {
+      canvas.fill_round_rect(row, theme::kRadius, rgba(0xffffff, 8));
+      const Color glyph = muted ? rgba(0xffffff, 70) : rgba(theme::kAccent, 210);
+      canvas.fill_round_rect(Rect{row.x + 12, row.y + 9, 18, 12}, 2, glyph);
+      canvas.fill_rect(Rect{row.x + 12, row.y + 7, 8, 3}, glyph);
+      regular_.draw(canvas, regular_.ellipsize(label, theme::kFontBody, row.w - 60),
+                    row.x + 42, row.y + 7, theme::kFontBody,
+                    muted ? theme::dim() : theme::text());
+      add_hit(row, Action{kind, -1, value});
+    }
+    y += row_height;
+  };
+
+  if (!parent.empty()) folder_row("..   up one level", parent, Action::Kind::BrowseInto, true);
+  for (const auto& folder : browser_folders_) {
+    folder_row(folder, folder, Action::Kind::BrowseInto, false);
+  }
+  auto note = [&](const std::string& text, Color color) {
+    if (y + 24 > viewport.y && y < viewport.bottom()) {
+      regular_.draw(canvas, text, panel.x + 32, y + 6, theme::kFontSmall, color);
+    }
+    y += 30;
+  };
+  if (!browser_error_.empty()) {
+    note(browser_error_, rgba(0xff6b6b, 255));
+  } else if (browser_folders_.empty()) {
+    note("No folders in here. Use this one, or go up.", theme::faint());
+  }
+  if (browser_truncated_) note("(only the first 500 folders are shown)", theme::faint());
+
+  // Drives or volumes: on Windows this is the only way to reach another disk.
+  if (show_roots) {
+    y += 8;
+    if (y + 18 > viewport.y && y < viewport.bottom()) {
+      regular_.draw(canvas, "DRIVES", panel.x + 32, y, theme::kFontTiny, theme::faint());
+    }
+    y += 22;
+    for (const auto& root : roots) folder_row(root, root, Action::Kind::BrowseRoot, true);
+  }
+  canvas.pop_clip();
+
+  draw_scrollbar(canvas, Rect{panel.right() - 16, viewport.y + 4, 4, viewport.h - 8}, "browser");
+
+  const Rect use{panel.x + 32, panel.bottom() - 60, button_width("Use this folder", true), 42};
+  draw_button(canvas, use, "Use this folder", true, Action{Action::Kind::BrowseUse, -1, ""});
+  const Rect cancel{use.right() + 12, use.y, button_width("Cancel", false, false), 42};
+  draw_button(canvas, cancel, "Cancel", false, Action{Action::Kind::BrowseClose, -1, ""});
+  regular_.draw(canvas, "Adds the folder shown at the top to your library.",
+                cancel.right() + 16, use.y + 12, theme::kFontSmall, theme::faint());
+}
+
 void App::draw_settings(Canvas& canvas) {
   canvas.fill_rect(Rect{0, 0, float(width_), float(height_)}, rgba(0x000000, 190));
   const float panel_width = std::min(width_ - 160.0f, 760.0f);
@@ -1070,8 +1213,14 @@ void App::draw_settings(Canvas& canvas) {
     add_hit(remove, Action{Action::Kind::RemoveFolder, -1, folder});
     y += 22;
   }
-  // Add a folder by typing, which is what the web settings pane did.
-  const Rect field{panel.x + 32, y + 2, row_width, 32};
+  // A folder can be typed or browsed to. The Browse button sits beside the field so
+  // both ways in are visible at once; the picker ends in the same add_library_folder()
+  // call as Enter does, so there is one set of validation rules.
+  const float browse_width = button_width("Browse...", false, false);
+  const Rect browse_button{panel.right() - 32 - browse_width, y + 2, browse_width, 32};
+  draw_button(canvas, browse_button, "Browse...", false,
+              Action{Action::Kind::BrowseForFolder, -1, ""});
+  const Rect field{panel.x + 32, y + 2, row_width - browse_width - 12, 32};
   canvas.fill_round_rect(field, theme::kRadius, rgba(0xffffff, 12));
   canvas.stroke_round_rect(field, theme::kRadius, 1.0f,
                            folder_input_focused_ ? rgba(theme::kAccent, 220) : rgba(0xffffff, 45));
@@ -1292,10 +1441,13 @@ bool App::handle(const InputEvent& event) {
         case Action::Kind::CloseOverlay:
           open_item_ = -1;
           settings_open_ = false;
+          browser_open_ = false;
+          LOG_INFO("ui: overlay closed");
           return true;
         case Action::Kind::OpenSettings:
           settings_open_ = true;
           open_item_ = -1;
+          LOG_INFO("ui: settings open");
           return true;
         case Action::Kind::Play: {
           // Play really plays now: the click goes straight into the libVLC engine.
@@ -1343,6 +1495,49 @@ bool App::handle(const InputEvent& event) {
           folder_input_focused_ = true;
           return true;
         }
+        case Action::Kind::BrowseForFolder: {
+          open_folder_browser(folder_input_);
+          return true;
+        }
+        case Action::Kind::BrowseInto: {
+          if (action.value == "..") {
+            const std::string up = parent_folder(browser_path_);
+            if (up.empty()) return false;
+            browse_to(up);
+            return true;
+          }
+          if (!action.value.empty() && (action.value[0] == '/' ||
+                                        (action.value.size() > 1 && action.value[1] == ':'))) {
+            browse_to(action.value);  // an absolute path: a drive or a root
+          } else {
+            browse_to(join_folder(browser_path_, action.value));
+          }
+          LOG_INFO("browser: now at %s", browser_path_.c_str());
+          return true;
+        }
+        case Action::Kind::BrowseRoot: {
+          browse_to(action.value);
+          LOG_INFO("browser: now at %s", browser_path_.c_str());
+          return true;
+        }
+        case Action::Kind::BrowseUse: {
+          std::string error;
+          if (add_library_folder(browser_path_, &error)) {
+            notify("Added " + browser_path_);
+            browser_open_ = false;
+            set_scroll("settings", 0);
+            LOG_INFO("browser: added %s", browser_path_.c_str());
+          } else {
+            // Already in the list, or gone: say so and stay where we are.
+            notify(error);
+            browser_error_ = error;
+          }
+          return true;
+        }
+        case Action::Kind::BrowseClose: {
+          browser_open_ = false;
+          return true;
+        }
         // Scroll bars are consumed above, before the switch; listing them here keeps
         // the compiler's exhaustive-switch warning useful.
         case Action::Kind::ScrollTo:
@@ -1386,8 +1581,10 @@ bool App::handle(const InputEvent& event) {
       // to ignore the wheel completely, which is the "I cannot scroll where I want" bug.
       const float vertical = event.wheel != 0 ? event.wheel : 0.0f;
       const float horizontal = event.wheel_x;
-      if (open_item_ >= 0 || settings_open_) {
-        const std::string region = open_item_ >= 0 ? "detail" : "settings";
+      if (browser_open_ || open_item_ >= 0 || settings_open_) {
+        const std::string region = browser_open_ ? "browser"
+                                   : open_item_ >= 0 ? "detail"
+                                                     : "settings";
         return scroll_by(region, -(vertical != 0 ? vertical : horizontal) * kWheelStep);
       }
       if (horizontal != 0) {
@@ -1413,6 +1610,10 @@ bool App::handle(const InputEvent& event) {
     }
     case InputEvent::Type::Key: {
       if (event.key == kKeyEscape) {
+        if (browser_open_) {
+          browser_open_ = false;
+          return true;
+        }
         if (open_item_ >= 0) {
           open_item_ = -1;
           return true;
@@ -1454,7 +1655,10 @@ bool App::handle(const InputEvent& event) {
       // Page keys scroll whatever is in front: a page at a time, or to the very end.
       if (event.key == kKeyPageUp || event.key == kKeyPageDown || event.key == kKeyHome ||
           event.key == kKeyEnd) {
-        const std::string region = open_item_ >= 0 ? "detail" : settings_open_ ? "settings" : "page";
+        const std::string region = browser_open_ ? "browser"
+                                 : open_item_ >= 0 ? "detail"
+                                 : settings_open_  ? "settings"
+                                                   : "page";
         const ScrollState& state = scrolls_[region];
         const float page = std::max(80.0f, state.viewport.h - 80.0f);
         if (event.key == kKeyPageDown) return scroll_by(region, page);
@@ -1560,6 +1764,12 @@ bool App::show_screen(const std::string& screen, const std::string& argument) {
   } else if (screen == "settings") {
     view_ = View::Home;
     settings_open_ = true;
+  } else if (screen == "browser") {
+    // The folder picker over the settings sheet, which is how a user sees it. The
+    // argument is the folder to open at.
+    view_ = View::Home;
+    settings_open_ = true;
+    open_folder_browser(argument);
   } else {
     LOG_ERROR("unknown screen '%s'", screen.c_str());
     return false;
@@ -1583,6 +1793,7 @@ std::string App::hover_title() const {
 }
 
 std::string App::screen_name() const {
+  if (browser_open_) return "browser";
   if (open_item_ >= 0) return "detail";
   if (settings_open_) return "settings";
   switch (view_) {

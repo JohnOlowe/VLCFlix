@@ -30,7 +30,7 @@ overwrites or migrates 1.x, and the two can be installed side by side.
 ```bash
 cd native
 make -j2          # build/vlcflix   (or: cmake -S . -B build && cmake --build build)
-make verify       # static checks + 461 tests + 15-step end-to-end journey
+make verify       # static checks + 513 tests + 15-step end-to-end journey
 make asan         # the same tests under AddressSanitizer
 ```
 
@@ -59,10 +59,11 @@ is fixed — the manifest is now schema-checked and has no dependent assemblies 
 and `scripts/check-win-manifest.py` runs inside `make verify` and inside every Windows
 build so it cannot come back.
 
-The current build is **2.0.1** (installer sha256
-`92bbe997011ae1aed95edbd69e9cfa25ba2ca8e28224a5239b5848e0effcfcf3`): the window shrinks
-to fit the screen it opens on, the detail and settings sheets are clickable again, and
-anything clickable under the pointer turns the cursor into a hand.
+The current build is **2.0.2** (installer sha256
+`b84fcba86efb9d5be8321f9f5640a2ac3704716f60f169079ac6ebfbf78e7d40`): the window shrinks
+to fit the screen it opens on, the detail and settings sheets are clickable, the cursor
+turns into a hand over anything clickable **on every screen**, and a library folder can be
+chosen with a folder browser instead of being typed.
 
 Both have been **executed** (under Wine 11.19, on this machine): the installer from a
 fresh prefix — install, verify, run the installed app, uninstall — and the app itself:

@@ -248,4 +248,19 @@ std::vector<std::string> list_dir(const std::string& path) {
   return out;
 }
 
+std::string find_dir_upwards(const std::string& name, int max_levels) {
+  std::vector<std::string> starts = {absolute_path("."), exe_dir()};
+  for (const auto& start : starts) {
+    std::string current = start;
+    for (int level = 0; level <= max_levels; ++level) {
+      const std::string candidate = join(current, name);
+      if (dir_exists(candidate)) return absolute_path(candidate);
+      const std::string parent = dirname(current);
+      if (parent == current || parent.empty()) break;
+      current = parent;
+    }
+  }
+  return "";
+}
+
 }  // namespace vf

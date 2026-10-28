@@ -13,6 +13,10 @@
 
 #include "core/model.h"
 #include "core/store.h"
+#include "core/sync.h"
+#include "library/subtitles.h"
+#include "playback/engine.h"
+#include "playback/presenter.h"
 #include "render/canvas.h"
 #include "render/font.h"
 #include "render/image.h"
@@ -47,6 +51,15 @@ struct Action {
     ClearSearch,
     ScanLibrary,
     AddFolder,      // value = the typed path
+    Replay,
+    ClosePlayer,
+    Seek,           // x position of the click decides
+    SeekRelative,   // value = +/- seconds
+    TogglePause,
+    Mute,
+    Volume,
+    CycleSubtitles,
+    NudgeSync,      // value = +/- ms
     RemoveFolder,   // value = the folder
     UseSampleFolder,
   } kind = Kind::None;
@@ -104,9 +117,51 @@ class App {
   const std::vector<std::pair<Rect, Action>>& hit_rects() const { return hits_; }
   std::string hover_title() const;
 
-  // Called when the user clicks Play. The player arrives in turn 3; until then the
-  // callback is what a test can hook to observe the request.
+  // Reported after a Play click, whether or not the player could be started. The
+  // tests use it to see the request rather than the pixels.
   std::function<void(int index)> on_play_requested;
+  // The player asks the window to go fullscreen; the window decides how.
+  std::function<void()> on_toggle_fullscreen;
+
+  /* ------------------------------- playback -------------------------------- */
+
+  // Starts the film at `index` in the catalog. Returns false (and says why in
+  // last_message) when there is nothing to play - a missing file, or an engine that
+  // refused the format.
+  bool start_playback(int index);
+  void stop_playback();
+  // Starts/stops the muted hover preview for `index` (-1 stops it).
+  void set_hover_preview(int index);
+  bool preview_playing() const { return preview_index_ >= 0; }
+  bool preview_has_picture() const { return preview_has_frame_; }
+  bool playing() const { return player_open_; }
+  const EngineStatus& player_status() const { return player_status_; }
+  const Presenter& presenter() const { return presenter_; }
+  // The engine, for tests that want to watch what it really did (frames, seeks).
+  Engine& engine() { return engine_; }
+
+  // One UI frame: pulls decoded pictures, applies the sync plan, saves progress and
+  // notices the end of a film. `now` is seconds on the same clock the presenter uses.
+  // Returns true when the picture or the chrome changed.
+  bool tick(double now);
+  // Draws the player into its own canvas (the window presents this instead).
+  void draw_player_frame(Canvas& canvas);
+  double clock_now() const;
+  void set_clock(std::function<double()> clock) { clock_ = std::move(clock); }
+
+  // Subtitle state, also used by the tests.
+  const std::vector<SubtitleTrack>& subtitle_tracks() const { return subtitle_tracks_; }
+  int subtitle_track() const { return subtitle_track_; }
+  std::string active_subtitle_text(double time) const;
+  int subtitle_offset_ms() const { return subtitle_offset_ms_; }
+  void set_subtitle_offset_ms(int offset);
+  int sync_audio_offset_ms() const { return manual_sync_ms_; }
+  void nudge_sync(int delta_ms);
+  const SyncPlan& sync_plan() const { return sync_plan_; }
+  bool player_chrome_visible() const { return chrome_visible_; }
+  // Ends the film's progress as finished, which is the same rule the store applies
+  // (A4): 92 % or more leaves Continue Watching.
+  void finish_film();
 
   // Set by the window loop to redraw and present a frame. The library scan is
   // synchronous (it is the same code the CLI runs, and a second thread would need a
@@ -146,10 +201,10 @@ class App {
   void draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, bool wide,
                         float scroll);
   void draw_button(Canvas& canvas, const Rect& rect, const std::string& label, bool primary,
-                   Action action);
+                   Action action, bool icon = true);
   // Buttons are sized to their label, so no label can be clipped by a fixed width
   // (the first screenshots had "Open Setting" cut off).
-  float button_width(const std::string& label, bool primary) const;
+  float button_width(const std::string& label, bool primary, bool icon = true) const;
   void draw_backdrop_or_fallback(Canvas& canvas, const Rect& rect, const Item& item, float radius);
   // The hover card: the 16:9 preview still, the title, the meta line and a Play hint,
   // floating next to the hovered poster. No animation yet - motion needs a decoder,
@@ -161,6 +216,11 @@ class App {
   void add_hit(const Rect& rect, Action action);
   Action hit_test(float x, float y) const;
   void notify(const std::string& message);
+  bool handle_player(const InputEvent& event);
+  void draw_chrome(Canvas& canvas);
+  void draw_end_card(Canvas& canvas);
+  void apply_sync();
+  int cycle_subtitle_track(int delta);
   std::string format_duration(double seconds) const;
   std::string meta_line(const Item& item) const;
   int percent_for(const Item& item) const;
@@ -168,6 +228,37 @@ class App {
   std::string media_dir_;
   std::string data_dir_;
   Store store_;
+
+  /* playback */
+  Engine engine_;
+  // The hover preview gets its own engine: it plays while the browsing UI is on
+  // screen, so it cannot share the film player (that one is a different view and a
+  // different file). Muted, 640x360, stopped as soon as the pointer leaves.
+  Engine preview_engine_;
+  Frame preview_frame_;
+  bool preview_has_frame_ = false;
+  int preview_index_ = -1;
+  double preview_started_ = 0;
+  Presenter presenter_;
+  EngineStatus player_status_;
+  bool player_open_ = false;       // a film is loaded in the player view
+  bool player_chrome_ = false;     // the chrome is drawn over the picture
+  bool chrome_visible_ = true;
+  bool player_finished_ = false;
+  double chrome_hidden_at_ = -1;   // clock time when the chrome last hid
+  double last_input_at_ = 0;
+  double last_progress_save_ = 0;
+  double resume_at_ = -1;          // pending "start here" seek, applied once length is known
+  int playing_index_ = -1;
+  std::vector<SubtitleTrack> subtitle_tracks_;
+  int subtitle_track_ = -1;        // -1 = Off
+  std::vector<Cue> subtitle_cues_;
+  int subtitle_offset_ms_ = 0;
+  int manual_sync_ms_ = 0;
+  SyncPlan sync_plan_;
+  std::function<double()> clock_;
+  bool scrub_dragging_ = false;
+  std::string player_error_;
   std::string folder_input_;
   bool folder_input_focused_ = false;
   bool scanning_ = false;

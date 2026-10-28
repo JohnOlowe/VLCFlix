@@ -20,6 +20,7 @@
 
 namespace vf {
 void run_ui_tests(const std::string& out_dir);
+void run_player_tests();
 }
 
 using namespace vf;
@@ -457,6 +458,7 @@ int main() {
   // UI tests draw real screens into a temporary directory: no display, no window.
   const std::string ui_out = join(temp_dir(), "vlcflix-studio-shots");
   vf::run_ui_tests(ui_out);
+  vf::run_player_tests();
   std::printf("\n(UI screenshots written to %s)\n", ui_out.c_str());
   return vftest::summary("native tests");
 }

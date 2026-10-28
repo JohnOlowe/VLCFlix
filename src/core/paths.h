@@ -38,4 +38,10 @@ std::string absolute_path(const std::string& path);
 std::string home_dir();
 std::vector<std::string> list_dir(const std::string& path);  // basenames, sorted
 
+// Finds a directory called `name` by walking up from the working directory and from
+// the executable's directory. Used for the bundled samples, which sit at the
+// repository root: the tests and the window both run from different depths (,
+// the repo root, a build directory), and none of them should have to know which.
+std::string find_dir_upwards(const std::string& name, int max_levels = 6);
+
 }  // namespace vf

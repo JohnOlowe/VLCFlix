@@ -90,6 +90,13 @@ void Window::present(const Canvas& canvas) {
   SDL_RenderPresent(impl_->renderer);
 }
 
+void Window::toggle_fullscreen() {
+  if (!impl_ || !impl_->window) return;
+  fullscreen_ = !fullscreen_;
+  SDL_SetWindowFullscreen(impl_->window, fullscreen_ ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+  LOG_INFO("window: fullscreen %s", fullscreen_ ? "on" : "off");
+}
+
 bool Window::poll(ui::InputEvent* event, int timeout_ms) {
   if (!impl_) return false;
   SDL_Event sdl_event;

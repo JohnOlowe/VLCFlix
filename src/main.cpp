@@ -2,7 +2,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -51,7 +53,13 @@ struct Args {
   int frames = 0;
   int focus = -1;
   int hover = -1;
+  bool play_subtitles = false;
+  std::string play;      // render --play <path|index>: a player screenshot
+  int play_index = 0;
+  double play_seek = 0;
+  double play_seconds = 0;
   std::string screenshot_dir;
+  std::string positional;  // the first bare word after the command, e.g. `play 3`
 };
 
 Args parse_args(int argc, char** argv) {
@@ -59,6 +67,14 @@ Args parse_args(int argc, char** argv) {
   std::vector<std::string> positional;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
+    if (args.command == "help" && a.size() && a[0] != '-') {
+      args.command = a;  // the command name
+      continue;
+    }
+    if (a.size() && a[0] != '-' && args.positional.empty()) {
+      args.positional = a;  // `play 3`, `naming "file.mkv"`
+      continue;
+    }
     auto value = [&](const char* name) -> std::string {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "%s needs a value\n", name);
@@ -81,6 +97,13 @@ Args parse_args(int argc, char** argv) {
     else if (a == "--frames") args.frames = std::atoi(value("--frames").c_str());
     else if (a == "--focus") args.focus = std::atoi(value("--focus").c_str());
     else if (a == "--hover") args.hover = std::atoi(value("--hover").c_str());
+    else if (a == "--play") {
+      args.play = value("--play");
+      args.play_index = std::atoi(args.play.c_str());
+    }
+    else if (a == "--seek") args.play_seek = std::atof(value("--seek").c_str());
+    else if (a == "--subtitles") args.play_subtitles = true;
+    else if (a == "--wait") args.play_seconds = std::atof(value("--wait").c_str());
     else if (a == "--size") {
       const std::string size = value("--size");
       const std::size_t x = size.find('x');
@@ -128,27 +151,66 @@ std::unique_ptr<ui::App> make_app() {
   app->set_settings(store.load_settings());
   // The samples that ship with this repository, so a first run has something to
   // point at without the user hunting for a path.
-  const std::string beside_exe = exe_dir();
-  const std::vector<std::string> candidates = {
-      "samples",
-      "../samples",
-      join(beside_exe, "samples"),
-      join(beside_exe, "../samples"),
-      join(beside_exe, "../../samples"),
-      join(beside_exe, "../../../samples"),
-  };
-  for (const auto& candidate : candidates) {
-    if (!dir_exists(candidate)) continue;
-    app->set_sample_folder(absolute_path(candidate));
-    LOG_INFO("samples folder: %s", app->sample_folder().c_str());
-    break;
+  const std::string samples = find_dir_upwards("samples");
+  if (!samples.empty()) {
+    app->set_sample_folder(samples);
+    LOG_INFO("samples folder: %s", samples.c_str());
   }
   return app;
+}
+
+double steady_seconds() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 int command_render(const Args& args) {
   auto app = make_app();
   app->resize(args.width, args.height);
+
+  if (!args.play.empty()) {
+    // A real decoded frame, so the picture in the screenshot is the engine's, not a
+    // placeholder drawn for the occasion.
+    const int index = args.play_index >= 0 ? args.play_index : 0;
+    std::string error;
+    if (!app->start_playback(index)) {
+      std::fprintf(stderr, "could not start playback: %s\n", app->last_message().c_str());
+      return 1;
+    }
+    const int timeout_ms = args.play_seconds > 0 ? static_cast<int>(args.play_seconds * 1000) : 12000;
+    int waited = 0;
+    while (waited < timeout_ms && !app->presenter().has_frame()) {
+      app->tick(steady_seconds());
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      waited += 20;
+    }
+    if (!app->presenter().has_frame()) {
+      std::fprintf(stderr, "no frame arrived in %d ms\n", timeout_ms);
+      return 1;
+    }
+    if (args.play_subtitles) {
+      // Turn the first subtitle track on for the screenshot, the same way the CC
+      // button does.
+      ui::InputEvent key;
+      key.type = ui::InputEvent::Type::Key;
+      key.key = 's';
+      app->handle(key);
+    }
+    if (args.play_seek > 0) {
+      // Let the seek land before the still is taken.
+      app->engine().seek(args.play_seek);
+      waited = 0;
+      while (waited < 4000 && app->presenter().shown() < 2) {
+        app->tick(steady_seconds());
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        waited += 20;
+      }
+    }
+    if (!app->render_to_png(args.png)) return 1;
+    std::printf("wrote %s (player, %lld frames decoded)\n", args.png.c_str(),
+                static_cast<long long>(app->player_status().frames_decoded));
+    app->stop_playback();
+    return 0;
+  }
 
   std::vector<std::string> screens;
   if (!args.all_dir.empty()) {
@@ -193,6 +255,81 @@ int command_render(const Args& args) {
   return failures == 0 ? 0 : 1;
 }
 
+// `vlcflix play <index|file>` runs a film for N seconds and prints what the engine
+// actually did. It exists so playback can be checked without a window and without
+// trusting the player view to report on itself.
+int command_play(const Args& args) {
+  auto app = make_app();
+  app->resize(1280, 720);
+
+  // `play 3` / `play /path/film.mkv`, and the older `--play` form still works.
+  const std::string target = !args.positional.empty() ? args.positional : args.play;
+  int index = -1;
+  if (!target.empty()) {
+    index = std::atoi(target.c_str());
+    if (index < 0 || index >= static_cast<int>(app->catalog().items.size())) {
+      // Maybe it is a file path rather than an index.
+      if (file_exists(target)) {
+        Item item;
+        item.id = "id-cli";
+        item.title = stem(target);
+        item.path = absolute_path(target);
+        item.filename = basename(target);
+        Catalog catalog;
+        catalog.items.push_back(item);
+        app->set_catalog(catalog);
+        index = 0;
+      }
+    }
+  }
+  if (index < 0 && !app->catalog().items.empty()) index = 0;
+  if (index < 0) {
+    std::fprintf(stderr, "nothing to play: no catalog and no file given\n");
+    return 2;
+  }
+
+  const double seconds = args.play_seconds > 0 ? args.play_seconds : 5.0;
+  if (!app->start_playback(index)) {
+    std::fprintf(stderr, "could not start: %s\n", app->last_message().c_str());
+    return 1;
+  }
+  if (args.play_seek > 0) app->engine().seek(args.play_seek);
+  if (args.play_subtitles) {
+    ui::InputEvent key;
+    key.type = ui::InputEvent::Type::Key;
+    key.key = 's';
+    app->handle(key);
+  }
+
+  // Real-time loop: tick, and draw a frame occasionally so the player view is on the
+  // same code path as the window, not a special case.
+  Canvas canvas(1280, 720);
+  const std::string out = args.png;
+  double started = steady_seconds();
+  long long pictures = 0;
+  while (steady_seconds() - started < seconds) {
+    if (app->tick(steady_seconds())) ++pictures;
+    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+  }
+  // The still is taken of the final state, which is what makes it a check on the end
+  // card as well as the chrome.
+  if (!out.empty()) {
+    app->draw(canvas);
+    app->render_to_png(out);
+  }
+  const EngineStatus status = app->player_status();
+  std::printf("state=%s time=%.2f s length=%.2f s decoded=%lld presented=%lld sync(video=%d audio=%d)\n",
+              play_state_name(status.state), status.time, status.length,
+              static_cast<long long>(status.frames_decoded),
+              static_cast<long long>(app->presenter().shown()), app->sync_plan().video_delay_ms,
+              app->sync_plan().audio_delay_ms);
+  if (!out.empty()) std::printf("wrote %s\n", out.c_str());
+  const std::string cue = app->active_subtitle_text(status.time);
+  if (!cue.empty()) std::printf("subtitle: %s\n", cue.c_str());
+  app->stop_playback();
+  return status.frames_decoded > 0 ? 0 : 1;
+}
+
 int command_ui(const Args& args) {
   auto app = make_app();
   app->resize(args.width, args.height);
@@ -208,6 +345,14 @@ int command_ui(const Args& args) {
 
   Canvas canvas(args.width, args.height);
   bool dirty = true;
+  // `ui --play <index>` starts a film inside the real window loop. With --frames it
+  // becomes a headless end-to-end run: window, engine, presenter, drawing, exit.
+  if (!args.play.empty()) {
+    if (!app->start_playback(std::atoi(args.play.c_str()))) {
+      LOG_ERROR("--play %s could not start: %s", args.play.c_str(), app->last_message().c_str());
+    }
+  }
+  app->on_toggle_fullscreen = [&window] { window.toggle_fullscreen(); };
   // The scan runs on this thread; `pump` is how it keeps the window painting.
   app->pump = [&]() {
     app->draw(canvas);
@@ -231,11 +376,18 @@ int command_ui(const Args& args) {
     } else if (event.type != ui::InputEvent::Type::None) {
       if (app->handle(event)) dirty = true;
     }
+    // Playback progress, resume, the finished state and the chrome's auto-hide all
+    // happen on this tick, once per frame.
+    const double now = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    if (app->tick(now)) dirty = true;
     if (dirty) {
       app->draw(canvas);
       window.present(canvas);
       dirty = false;
     }
+    if (app->playing()) dirty = true;  // a player needs a frame even when nothing changed
   }
 
   // My List is the only thing the UI mutates without saving at the time; settings
@@ -424,6 +576,8 @@ void print_help() {
       "  settings [--set k=v] read or patch settings, with validation\n"
       "  naming <file>...     show how filenames are turned into titles\n"
       "  doctor               environment report: paths, tools, log location\n"
+      "  play [index|file]    play for --wait <seconds>, then report what happened\n"
+      "                       play 3 --seek 5 --subtitles --png out.png --wait 3\n"
       "  ui                   open the window (needs a display; SDL_VIDEODRIVER=dummy\n"
       "                       works headless, and --frames N exits after N frames)\n"
       "  render               draw a screen to a PNG, no display required\n"
@@ -514,6 +668,7 @@ int main(int argc, char** argv) {
   else if (args.command == "doctor") code = command_doctor(args);
   else if (args.command == "ui") code = command_ui(args);
   else if (args.command == "render") code = command_render(args);
+  else if (args.command == "play") code = command_play(args);
   else if (args.command == "crash") code = command_crash();
   else if (args.command == "version") std::printf("%s\n", kVersion);
   else if (args.command == "help" || args.command == "--help") print_help();

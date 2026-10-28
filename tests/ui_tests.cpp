@@ -208,8 +208,10 @@ void test_ui_my_list() {
 
   CHECK(click_action(app, ui::Action::Kind::Play, 0));
   CHECK_EQ(played, 0);
-  // Turn 2 has no player yet, and says so instead of pretending to play.
-  CHECK(app.last_message().find("not wired up") != std::string::npos);
+  // Turn 3 wires Play to the player. The fixture in this file has no real files, so
+  // the honest outcome is a message saying the file is gone - not a silent no-op.
+  CHECK(app.last_message().find("gone") != std::string::npos);
+  CHECK(!app.playing());
 
   CHECK(click_action(app, ui::Action::Kind::ToggleMyList, 0));
   CHECK_EQ(app.my_list().size(), std::size_t(1));

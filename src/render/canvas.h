@@ -57,11 +57,17 @@ class Canvas {
   // white text legible over an arbitrary film still.
   void fill_gradient_h(const Rect& rect, Color left, Color right);
   void fill_circle(float cx, float cy, float radius, Color color);
+  // Filled right-pointing triangle, for play buttons.
+  void fill_triangle_right(const Rect& area, Color color);
   void stroke_circle(float cx, float cy, float radius, float thickness, Color color);
 
   // Draws `image` into `dst`. `cover` crops the source to fill dst without
   // distorting it, which is what posters and backdrops need.
   void blit(const Image& image, const Rect& dst, bool cover);
+  // Same as blit() but for a raw RV32 buffer, which is what libVLC hands us. Keeping
+  // it here means the player never copies a frame just to satisfy a type.
+  void blit_raw(const uint8_t* pixels, int src_width, int src_height, const Rect& dst,
+                bool cover);
   void blit_src(const Image& image, const Rect& src, const Rect& dst);
   // Same as blit(), but with rounded corners: the corners are anti-aliased against
   // whatever is already on the canvas, so a card sits on the background cleanly.

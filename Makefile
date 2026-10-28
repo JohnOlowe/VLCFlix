@@ -9,8 +9,8 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter
-PKG_CFLAGS := $(shell pkg-config --cflags sdl2 freetype2 libpng libjpeg 2>/dev/null)
-PKG_LIBS   := $(shell pkg-config --libs sdl2 freetype2 libpng libjpeg 2>/dev/null)
+PKG_CFLAGS := $(shell pkg-config --cflags sdl2 freetype2 libpng libjpeg libvlc 2>/dev/null)
+PKG_LIBS   := $(shell pkg-config --libs sdl2 freetype2 libpng libjpeg libvlc 2>/dev/null)
 CPPFLAGS += -I src -I . -MMD -MP $(PKG_CFLAGS)
 LDFLAGS  += -pthread
 LDLIBS   += $(PKG_LIBS)
@@ -19,9 +19,9 @@ BUILD    := build
 APP      := $(BUILD)/vlcflix
 TESTBIN  := $(BUILD)/native-tests
 
-LIBSRC   := $(shell find src/core src/library src/platform src/render src/ui -name '*.cpp' 2>/dev/null)
+LIBSRC   := $(shell find src/core src/library src/platform src/playback src/render src/ui -name '*.cpp' 2>/dev/null)
 APPSRC   := src/main.cpp
-TESTSRC  := tests/run_tests.cpp tests/ui_tests.cpp
+TESTSRC  := tests/run_tests.cpp tests/ui_tests.cpp tests/player_tests.cpp
 
 LIBOBJ   := $(patsubst %.cpp,$(BUILD)/%.o,$(LIBSRC))
 APPOBJ   := $(patsubst %.cpp,$(BUILD)/%.o,$(APPSRC))

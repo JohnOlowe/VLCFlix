@@ -1,6 +1,6 @@
-# Three turns, defined
+# Four turns, defined
 
-Constraint: three turns to a **working C++ application**, pushed to a second
+Constraint: four turns to a **working, verified C++ application**, pushed to a second
 branch that this session creates. Every turn ends with something running and
 something I looked at (`AGENTS.md` §5), a commit, and a verified remote SHA.
 
@@ -95,13 +95,48 @@ progress).
 5. README/PORT docs rewritten for the native app; `CONTEXT.md`, `TURN_LOG.md`,
    `checkpoint.json` current; explicit list of what is **not** done.
 
-**Deliberately not in these three turns** (named so nobody discovers it later):
+**Deliberately not in turns 1–3** (named so nobody discovers it later):
 Windows build and packaging (P8 — needs a machine I can run it on), the GPU
 decode ladder and `--hw-probe` (P7 — it now only serves artwork/previews), hover
 preview *audio*, multi-part/season grouping, online metadata. If Turn 1 lands
 early, P7's probe moves into Turn 2.
 
 ---
+
+## Turn 4 — polish, prove there are no bugs, and the perfect test
+
+The user's instruction (2026-10-28): the last turn is polish, confirming there are
+no bugs, and *figuring out the perfect way to test that it works*. So turn 4 is not
+"write more features" — it is the turn that makes the previous three trustworthy.
+
+**1. A real test strategy, written down and run** (`docs/TESTING.md`), in four
+layers, each chosen because the layer above it can lie:
+
+| Layer | What it is | Why this layer exists |
+|---|---|---|
+| Unit | the 132-check harness, extended | logic can be proven without a display or a GPU |
+| Golden-image | every screen rendered headlessly and compared to a committed baseline, with a pixel-difference report | "the UI looks right" is otherwise an opinion; a diff is a measurement |
+| Journey (end-to-end) | one script drives the **real binary** through the real user story: make a synthetic library with ffmpeg → scan → browse → play → seek → subtitles → resume → relaunch → confirm the resume point | only this proves the modules agree with each other |
+| Fault injection | the failures users actually hit: no ffmpeg, no libVLC, an unplugged drive, a corrupt file, a locked data directory, a garbage subtitle, a crash mid-pass | an app is judged on failure, and these paths are never exercised by happy tests |
+| Machine checklist | what I genuinely cannot run here (the Windows window, GPU decode), as a numbered list the user executes, with the exact log lines to send back | honest substitute for a claim I cannot make |
+
+Also: a fuzz-ish pass over the parsers (filenames, JSON, SRT/VTT) with adversarial
+input, a leak and error-path review, and a "no silent failure" audit — every catch
+block must either recover visibly, log, or both.
+
+**2. Polish.** Typography and spacing pass on every screen at 1280×720 and
+1920×1080, keyboard focus, resize handling, empty and error states, the log
+messages a support case needs, and the README.
+
+**3. Bug confirmation, stated honestly.** There is no such thing as proven-free of
+bugs; what turn 4 delivers is: every known-audit bug has a regression test that
+fails if reintroduced (negative control shown), every screen has a baseline, every
+journey passes from a clean clone, and the remaining *unverified* surface is listed
+by name — Windows, GPU decoding, real hardware audio latency.
+
+**Exit criteria:** `make verify` runs everything (build, unit, golden, journey,
+faults) and prints one summary; from a fresh clone, on a machine with ffmpeg, it
+goes green; anything unsigned off is listed in the README under "not verified".
 
 ## What I need from you now
 

@@ -159,7 +159,7 @@ A run that dies leaves no `clean exit` record, so the *next* launch reports
 
 ## What the tests prove
 
-`make test` → **276 checks**. Beyond porting the JS cases (naming, sync maths,
+`make test` → **281 checks**. Beyond porting the JS cases (naming, sync maths,
 subtitle conventions, rails), each bug from `../docs/AUDIT.md` has a regression
 test, and the naming one carries a **negative control**: a copy of the old
 algorithm is run against the same filenames and asserted to be wrong on all four,
@@ -206,7 +206,8 @@ The 66 playback checks are also measurements, not mocks:
 - the sidecar subtitle is found through the scanner, read, and its cue is returned at
   2 s and empty at 20 s; a +3 s offset moves the window;
 - stopping saves progress; finishing removes the film from Continue Watching;
-- a film whose file is gone reports that and does not open the player
+- a film whose file is gone reports that and does not open the player, and so
+  does an empty library and an index past the end of it
 
 ## Verified end-to-end in this session
 

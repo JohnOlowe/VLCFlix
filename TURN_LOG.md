@@ -1052,7 +1052,7 @@ single-keyframe file), the `vlc.exe`+HTTP bridge family, and the browser's black
 class of failures. The code path that caused them is not in this program.
 
 **Verified this turn:**
-- `make test` → **276 checks, 0 failures**; CMake + CTest the same, from a build
+- `make test` → **281 checks, 0 failures**; CMake + CTest the same, from a build
   directory outside the tree.
 - Real decoding: `vlcflix play 3 --seek 5 --wait 4` → `state=playing time=5.40 s
   length=16.00 s decoded=119 presented=118`. The length comes from libVLC, not ffprobe.
@@ -1083,6 +1083,12 @@ class of failures. The code path that caused them is not in this program.
 - `find_dir_upwards` was needed because CTest ran from a build directory outside the
   repository and the playback tests could not find `samples/` — they failed for the
   wrong reason, which is worse than failing.
+
+**Also fixed after the first clean clone:** `vlcflix play 3` on a machine with no
+catalog failed with an empty message and exit 1. It now says the library is empty and
+prints the two ways forward, an out-of-range index names how many films there are, and
+a file played from the CLI takes the same id the scanner would give it, so its progress
+is the same progress instead of a second history under `id-cli`.
 
 **Not verified, stated not assumed:** audio (no sound card here — the picture, clock
 and state machine are verified, the sound is not); automatic device-latency

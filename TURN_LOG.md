@@ -922,3 +922,46 @@ only. Nothing can be pushed until it arrives — this clone has no credential, w
 `fatal: could not read Username for 'https://github.com'`. Dry run only: no refs,
 objects or branches were created and the remote still has `main` alone at
 `d4606a7`.
+
+## 2026-10-28 — Turn 1: credentials, branch created on GitHub, native foundation runs
+
+**Credential and branch.** Token written to `.secrets/github-token` (mode 600,
+git-ignored, never printed). `scripts/setup-git-auth.sh` rebuilt origin, identity
+and the credential helper. Identity as instructed: **John Olowe /
+121398818+JohnOlowe@users.noreply.github.com**. `git push -u origin cpp` created
+the remote branch; `git ls-remote` then showed
+`refs/heads/cpp` at the local HEAD and `refs/heads/main` untouched at `d4606a7`.
+
+**Two requirements added by the user**, both now in `docs/PORT_PLAN.md` §7:
+1. the Windows build must look like a *new* application, never installing over
+   1.2.0 — different product name, exe, install dir, data dir, uninstall key and
+   mutex (`VLCFlix Studio` / `VLCFlixStudio`; product name is one constant in
+   `native/src/core/brand.h`);
+2. logs must always be produced, even if the app crashes on open.
+
+**Turn 1 built** (`native/`, C++17, no third-party headers): `core/{json,log,paths,
+naming,sha1,store,sync,catalog,model,brand}`, `media/{walk,probe,subtitles,artwork,
+scan}`, `platform/proc`, `main.cpp` CLI (`scan`, `status`, `settings`, `naming`,
+`doctor`, `crash`), `tests/` harness. CMake and a plain Makefile both build it.
+
+Two bugs of my own, found by running rather than by reading:
+- phase 1 of the scan assigned each item twice, so a cached item was overwritten by
+  a bare one: titles came back empty and artwork re-rendered every launch. Fixed,
+  and `adopt_existing_art()` added so a finished file on disk is adopted into the
+  catalog instead of being drawn again.
+- `ffprobe -of json` reports numbers as strings, so durations and dimensions read
+  as 0. Fixed with a number reader that accepts both forms.
+
+**Verified this turn** (commands and outputs in `native/README.md`): `make test`
+132/132 with a negative control that fails the pre-fix parser on all four
+year-titled files; fresh scan of `samples/` in 13.7 s producing 24 artwork files
+(poster 400x600 opened and looked at); a second scan in 0.12 s that redraws
+nothing; `kill -9` mid-pass then a resume that drew exactly the 8 missing files and
+rewrote none; a deliberate SIGSEGV that leaves `[CRASH] SIGSEGV` + 9 stack frames
+in the log and makes the next run report the previous one died; an unwritable log
+directory falling back beside the executable and saying why in the log that opened;
+settings rejected for wrong types with exit 4.
+
+**Not done, stated not assumed:** no window, no player (turns 2–3); no Windows
+build exists, so every `_WIN32` branch (CreateProcess, %LOCALAPPDATA%, DbgHelp,
+the exception filter) is written but unexecuted.

@@ -22,10 +22,10 @@
 #include "core/paths.h"
 #include "core/store.h"
 #include "core/sync.h"
-#include "media/artwork.h"
-#include "media/probe.h"
-#include "media/scan.h"
-#include "media/walk.h"
+#include "library/artwork.h"
+#include "library/probe.h"
+#include "library/scan.h"
+#include "library/walk.h"
 
 using namespace vf;
 

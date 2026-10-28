@@ -962,6 +962,13 @@ in the log and makes the next run report the previous one died; an unwritable lo
 directory falling back beside the executable and saying why in the log that opened;
 settings rejected for wrong types with exit 4.
 
+**Caught by checking rather than trusting the commit:** the first commit silently
+omitted five of the new source files. The root `.gitignore` has a `media/` rule for
+generated artwork, and it matched `native/src/media/`. `git status` looked clean
+because the files were *ignored*, not missing. Renamed the directory to
+`native/src/library/` (which also reads better: it is the port of `server/library.js`),
+rebuilt, re-ran the tests (132/132) and re-ran a full scan (8 items, 0 errors).
+
 **Not done, stated not assumed:** no window, no player (turns 2–3); no Windows
 build exists, so every `_WIN32` branch (CreateProcess, %LOCALAPPDATA%, DbgHelp,
 the exception filter) is written but unexecuted.

@@ -19,9 +19,9 @@
 #include "core/sha1.h"
 #include "core/store.h"
 #include "core/sync.h"
-#include "media/artwork.h"
-#include "media/subtitles.h"
-#include "media/walk.h"
+#include "library/artwork.h"
+#include "library/subtitles.h"
+#include "library/walk.h"
 #include "tests/harness.h"
 
 using namespace vf;

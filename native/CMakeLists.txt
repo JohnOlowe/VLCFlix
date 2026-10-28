@@ -21,11 +21,11 @@ add_library(vlcflix_core STATIC
   src/core/store.cpp
   src/core/sync.cpp
   src/core/catalog.cpp
-  src/media/walk.cpp
-  src/media/probe.cpp
-  src/media/subtitles.cpp
-  src/media/artwork.cpp
-  src/media/scan.cpp
+  src/library/walk.cpp
+  src/library/probe.cpp
+  src/library/subtitles.cpp
+  src/library/artwork.cpp
+  src/library/scan.cpp
   src/platform/proc.cpp
 )
 target_include_directories(vlcflix_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)

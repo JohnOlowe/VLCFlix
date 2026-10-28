@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,11 @@
 #include "library/probe.h"
 #include "library/scan.h"
 #include "library/walk.h"
+#include "platform/window_sdl.h"
+#include "render/canvas.h"
+#include "render/font.h"
+#include "render/image.h"
+#include "ui/app.h"
 
 using namespace vf;
 
@@ -32,6 +38,20 @@ struct Args {
   bool console = false;
   bool no_art = false;
   bool json = false;
+  std::string screen = "home";
+  std::string png;
+  std::string all_dir;
+  std::string query;
+  std::string item;
+  int width = 1600;
+  int height = 900;
+  // ui --frames N draws N frames and exits. It exists so the window loop can be
+  // exercised on a machine with no display (SDL_VIDEODRIVER=dummy) instead of only
+  // being trusted.
+  int frames = 0;
+  int focus = -1;
+  int hover = -1;
+  std::string screenshot_dir;
 };
 
 Args parse_args(int argc, char** argv) {
@@ -53,6 +73,22 @@ Args parse_args(int argc, char** argv) {
     else if (a == "--console") args.console = true;
     else if (a == "--no-art") args.no_art = true;
     else if (a == "--json") args.json = true;
+    else if (a == "--screen") args.screen = value("--screen");
+    else if (a == "--png") args.png = value("--png");
+    else if (a == "--all") args.all_dir = value("--all");
+    else if (a == "--query") args.query = value("--query");
+    else if (a == "--item") args.item = value("--item");
+    else if (a == "--frames") args.frames = std::atoi(value("--frames").c_str());
+    else if (a == "--focus") args.focus = std::atoi(value("--focus").c_str());
+    else if (a == "--hover") args.hover = std::atoi(value("--hover").c_str());
+    else if (a == "--size") {
+      const std::string size = value("--size");
+      const std::size_t x = size.find('x');
+      if (x != std::string::npos) {
+        args.width = std::atoi(size.substr(0, x).c_str());
+        args.height = std::atoi(size.substr(x + 1).c_str());
+      }
+    }
     else if (a.rfind("--", 0) == 0) positional.push_back(a.substr(2));
     else positional.push_back(a);
   }
@@ -81,6 +117,133 @@ std::vector<std::string> split_commas(const std::string& text) {
   }
   if (!current.empty()) out.push_back(current);
   return out;
+}
+
+std::unique_ptr<ui::App> make_app() {
+  Store store;
+  auto app = std::make_unique<ui::App>(media_dir(), store.dir());
+  app->set_catalog(store.load_catalog());
+  app->set_progress(store.load_progress());
+  app->set_my_list(store.load_my_list());
+  app->set_settings(store.load_settings());
+  // The samples that ship with this repository, so a first run has something to
+  // point at without the user hunting for a path.
+  const std::string beside_exe = exe_dir();
+  const std::vector<std::string> candidates = {
+      "samples",
+      "../samples",
+      join(beside_exe, "samples"),
+      join(beside_exe, "../samples"),
+      join(beside_exe, "../../samples"),
+      join(beside_exe, "../../../samples"),
+  };
+  for (const auto& candidate : candidates) {
+    if (!dir_exists(candidate)) continue;
+    app->set_sample_folder(absolute_path(candidate));
+    LOG_INFO("samples folder: %s", app->sample_folder().c_str());
+    break;
+  }
+  return app;
+}
+
+int command_render(const Args& args) {
+  auto app = make_app();
+  app->resize(args.width, args.height);
+
+  std::vector<std::string> screens;
+  if (!args.all_dir.empty()) {
+    ensure_dir(args.all_dir);
+    screens = {"home", "browse", "mylist", "search", "detail", "settings"};
+    if (app->catalog().items.empty()) {
+      LOG_WARN("rendering screens with an empty library: the UI has nothing to show");
+    }
+  } else {
+    screens = {args.screen};
+  }
+
+  int failures = 0;
+  for (const auto& screen : screens) {
+    if (!app->show_screen(screen, screen == "search" ? args.query : args.item)) {
+      ++failures;
+      continue;
+    }
+    if (args.hover >= 0) {
+      // Force a hover so a screenshot can show the preview card without a mouse.
+      app->ensure_layout();
+      app->set_hover(args.hover);
+    }
+    if (args.focus >= 0) {
+      // Lay the screen out once (which is what records the card order), then put the
+      // keyboard focus where it was asked to go, so a screenshot can show what a
+      // keyboard user would see.
+      app->ensure_layout();
+      app->clear_focus();
+      for (int i = 0; i <= args.focus; ++i) app->move_focus(1, 0);
+    }
+    const std::string path = args.all_dir.empty()
+                                 ? args.png
+                                 : join(args.all_dir, screen + ".png");
+    if (path.empty()) {
+      std::fprintf(stderr, "--png <file> or --all <dir> is required\n");
+      return 2;
+    }
+    if (!app->render_to_png(path)) ++failures;
+    else std::printf("wrote %s (%s)\n", path.c_str(), app->screen_name().c_str());
+  }
+  return failures == 0 ? 0 : 1;
+}
+
+int command_ui(const Args& args) {
+  auto app = make_app();
+  app->resize(args.width, args.height);
+  if (app->catalog().items.empty()) {
+    LOG_WARN("no catalog yet: the window will offer to scan, which is what it should do");
+  }
+
+  Window window;
+  if (!window.open(args.width, args.height, "VLCFlix Studio")) {
+    LOG_ERROR("window could not be opened");
+    return 5;
+  }
+
+  Canvas canvas(args.width, args.height);
+  bool dirty = true;
+  // The scan runs on this thread; `pump` is how it keeps the window painting.
+  app->pump = [&]() {
+    app->draw(canvas);
+    window.present(canvas);
+  };
+  int ticks = 0;
+  for (;;) {
+    // In --frames mode each iteration counts and each iteration draws, so a
+    // headless run terminates even with no input to react to.
+    if (args.frames > 0) {
+      if (ticks >= args.frames) break;
+      ++ticks;
+      dirty = true;
+    }
+    ui::InputEvent event;
+    if (!window.poll(&event, dirty ? 0 : 16)) break;  // false = the window closed
+    if (event.type == ui::InputEvent::Type::Resize) {
+      app->resize(static_cast<int>(event.x), static_cast<int>(event.y));
+      canvas = Canvas(app->width(), app->height());
+      dirty = true;
+    } else if (event.type != ui::InputEvent::Type::None) {
+      if (app->handle(event)) dirty = true;
+    }
+    if (dirty) {
+      app->draw(canvas);
+      window.present(canvas);
+      dirty = false;
+    }
+  }
+
+  // My List is the only thing the UI mutates without saving at the time; settings
+  // and the catalog were already written when they changed.
+  Store store;
+  store.save_my_list(app->my_list());
+  LOG_INFO("ui closed; my_list=%zu", app->my_list().size());
+  return 0;
 }
 
 int command_scan(const Args& args) {
@@ -261,6 +424,12 @@ void print_help() {
       "  settings [--set k=v] read or patch settings, with validation\n"
       "  naming <file>...     show how filenames are turned into titles\n"
       "  doctor               environment report: paths, tools, log location\n"
+      "  ui                   open the window (needs a display; SDL_VIDEODRIVER=dummy\n"
+      "                       works headless, and --frames N exits after N frames)\n"
+      "  render               draw a screen to a PNG, no display required\n"
+      "                       render --screen home|browse|mylist|search|detail|settings\n"
+      "                              --png out.png [--size 1600x900] [--query text]\n"
+      "                       render --all <dir>  draws every screen\n"
       "  crash                deliberately crash (proves the crash log works)\n"
       "  version | help\n\n"
       "options\n"
@@ -343,6 +512,8 @@ int main(int argc, char** argv) {
   else if (args.command == "settings") code = command_settings(args);
   else if (args.command == "naming") code = command_naming(argc, argv);
   else if (args.command == "doctor") code = command_doctor(args);
+  else if (args.command == "ui") code = command_ui(args);
+  else if (args.command == "render") code = command_render(args);
   else if (args.command == "crash") code = command_crash();
   else if (args.command == "version") std::printf("%s\n", kVersion);
   else if (args.command == "help" || args.command == "--help") print_help();

@@ -15,22 +15,32 @@ verified here, so every "it works" claim would have been unverifiable.
 The user chose **"Netflix front-end driving real VLC"** instead. VLC remains the
 playback engine; VLCFlix owns the entire browsing surface.
 
-## Current state (2026-10-28) — native port, turn 1 of 3 done
+## Current state (2026-10-28) — native port, turn 2 of 4 done
 
 Product: **VLCFlix Studio 2.0.0**. Branch **`cpp`** exists on GitHub (`origin/cpp`)
-and is the working branch. Turn 1 of the three-turn plan is committed, pushed and
-verified; turns 2 (window + browsing UI) and 3 (player, sync, finish) remain.
+and is the working branch. Turns 1 (engine) and 2 (window + browsing UI) are
+committed, pushed and verified from a clean clone; turns 3 (player, sync, subtitles)
+and 4 (polish, bug confirmation, test strategy) remain.
 
 - **Code lives in `native/`.** The Node app (`server/`, `public/`, `src/win/`) is
   untouched and still works; it is the reference behaviour for the port and is
   deleted only when the rewrite is complete and the user approves it.
-- `native/` is C++17 with **no third-party headers**: `core/{json,log,paths,naming,
+- `native/` is C++17 with **no third-party headers** but five system libraries (SDL2,
+  FreeType, libpng, libjpeg, and libVLC from turn 3): `core/{json,log,paths,naming,
   sha1,store,sync,catalog,brand}`, `library/{walk,probe,subtitles,artwork,scan}`,
-  `platform/proc`, a CLI (`scan/status/settings/naming/doctor/crash`) and a test
-  harness. Builds with CMake **and** with plain `make` (g++ only), because
-  installed tooling does not survive a snapshot.
-- **Verified from a clean clone on GitHub**: `make` builds, `make test` = 132/132,
-  `./build/vlcflix scan --folders ../samples` = 8 items, 0 errors, all artwork.
+  `render/{canvas,font,image,png_writer}`, `ui/{theme,app}`, `platform/{proc,window_sdl}`,
+  a CLI (`scan/status/settings/naming/doctor/crash/ui/render`) and a test harness.
+  Builds with CMake **and** with plain `make`, because installed tooling does not
+  survive a snapshot.
+- **The UI draws with its own software renderer**, so `vlcflix render --all <dir>`
+  writes every screen to a PNG with no display, and the UI tests measure pixels
+  instead of describing intent. Hit areas come from the drawing pass, so what is
+  painted is what is clickable.
+- **Verified from a clean clone on GitHub**: `make` builds, `make test` = 210/210,
+  every screen rendered at four sizes and looked at, and an in-app
+  samples→scan→browse journey that ends with real posters on screen.
+- Turn 1 from a clean clone: `./build/vlcflix scan --folders ../samples` = 8 items,
+  0 errors, all artwork.
 - Identity/product rules: the Windows build must look like a new application
   (`VLCFlix Studio`, its own data dir, uninstall key and mutex, never over 1.2.0) —
   `docs/PORT_PLAN.md` §7.1, constant in `native/src/core/brand.h`.
@@ -42,8 +52,9 @@ verified; turns 2 (window + browsing UI) and 3 (player, sync, finish) remain.
   code: A1 (year-titled films), A4 (finished films), A5 (`nv12`), A6 (password
   type), A9 (still versioning). A2/A3 die with the code that caused them
   (transcoding by pipe; HTTP range serving).
-- **Not done:** no window, no player; **no Windows build exists**, so every
-  `_WIN32` branch is written but unexecuted. Do not claim otherwise.
+- **Not done:** playback (turn 3 — Play currently says so out loud); **no Windows
+  build exists**, so every `_WIN32` branch is written but unexecuted, and the window
+  has only ever run headless (`SDL_VIDEODRIVER=dummy`). Do not claim otherwise.
 
 ## Historical state (2026-10-26)
 — the Node/WebView2 application, v1.2.0

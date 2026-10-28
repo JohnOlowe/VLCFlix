@@ -972,3 +972,65 @@ rebuilt, re-ran the tests (132/132) and re-ran a full scan (8 items, 0 errors).
 **Not done, stated not assumed:** no window, no player (turns 2–3); no Windows
 build exists, so every `_WIN32` branch (CreateProcess, %LOCALAPPDATA%, DbgHelp,
 the exception filter) is written but unexecuted.
+
+## 2026-10-28 — Turn 2: the window and the browsing UI
+
+Branch `cpp`. Turn 1's engine (scan, artwork, store, logging) is untouched; this turn
+adds the drawing and window layer on top of it and wires the UI to the real settings,
+the real scan and the real My List.
+
+**Built:** `render/canvas.cpp` (RGBA8 canvas: blend, clip stack, rounded rects,
+gradient fills, circles, rounded-corner bilinear blits at any size, bitmap glyph
+blending), `render/font.cpp` (FreeType glyph cache, measure/wrap/ellipsize, UTF-8
+decode, DejaVu→Liberation→TTF fallback list), `render/image.cpp` (JPEG via libjpeg
+with a `setjmp` error hook, PNG via libpng's simplified API, mtime-keyed cache),
+`render/png_writer.cpp`, `ui/theme.cpp` (the CSS tokens), `ui/app.cpp` (state, layout,
+drawing, hit recording, input), `platform/window_sdl.cpp` (window, streaming texture,
+event translation), plus `tests/ui_tests.cpp` and `render`/`ui` CLI commands.
+
+**Two properties I decided deliberately:**
+- Drawing and hit-testing are the same pass. `draw()` records a `(rect, action)` for
+  every control it paints; `handle()` tests against that list. A button cannot be
+  drawn somewhere it cannot be clicked, and the tests click real geometry instead of
+  guessed coordinates.
+- Playback is not faked. Clicking Play calls `on_play_requested` and shows "the libVLC
+  player is not wired up yet". Turn 3 replaces the callback; nothing else changes.
+
+**Bugs found by looking at the rendered screens and fixed in this turn** (each one was
+visible in a PNG before it was fixed):
+- rail headings were drawn on top of the hero's buttons and synopsis — the hero's
+  text block and the rails' top edge disagreed by 40 px;
+- `stroke_round_rect` painted circular blobs at the corners whenever the radius did
+  not match the edge lengths (visible on every Play/My List button); rewritten as a
+  single distance-field pass;
+- the detail sheet had a dead band between the synopsis and the buttons, from a fixed
+  620 px panel height; the panel is now sized from its content;
+- fixed button widths clipped "Open Setting" and "Scan library"; buttons are now
+  measured from their label;
+- the settings sheet left a dead band under the toggles (same fixed-height mistake);
+- Browse All's grid left a ragged right margin; it now auto-fills and shares the
+  remainder, so the right gutter equals the left one;
+- the Makefile had **no header dependencies**, so editing a header relinked objects
+  compiled against the previous layout. That produced a segfault inside
+  `std::vector<pair<Rect,Action>>::~vector` that disappeared under ASan and at `-O0`
+  — a stale-layout link, not a compiler fault. `-MMD -MP` and `-include $(DEPS)` fix
+  it; CMake was never affected. I also chased it with a hand-built reproducer and
+  `gdb` before spotting it, and the first thing I ruled out (a double free in the
+  renderer) was genuinely fine.
+
+**Verified this turn:**
+- `make test` → **210 checks, 0 failures** (78 of them UI); CMake + CTest the same.
+- Clean clone of `origin/cpp` into `/tmp`: `make` builds, `make test` passes.
+- Every screen rendered and **opened and looked at**: 1600×900, 1280×720, 1920×1080,
+  the 640×420 minimum, an empty library (the negative control: a real empty state,
+  not a plausible frame), a 40-film grid, a hover preview, a keyboard focus ring.
+- Settings → "Use the bundled samples" → **Scan library** inside the app: the folder
+  is persisted, the real scan finds 8 films and writes 24 artwork files, the catalog
+  lands on disk, and every screen then draws the real posters (screenshot opened).
+  Adding a non-existent path and adding a duplicate are both rejected with a reason.
+- `SDL_VIDEODRIVER=dummy ./build/vlcflix ui --frames 3` opens the window, draws,
+  presents, closes and exits 0, leaving a clean-exit record in the log.
+
+**Not verified, stated not assumed:** the window on a real display with a real mouse
+(headless SDL only); no Windows build exists; the player is turn 3.
+

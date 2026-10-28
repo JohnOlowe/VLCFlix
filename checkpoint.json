@@ -5,8 +5,8 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "9f0637a",
-  "remote_sha": "9f0637aabef7f3c87f774f168e4ca67e5635532f",
+  "local_head": "2f41def (this file records the SHA of the commit before itself; the tip is always one commit later)",
+  "remote_sha": "2f41def6992e271a4770a90d0025b6f3a5ae80f4",
   "pushed": true,
   "awaiting": "nothing on cpp: all four turns are complete. The Windows exe has been executed under Wine 11.19; the last mile is windows-selfcheck.ps1 on a real Windows machine (installer, display, audio).",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned 9f0637aabef7f3c87f774f168e4ca67e5635532f (2026-10-28, after the Windows-execution commit); main is untouched at d4606a7. Verified: make verify (28 static + 364 test checks + 15 journey steps), make asan 364/364, ctest 2/2, and the Windows exe executed under Wine 11.19 (docs/TESTING.md section 11)."
+  "remote_sha_note": "git ls-remote origin cpp returned 2f41def6992e271a4770a90d0025b6f3a5ae80f4 (2026-10-28). The substantive commit is 9f0637a (Windows exe executed under Wine 11.19, four Windows-only bugs fixed); 2f41def is the checkpoint bookkeeping commit on top of it. main is untouched at d4606a7. Verified: make verify (28 static + 364 test checks + 15 journey steps), make asan 364/364, ctest 2/2, Windows exe executed (docs/TESTING.md section 11)."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

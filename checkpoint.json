@@ -5,8 +5,8 @@
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "cpp",
   "tracking_branch": "origin/cpp",
-  "local_head": "NEWHEAD",
-  "remote_sha": "NEWSHA",
+  "local_head": "c743595",
+  "remote_sha": "c7435953e47a03dc4247c81b20c50d0132d8a299",
   "pushed": true,
   "awaiting": "nothing on cpp. Outstanding: the user runs 2.0.4 on the real machine - it opens (software renderer), then: two-finger scrolling on Home, dragging the page bar (content must move, not the gap), and hovering a poster (the card must grow in place and play the preview). A real Windows run stays the last mile for audio, the desktop icon and Add/Remove Programs.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
@@ -16,7 +16,7 @@
   "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned NEWSHA (2026-10-28): 2.0.4 - Home scrolls (touchpad fractional deltas, and the hero/rails no longer move in opposite directions) and the hover preview grows the card in place and plays the video. On top of 1ecb261 (2.0.3 checkpoint), a5c0d1b (2.0.3: software renderer, the D3D9 crash), 5a3bab3 (2.0.2), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 590 test checks + 15 journey steps), make asan 590/590, a live Xvfb/xdotool run (preview frames differ inside the grown card; a page-bar drag moves content), and the 2.0.4 installer installed + verified under Wine 11.19 (372 files, version 2.0.4, scan 8/0, playback decoded=64 presented=62)."
+  "remote_sha_note": "git ls-remote origin cpp returned c7435953e47a03dc4247c81b20c50d0132d8a299 (2026-10-28): 2.0.4 - Home scrolls (touchpad fractional deltas, and the hero/rails no longer move in opposite directions) and the hover preview grows the card in place and plays the video. On top of 1ecb261 (2.0.3 checkpoint), a5c0d1b (2.0.3: software renderer, the D3D9 crash), 5a3bab3 (2.0.2), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 590 test checks + 15 journey steps), make asan 590/590, a live Xvfb/xdotool run (preview frames differ inside the grown card; a page-bar drag moves content), and the 2.0.4 installer installed + verified under Wine 11.19 (372 files, version 2.0.4, scan 8/0, playback decoded=64 presented=62)."
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",

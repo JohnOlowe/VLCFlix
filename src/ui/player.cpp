@@ -439,6 +439,7 @@ void App::draw_player_frame(Canvas& canvas) {
     draw_end_card(canvas);
     return;
   }
+  draw_player_back(canvas);
   if (chrome_visible_) draw_chrome(canvas);
 }
 
@@ -472,114 +473,149 @@ void App::draw_end_card(Canvas& canvas) {
   draw_button(canvas, close, "Back to browse", false, Action{Action::Kind::ClosePlayer, -1, ""});
 }
 
+void App::draw_player_back(Canvas& canvas) {
+  const Rect back{22, 22, 42, 42};
+  canvas.fill_circle(back.x + 21, back.y + 21, 21, rgba(0x000000, 140));
+  regular_.draw_centered(canvas, "\xE2\x86\x90", back, 20, theme::text());
+  add_hit(back, Action{Action::Kind::ClosePlayer, -1, ""});
+}
+
 void App::draw_chrome(Canvas& canvas) {
   const float width = static_cast<float>(width_);
   const float height = static_cast<float>(height_);
   const Item* item = playing_index_ >= 0 && static_cast<std::size_t>(playing_index_) < catalog_.items.size()
                          ? &catalog_.items[static_cast<std::size_t>(playing_index_)]
                          : nullptr;
+  const bool playing = player_status_.state == PlayState::Playing;
 
-  // Top bar: back, title, and the sync chip.
-  canvas.fill_gradient_v(Rect{0, 0, width, 120}, rgba(0x000000, 210), rgba(0x000000, 0));
-  const Rect back{24, 18, 40, 40};
-  canvas.fill_circle(back.x + 20, back.y + 20, 20, rgba(0xffffff, 24));
-  regular_.draw_centered(canvas, "\xE2\x86\x90", back, 22, theme::text());
-  add_hit(back, Action{Action::Kind::ClosePlayer, -1, ""});
+  canvas.fill_gradient_v(Rect{0, 0, width, height * 0.22f}, rgba(0x000000, 184), rgba(0x000000, 0));
+  canvas.fill_gradient_v(Rect{0, height * 0.62f, width, height * 0.38f}, rgba(0x000000, 0),
+                         rgba(0x000000, 224));
+
   if (item) {
-    bold_.draw(canvas, bold_.ellipsize(item->title, theme::kFontBody, width - 480), 80, 26,
-               theme::kFontBody, theme::text());
-    regular_.draw(canvas, item->filename, 80, 52, theme::kFontTiny, theme::dim());
-    add_hit(Rect{80, 18, width - 480, 56}, Action{Action::Kind::OpenDetail, playing_index_, ""});
+    bold_.draw(canvas, bold_.ellipsize(item->title, 15.0f, width - 280), 80, 30, 15.0f, theme::text());
   }
-  // Sync, top right: [−] [sync 0 ms] [+]. Laid out from the right edge inwards so
-  // the last control can never fall off the window (it did in the first screenshot).
-  const float margin = 24;
-  const Rect sync_plus{width - margin - 28, 22, 28, 26};
-  const std::string sync_text = "sync " + describe_delay(manual_sync_ms_);
-  const float sync_w = regular_.measure(sync_text, theme::kFontTiny).width + 22;
-  const Rect sync_chip{sync_plus.x - 6 - sync_w, 22, sync_w, 26};
-  const Rect sync_minus{sync_chip.x - 6 - 28, 22, 28, 26};
-  const bool corrected = sync_plan_.audio_delay_ms != 0 || sync_plan_.video_delay_ms != 0;
-  canvas.fill_round_rect(sync_chip, 13, corrected ? rgba(theme::kAccent, 70) : rgba(0xffffff, 26));
-  regular_.draw_centered(canvas, sync_text, sync_chip, theme::kFontTiny, theme::text());
-  canvas.fill_round_rect(sync_minus, 13, rgba(0xffffff, 26));
-  regular_.draw_centered(canvas, "\xE2\x88\x92", sync_minus, theme::kFontTiny, theme::text());
-  add_hit(sync_minus, Action{Action::Kind::NudgeSync, -1, "-20"});
-  canvas.fill_round_rect(sync_plus, 13, rgba(0xffffff, 26));
-  regular_.draw_centered(canvas, "+", sync_plus, theme::kFontTiny, theme::text());
-  add_hit(sync_plus, Action{Action::Kind::NudgeSync, -1, "+20"});
-  regular_.draw(canvas, "sync", sync_minus.x - 40, 28, theme::kFontTiny, theme::faint());
 
-  // Bottom bar: scrub, then the controls.
-  const float bar_h = 148;
-  canvas.fill_gradient_v(Rect{0, height - bar_h, width, bar_h}, rgba(0x000000, 0),
-                         rgba(0x000000, 225));
-  const float gutter = 40;
-  const float track_y = height - 96;
-  const Rect track{gutter, track_y, width - 2 * gutter, 5};
-  canvas.fill_round_rect(track, 2.5f, rgba(0xffffff, 60));
+  const float margin = 22.0f;
+  const Rect sync_plus{width - margin - 28, 26, 28, 28};
+  const std::string sync_text = describe_delay(manual_sync_ms_);
+  const float sync_w = std::max(64.0f, regular_.measure(sync_text, 11.5f).width + 16);
+  const Rect sync_chip{sync_plus.x - 6 - sync_w, 26, sync_w, 28};
+  const Rect sync_minus{sync_chip.x - 6 - 28, 26, 28, 28};
+  canvas.fill_round_rect(sync_minus, 14, rgba(0xffffff, 28));
+  regular_.draw_centered(canvas, "\xE2\x88\x92", sync_minus, 14, theme::text());
+  add_hit(sync_minus, Action{Action::Kind::NudgeSync, -1, "-20"});
+  canvas.fill_round_rect(sync_chip, 14, rgba(0xffffff, 18));
+  regular_.draw_centered(canvas, sync_text, sync_chip, 11.5f, theme::dim());
+  canvas.fill_round_rect(sync_plus, 14, rgba(0xffffff, 28));
+  regular_.draw_centered(canvas, "+", sync_plus, 14, theme::text());
+  add_hit(sync_plus, Action{Action::Kind::NudgeSync, -1, "+20"});
+
+  // Centre icon: pause bars while playing, a play triangle while paused. Only this
+  // box is the button, not the whole picture.
+  const Rect big{(width - 84.0f) / 2.0f, (height - 84.0f) / 2.0f, 84, 84};
+  const int icon_alpha = playing ? 128 : 235;
+  if (playing) {
+    canvas.fill_round_rect(Rect{big.x + 24, big.y + 18, 12, 48}, 2, rgba(0xffffff, icon_alpha));
+    canvas.fill_round_rect(Rect{big.x + 48, big.y + 18, 12, 48}, 2, rgba(0xffffff, icon_alpha));
+  } else {
+    canvas.fill_triangle_right(Rect{big.x + 30, big.y + 20, 28, 44}, rgba(0xffffff, icon_alpha));
+  }
+  add_hit(big, Action{Action::Kind::TogglePause, -1, ""});
+
+  const float edge = 26.0f;
+  const float controls_y = height - 20.0f - 36.0f;
+  const Rect track{edge, controls_y - 18.0f, width - 2 * edge, 4};
+  player_seek_track_ = track;
+  canvas.fill_round_rect(track, 2, rgba(0xffffff, 70));
   const double length = player_status_.length > 0 ? player_status_.length : 0;
   const double fraction = length > 0 ? std::clamp(player_status_.time / length, 0.0, 1.0) : 0.0;
   if (fraction > 0) {
-    canvas.fill_round_rect(Rect{track.x, track.y, track.w * static_cast<float>(fraction), track.h},
-                           2.5f, theme::accent());
-    canvas.fill_circle(track.x + track.w * static_cast<float>(fraction), track.y + 2.5f, 7,
-                       theme::accent());
+    canvas.fill_round_rect(Rect{track.x, track.y, track.w * static_cast<float>(fraction), track.h}, 2,
+                           theme::accent());
   }
-  // A larger invisible hit area than the 5 px bar: nobody can hit 5 px with a mouse.
-  add_hit(Rect{gutter, track_y - 14, track.w, 32}, Action{Action::Kind::Seek, -1, ""});
+  const float thumb_x = track.x + track.w * static_cast<float>(fraction);
+  canvas.fill_circle(thumb_x, track.y + 2, 6.5f, rgb(0xffffff));
+  add_hit(Rect{track.x, track.y - 10, track.w, 24}, Action{Action::Kind::Seek, -1, ""});
 
-  const float controls_y = height - 66;
-  regular_.draw(canvas, clock_text(player_status_.time), gutter, controls_y + 4, theme::kFontSmall,
-                theme::text());
-  regular_.draw(canvas, clock_text(length), gutter + 62, controls_y + 4, theme::kFontSmall,
-                theme::dim());
+  auto pause_mark = [&](const Rect& box, int alpha) {
+    if (playing) {
+      canvas.fill_rect(Rect{box.x + 11, box.y + 10, 4, 16}, rgba(0xffffff, alpha));
+      canvas.fill_rect(Rect{box.x + 19, box.y + 10, 4, 16}, rgba(0xffffff, alpha));
+    } else {
+      canvas.fill_triangle_right(Rect{box.x + 12, box.y + 10, 12, 16}, rgba(0xffffff, alpha));
+    }
+  };
+  const Rect toggle{edge, controls_y, 36, 36};
+  pause_mark(toggle, 255);
+  add_hit(toggle, Action{Action::Kind::TogglePause, -1, ""});
 
-  const float center = width / 2;
-  // Previous 10 s, play/pause, next 10 s.
-  const Rect back10{center - 150, controls_y, 74, 36};
-  draw_button(canvas, back10, "\xE2\x88\x92 10 s", false, Action{Action::Kind::SeekRelative, -1, "-10"});
-  const Rect play{center - 44, controls_y - 4, 88, 44};
-  canvas.fill_round_rect(play, 22, theme::accent());
-  if (player_status_.state == PlayState::Playing) {
-    canvas.fill_rect(Rect{play.x + 32, play.y + 14, 6, 16}, rgb(0x1a0d00));
-    canvas.fill_rect(Rect{play.x + 50, play.y + 14, 6, 16}, rgb(0x1a0d00));
-  } else {
-    canvas.fill_triangle_right(Rect{play.x + 36, play.y + 13, 16, 18}, rgb(0x1a0d00));
+  const Rect back10{toggle.right() + 4, controls_y, 42, 36};
+  regular_.draw_centered(canvas, "\xE2\x88\x92" "10", back10, 13, theme::text());
+  add_hit(back10, Action{Action::Kind::SeekRelative, -1, "-10"});
+  const Rect fwd10{back10.right() + 2, controls_y, 42, 36};
+  regular_.draw_centered(canvas, "+10", fwd10, 13, theme::text());
+  add_hit(fwd10, Action{Action::Kind::SeekRelative, -1, "10"});
+
+  const std::string clock = clock_text(player_status_.time) + " / " + clock_text(length);
+  regular_.draw(canvas, clock, fwd10.right() + 10, controls_y + 10, 12.5f, rgb(0xe6e6ea));
+
+  // Right cluster, from the edge inwards: fullscreen, volume, speaker, CC.
+  const Rect full{width - edge - 36, controls_y, 36, 36};
+  const float fx = full.x + 9;
+  const float fy = full.y + 9;
+  canvas.fill_rect(Rect{fx, fy, 8, 2}, theme::text());
+  canvas.fill_rect(Rect{fx, fy, 2, 8}, theme::text());
+  canvas.fill_rect(Rect{fx + 10, fy, 8, 2}, theme::text());
+  canvas.fill_rect(Rect{fx + 16, fy, 2, 8}, theme::text());
+  canvas.fill_rect(Rect{fx, fy + 16, 8, 2}, theme::text());
+  canvas.fill_rect(Rect{fx, fy + 10, 2, 8}, theme::text());
+  canvas.fill_rect(Rect{fx + 10, fy + 16, 8, 2}, theme::text());
+  canvas.fill_rect(Rect{fx + 16, fy + 10, 2, 8}, theme::text());
+  add_hit(full, Action{Action::Kind::ToggleFullscreen, -1, ""});
+
+  const Rect vol_track{full.x - 12 - 92, controls_y + 16, 92, 4};
+  player_volume_track_ = vol_track;
+  canvas.fill_round_rect(vol_track, 2, rgba(0xffffff, 80));
+  const float level = engine_.muted() ? 0.0f : std::clamp(engine_.volume() / 100.0f, 0.0f, 1.0f);
+  if (level > 0) {
+    canvas.fill_round_rect(Rect{vol_track.x, vol_track.y, vol_track.w * level, vol_track.h}, 2,
+                           rgb(0xffffff));
   }
-  add_hit(play, Action{Action::Kind::TogglePause, -1, ""});
-  const Rect fwd10{center + 76, controls_y, 74, 36};
-  draw_button(canvas, fwd10, "+10 s", false, Action{Action::Kind::SeekRelative, -1, "10"});
+  canvas.fill_circle(vol_track.x + vol_track.w * level, vol_track.y + 2, 5.5f, rgb(0xffffff));
+  add_hit(Rect{vol_track.x - 4, vol_track.y - 8, vol_track.w + 8, 20},
+          Action{Action::Kind::Volume, -1, ""});
 
-  // Right: volume, mute, subtitles, laid out from the right edge inwards so the last
-  // control cannot be clipped (it was: the CC label fell off the window edge).
-  const float right = width - gutter;
-  const float cc_w = button_width("CC", false);
-  const Rect sub{right - cc_w, controls_y, cc_w, 36};
-  // A highlighted CC means "subtitles on", so it is drawn as a primary button but
-  // without the play triangle that primary normally carries.
-  draw_button(canvas, sub, "CC", subtitle_track_ >= 0, Action{Action::Kind::CycleSubtitles, -1, ""},
-              false);
-  const std::string mute_label = engine_.muted() ? "Muted" : "Mute";
-  const float mute_w = button_width(mute_label, engine_.muted(), false);
-  const Rect mute{sub.x - 8 - mute_w, controls_y, mute_w, 36};
-  draw_button(canvas, mute, mute_label, engine_.muted(), Action{Action::Kind::Mute, -1, ""}, false);
-  const Rect vol{mute.x - 8 - 148, controls_y, 148, 36};
-  canvas.fill_round_rect(vol, 18, rgba(0xffffff, 26));
-  const float level = std::clamp(engine_.volume() / 100.0f, 0.0f, 1.0f);
-  canvas.fill_round_rect(Rect{vol.x, vol.y, vol.w * level, vol.h}, 18, rgba(0xffffff, 150));
-  regular_.draw_centered(canvas, std::to_string(engine_.volume()),
-                         Rect{vol.x, vol.y, vol.w, vol.h}, theme::kFontTiny,
-                         level > 0.55f ? rgb(0x15151b) : theme::text());
-  add_hit(vol, Action{Action::Kind::Volume, -1, ""});
+  const Rect speaker{vol_track.x - 8 - 36, controls_y, 36, 36};
+  const float sx = speaker.x + 8;
+  const float sy = speaker.y + 11;
+  canvas.fill_rect(Rect{sx, sy + 4, 5, 8}, theme::text());
+  canvas.fill_triangle_right(Rect{sx + 5, sy, 8, 16}, theme::text());
+  if (!engine_.muted()) {
+    // Only the right half of the rings, so they read as sound waves rather than a target.
+    canvas.push_clip(Rect{sx + 13, sy - 2, 16, 22});
+    canvas.stroke_circle(sx + 12, sy + 8, 5, 1.4f, theme::text());
+    canvas.stroke_circle(sx + 12, sy + 8, 8, 1.4f, theme::text());
+    canvas.pop_clip();
+  }
+  add_hit(speaker, Action{Action::Kind::Mute, -1, ""});
+
+  const bool subs_on = subtitle_track_ >= 0;
+  const Rect cc{speaker.x - 8 - 36, controls_y + 4, 34, 28};
+  if (subs_on) canvas.fill_round_rect(cc, 4, rgb(0xe50914));
+  else canvas.stroke_round_rect(cc, 4, 1.0f, rgba(0xffffff, 90));
+  bold_.draw_centered(canvas, "CC", cc, 11, theme::text());
+  add_hit(cc, Action{Action::Kind::CycleSubtitles, -1, ""});
 
   if (!player_error_.empty()) {
-    regular_.draw_centered(canvas, player_error_, Rect{0, height - 150, width, 24},
-                           theme::kFontSmall, rgb(0xff8f8f));
+    const float text_w = regular_.measure(player_error_, 12.5f).width;
+    const Rect pill{(width - std::min(text_w + 36, width - 80)) / 2, height - 118,
+                    std::min(text_w + 36, width - 80), 36};
+    canvas.fill_round_rect(pill, 18, rgba(0xffe4e4, 230));
+    regular_.draw_centered(canvas, regular_.ellipsize(player_error_, 12.5f, pill.w - 24), pill, 12.5f,
+                           rgb(0x8a1f1f));
   }
 }
-
-
 
 /* --------------------------------- input ---------------------------------- */
 
@@ -601,11 +637,11 @@ bool App::handle_player(const InputEvent& event) {
       switch (action.kind) {
         case Action::Kind::Seek: {
           const double length = player_status_.length;
-          if (length <= 0) return false;
-          const float gutter = 40;
-          const float span = static_cast<float>(width_) - 2 * gutter;
+          if (length <= 0 || player_seek_track_.w <= 1) return false;
           const double target =
-              std::clamp(static_cast<double>((event.x - gutter) / span), 0.0, 1.0) * length;
+              std::clamp(static_cast<double>((event.x - player_seek_track_.x) / player_seek_track_.w), 0.0,
+                         1.0) *
+              length;
           engine_.seek(target);
           return true;
         }
@@ -620,11 +656,12 @@ bool App::handle_player(const InputEvent& event) {
           engine_.set_muted(!engine_.muted());
           return true;
         case Action::Kind::Volume:
-          // The same geometry the drawing used: [volume][8][mute][8][CC] from the right.
+          if (player_volume_track_.w <= 1) return false;
           engine_.set_volume(static_cast<int>(
-              (event.x - (static_cast<float>(width_) - 40 - button_width("CC", false) - 8 -
-                          button_width("Muted", false) - 8 - 148)) *
-              100.0f / 148.0f));
+              std::clamp((event.x - player_volume_track_.x) / player_volume_track_.w, 0.0f, 1.0f) * 100.0f));
+          return true;
+        case Action::Kind::ToggleFullscreen:
+          if (on_toggle_fullscreen) on_toggle_fullscreen();
           return true;
         case Action::Kind::CycleSubtitles:
           cycle_subtitle_track(1);

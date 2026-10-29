@@ -72,6 +72,7 @@ struct Action {
     Volume,
     CycleSubtitles,
     NudgeSync,      // value = +/- ms
+    ToggleFullscreen,
     RemoveFolder,   // value = the folder
     UseSampleFolder,
     ScrollTo,       // value = scroll region; a click on the bar's track jumps there
@@ -291,6 +292,7 @@ class App {
   const std::string& rail_at(float x, float y) const;
   void notify(const std::string& message);
   bool handle_player(const InputEvent& event);
+  void draw_player_back(Canvas& canvas);
   void draw_chrome(Canvas& canvas);
   void draw_end_card(Canvas& canvas);
   void apply_sync();
@@ -327,6 +329,9 @@ class App {
   bool player_open_ = false;       // a film is loaded in the player view
   bool player_chrome_ = false;     // the chrome is drawn over the picture
   bool chrome_visible_ = true;
+  // The seek and volume tracks, so a click uses the bar that was drawn.
+  Rect player_seek_track_{};
+  Rect player_volume_track_{};
   bool player_finished_ = false;
   bool player_failed_ = false;
   double chrome_hidden_at_ = -1;   // clock time when the chrome last hid

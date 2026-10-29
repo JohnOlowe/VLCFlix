@@ -1,22 +1,23 @@
 {
- "updated_at": "2026-10-28",
+ "updated_at": "2026-10-29",
  "repository": {
   "path": "/home/user/VLCFlix",
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
-  "branch": "cpp",
-  "tracking_branch": "origin/cpp",
+  "branch": "studio-ui",
+  "tracking_branch": "origin/studio-ui (not pushed yet \u2014 this commit creates it)",
   "local_head": "c743595",
   "remote_sha": "c7435953e47a03dc4247c81b20c50d0132d8a299",
   "pushed": true,
-  "awaiting": "nothing on cpp. Outstanding: the user runs 2.0.4 on the real machine - it opens (software renderer), then: two-finger scrolling on Home, dragging the page bar (content must move, not the gap), and hovering a poster (the card must grow in place and play the preview). A real Windows run stays the last mile for audio, the desktop icon and Add/Remove Programs.",
+  "awaiting": "Turn 2: run the Node app, capture every screen, render the current C++ UI, write a gap row per screen. No UI edit before those captures exist.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-28",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
   "remote_sha_ref": "origin/cpp via git ls-remote, 2026-10-28",
-  "push_blocked_by": "no credential in a fresh clone: .secrets/github-token is git-ignored and absent; user must supply a token",
+  "push_blocked_by": "nothing, once this commit is pushed. Token is local and git-ignored.",
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
-  "remote_sha_note": "git ls-remote origin cpp returned c7435953e47a03dc4247c81b20c50d0132d8a299 (2026-10-28): 2.0.4 - Home scrolls (touchpad fractional deltas, and the hero/rails no longer move in opposite directions) and the hover preview grows the card in place and plays the video. On top of 1ecb261 (2.0.3 checkpoint), a5c0d1b (2.0.3: software renderer, the D3D9 crash), 5a3bab3 (2.0.2), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 590 test checks + 15 journey steps), make asan 590/590, a live Xvfb/xdotool run (preview frames differ inside the grown card; a page-bar drag moves content), and the 2.0.4 installer installed + verified under Wine 11.19 (372 files, version 2.0.4, scan 8/0, playback decoded=64 presented=62)."
+  "remote_sha_note": "git ls-remote origin cpp returned c7435953e47a03dc4247c81b20c50d0132d8a299 (2026-10-28): 2.0.4 - Home scrolls (touchpad fractional deltas, and the hero/rails no longer move in opposite directions) and the hover preview grows the card in place and plays the video. On top of 1ecb261 (2.0.3 checkpoint), a5c0d1b (2.0.3: software renderer, the D3D9 crash), 5a3bab3 (2.0.2), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 590 test checks + 15 journey steps), make asan 590/590, a live Xvfb/xdotool run (preview frames differ inside the grown card; a page-bar drag moves content), and the 2.0.4 installer installed + verified under Wine 11.19 (372 files, version 2.0.4, scan 8/0, playback decoded=64 presented=62).",
+  "base_of_studio_ui": "5b867066e8052fa4f802365268dd9eeea33d7d12 (origin/cpp)"
  },
  "scope": {
   "decision": "Netflix-style front-end that drives the real VLC via its HTTP control interface",
@@ -447,5 +448,26 @@
  "ui": {
   "scrolling": "Every screen declares a scroll region while drawing: 'page' (Home, Browse, My List, Search), 'detail', 'settings', and 'rail:<id>' per Home rail. The same declaration drives the bar, the wheel, the keys and the tests. Wheel works over the open sheets (previously ignored), over a rail it scrolls the rail sideways and then falls through to the page, Page Up/Down/Home/End scroll whatever is in front, bars are draggable (SDL_MOUSEBUTTONUP added), keyboard focus reveal_rect() scrolls whatever holds the focused card, and hit areas outside the visible clip are dropped. Six new UI tests incl. a fits-so-no-limit negative control.",
   "no_arguments": "no arguments now means 'open the window' (it used to run `help`, so the Desktop shortcut appeared to do nothing); --help still prints the command list; a window that cannot be created shows a message box naming the log"
+ },
+ "session_2026_10_29": {
+  "turn": 1,
+  "of": 6,
+  "branch": "studio-ui",
+  "cut_from": "cpp @ 5b867066e8052fa4f802365268dd9eeea33d7d12",
+  "scope": "UI only. Match screenshots taken of the running Node app. Do not restore browser playback or the HTTP dock.",
+  "ui_code_written": false,
+  "credential": ".secrets/github-token mode 600, git-ignored, not in any tracked file",
+  "scope_probe": {
+   "vlcflix_ref_create_invalid_sha": 422,
+   "ref_absent_afterwards": 404,
+   "bt_audio_ref_create": 403,
+   "movies_ref_create": 403,
+   "anonymous_ref_create": 401,
+   "actions_secrets": 403,
+   "hooks": 403,
+   "branch_protection": 403,
+   "note": "GET /user/repos lists 15 public repos with permissions.admin true. That is not token scope."
+  },
+  "next": "Turn 2 captures. Install ffmpeg libsdl2 libvlc xvfb xdotool cmake. They do not survive a snapshot."
  }
 }

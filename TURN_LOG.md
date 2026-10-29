@@ -1599,3 +1599,54 @@ synthesise `preciseY`, so the fractional path is proved by the pure function and
 that reads the field, not by a finger. Wine still shows no window, so hover cannot be driven
 there either; the hover evidence is from the virtual display, and the real machine remains
 the last mile.
+
+## 2026-10-29 — Turn 1 of 6: plan only, branch `studio-ui`
+
+The user asked for a new branch and a version whose UI matches the JS app. This
+turn planned the tools and locked the decisions. No UI code was written.
+
+Decisions, from the user, not assumed:
+
+- Cut from `cpp`. UI only. The engine stays.
+- Match is defined by screenshots taken of the running Node app in this sandbox,
+  then C++ screens built one after another until they match.
+- Branch name `studio-ui`.
+
+Opened, so the gap is not a rumour: `main` `docs/screenshots/home.jpg` and
+`detail.jpg`, and `cpp` `docs/evidence/windows-home-scrolling.png` and
+`windows-detail.png`. The JS home is a billboard with the title on the art.
+The C++ home capture is a gradient band with the title underneath, and that
+particular capture's cards are letter blocks. The detail capture behind the
+sheet does show artwork cards, so the letter blocks may be missing art rather
+than the layout. Not settled until turn 2 renders both apps itself.
+`windows-home-scrolling.png` is a scrolled capture; it is not a fair at-rest home.
+
+Credential: stored at `.secrets/github-token` (mode 600). `git check-ignore`
+matches it and `.git-credentials`. `git add` of that path is refused. `git
+ls-files` does not list it. A working-tree search found the current token only
+in the secret store. It is not in this commit.
+
+Scope probe (status codes, token not printed):
+
+| Call | Result |
+|---|---|
+| `GET /user` | 200, login JohnOlowe, `X-OAuth-Scopes` empty (fine-grained) |
+| `GET` Actions secrets, Actions permissions, hooks, vulnerability alerts, branch protection | **403** |
+| `POST /repos/JohnOlowe/VLCFlix/git/refs` with an all-zero SHA | **422** Object does not exist — write authorized, object rejected |
+| same ref afterwards | **404** — nothing was created |
+| same `POST` on `JohnOlowe/BT-Audio` | **403** Resource not accessible by personal access token |
+| same `POST` on `JohnOlowe/Movies` | **403** |
+| anonymous `POST` on either repo | **401** |
+| `GET /user/repos` | 200, 15 public repos, `permissions.admin: true` on each |
+
+The permissions field is the 2026-10-26 trap. Public metadata lists every public
+repo and stamps admin on it. The write calls do not. Effective write scope is
+VLCFlix only. Administration endpoints on VLCFlix itself returned 403. Rotate
+the token after the six turns; it passed through chat.
+
+Machine measured, not recalled: 21 GB free, 1982 MB RAM. `cmake`, `ffmpeg`,
+SDL2, libVLC, Xvfb and xdotool are not installed. Turn 2 installs them. They
+will not survive a snapshot.
+
+Next: turn 2 captures the Node app, then the current C++ UI, and writes a gap
+row per screen. No screen is rewritten before its pair of captures exists.

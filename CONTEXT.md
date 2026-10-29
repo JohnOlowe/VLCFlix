@@ -1,5 +1,43 @@
 # Project context
 
+## This session (2026-10-29) — read this first
+
+Turn 1 of 6 is the plan. No UI code has been written. Branch **`studio-ui`**
+is cut from `cpp` at `5b86706` and is the only branch this session commits to.
+`cpp` and `main` are not moved.
+
+User decisions, locked this turn (not assumed):
+
+- **UI only.** Keep the `cpp` engine, tests, and playback. Rewrite the surface so
+  the C++ UI matches the JS UI. Do not bring back Play in browser or the
+  VLC-over-HTTP dock unless a later message says so.
+- **Match by screenshots I take myself.** Install and run the Node app, capture
+  every screen, then change the C++ renderer one screen at a time until those
+  captures match. Repo screenshots are a hint, not the bar.
+- **Branch name:** `studio-ui`.
+
+The token the user pasted is in `.secrets/github-token` (mode 600). `.secrets/`
+and `.git-credentials` are git-ignored. `git add` of that path is refused.
+`git ls-files` does not list it. It must never be printed, committed, or put in
+a remote URL. Scope was probed, not assumed: creating a ref on this repo was
+authorized (HTTP 422 on an invalid SHA, and the ref was confirmed absent
+afterwards); the same call on `BT-Audio` and `Movies` returned **403**; Actions
+secrets, hooks, vulnerability alerts and branch protection returned **403**;
+an anonymous call returned **401**. `GET /user/repos` lists 15 public
+repositories with `permissions.admin: true` — that field is not evidence of
+token scope (the same mistake was retracted on 2026-10-26). Rotate the token
+when the six turns are done; it passed through chat.
+
+## RECOVERY (this session)
+
+1. Read `AGENTS.md`, then this section, then `docs/PLAN_6_TURNS.md`.
+2. `cd /home/user/VLCFlix`. If `git remote -v` is empty, run
+   `bash scripts/setup-git-auth.sh`. Do not print the token file.
+3. `git status -sb` and `git log --oneline -3`. The branch must be `studio-ui`.
+4. Packages and `node_modules` do not survive a snapshot. Reinstall before
+   claiming a build or a screenshot.
+5. Resume at the first unchecked item in `docs/PLAN_6_TURNS.md`.
+
 ## Project
 - Repository: `JohnOlowe/VLCFlix` (`https://github.com/JohnOlowe/VLCFlix.git`).
 - Product: a Netflix-style browsing front-end for a local video library that plays

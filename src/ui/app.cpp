@@ -38,6 +38,18 @@ constexpr int kKeyHome = 1073741898;
 constexpr int kKeyPageUp = 1073741899;
 constexpr int kKeyEnd = 1073741901;
 constexpr int kKeyPageDown = 1073741902;
+
+// The wordmark is two colours on purpose. A single white "VLCFLIX" reads as a
+// label, not the brand: VLC is the yellow, FLIX is white, same as the header.
+void draw_wordmark(Font& font, Canvas& canvas, float x, float y, float size) {
+  font.draw(canvas, "VLC", x, y, size, theme::accent());
+  const float vlc = font.measure("VLC", size).width;
+  font.draw(canvas, "FLIX", x + vlc + 1.0f, y, size, theme::text());
+}
+
+std::string counted(std::size_t n, const char* one, const char* many) {
+  return std::to_string(n) + (n == 1 ? one : many);
+}
 // One notch of the wheel, and one page of a keyboard scroll.
 constexpr float kWheelStep = 96.0f;
 constexpr float kRailStep = 140.0f;
@@ -386,7 +398,7 @@ void App::draw(Canvas& canvas) {
     const std::size_t count = catalog_.items.size();
     draw_grid_view(canvas, "Browse All", all,
                    std::to_string(count) + (count == 1 ? " title" : " titles") + " in " +
-                       std::to_string(folders) + " folder(s)");
+                       counted(folders, " folder", " folders"));
   } else if (view_ == View::MyList) {
     std::vector<std::size_t> mine;
     for (const auto& id : my_list_) {
@@ -520,20 +532,11 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   canvas.pop_clip();
 
   if (const int percent = percent_for(item); percent > 0) {
-    if (title_on_art && !wide) {
-      const float bar_height = 3.0f;
-      canvas.fill_rect(Rect{card.x, card.bottom() - bar_height, card.w, bar_height}, rgba(0xffffff, 40));
-      canvas.fill_rect(Rect{card.x, card.bottom() - bar_height, card.w * percent / 100.0f, bar_height},
-                       theme::accent());
-    } else {
-      const float label_lift = title_on_art ? 34.0f : 0.0f;
-      const float bar_height = 4;
-      const float bar_y = card.bottom() - bar_height - 8 - label_lift;
-      canvas.fill_round_rect(Rect{card.x + 10, bar_y, card.w - 20, bar_height}, bar_height / 2,
-                             rgba(0xffffff, 60));
-      canvas.fill_round_rect(Rect{card.x + 10, bar_y, (card.w - 20) * percent / 100.0f, bar_height},
-                             bar_height / 2, theme::accent());
-    }
+    const float bar_height = 3.0f;
+    const Rect track{card.x + 10.0f, card.bottom() - bar_height - 6.0f, card.w - 20.0f, bar_height};
+    canvas.fill_round_rect(track, bar_height / 2, rgba(0xffffff, 66));
+    const float fill = std::min(track.w, std::max(bar_height, track.w * percent / 100.0f));
+    canvas.fill_round_rect(Rect{track.x, track.y, fill, track.h}, bar_height / 2, theme::accent());
   }
 
   if (hovered || focused) {
@@ -555,8 +558,10 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
 
   if (title_on_art) {
     const float title_size = wide ? 13.0f : 14.0f;
-    // Poster grids keep the type above the thin progress line on the bottom edge.
-    const float title_y = card.bottom() - (wide ? 30.0f : 44.0f);
+    // Leave room under the meta for the progress bar, so the line does not strike
+    // the year. Cards with no progress keep the type lower.
+    const float bar_room = percent_for(item) > 0 ? 10.0f : 0.0f;
+    const float title_y = card.bottom() - (wide ? 32.0f : 42.0f) - bar_room;
     bold_.draw(canvas, bold_.ellipsize(item.title, title_size, card.w - 22), card.x + 11, title_y,
                title_size, theme::text());
     std::string year;
@@ -745,10 +750,8 @@ void App::draw_header(Canvas& canvas) {
 
   float x = theme::kGutter;
   const float mid = header_height / 2;
-  bold_.draw(canvas, "VLC", x, mid - 11, 21, theme::accent());
-  const float vlc_width = bold_.measure("VLC", 21).width;
-  bold_.draw(canvas, "FLIX", x + vlc_width + 1, mid - 11, 21, theme::text());
-  x += vlc_width + bold_.measure("FLIX", 21).width + 36;
+  draw_wordmark(bold_, canvas, x, mid - 11, 21);
+  x += bold_.measure("VLC", 21).width + bold_.measure("FLIX", 21).width + 36;
 
   if (reveal_nav) {
     struct NavEntry {
@@ -936,9 +939,9 @@ void App::draw_home(Canvas& canvas) {
     canvas.fill_round_rect(info_rect, 4, rgba(0x6d6d6e, 158));
     const float info_cx = info_rect.x + 20;
     const float info_cy = info_rect.y + btn_h / 2;
-    canvas.stroke_circle(info_cx, info_cy, 8, 1.5f, theme::text());
-    canvas.fill_circle(info_cx, info_cy - 3.2f, 1.2f, theme::text());
-    canvas.fill_rect(Rect{info_cx - 1.0f, info_cy - 0.4f, 2.0f, 6.0f}, theme::text());
+    canvas.stroke_circle(info_cx, info_cy, 8.5f, 1.8f, theme::text());
+    canvas.fill_circle(info_cx, info_cy - 3.4f, 1.35f, theme::text());
+    canvas.fill_round_rect(Rect{info_cx - 1.05f, info_cy - 0.6f, 2.1f, 6.2f}, 1.0f, theme::text());
     bold_.draw(canvas, "More Info", info_rect.x + 34,
                info_rect.y + (btn_h - bold_.line_height(15.5f)) / 2, 15.5f, theme::text());
     add_hit(info_rect, Action{Action::Kind::OpenDetail, 0, ""});
@@ -1025,11 +1028,38 @@ void App::draw_home(Canvas& canvas) {
       const Rect card{x, cards_y, card_width, card_height};
       if (card.x > width_) break;
       if (card.right() > 0) {
-        draw_poster_card(canvas, card, catalog_.items[index], true, page, true);
+        // A sliver at the edge was drawing "Iro" and nothing else. Keep it in the
+        // focus order so Right can scroll it into view, but do not paint it until
+        // there is room for the title.
+        if (card.x < static_cast<float>(width_) - 180.0f) {
+          draw_poster_card(canvas, card, catalog_.items[index], true, page, true);
+        }
         order_.push_back(static_cast<int>(index));
         order_rects_.push_back(card);
       }
       x += card_width + card_gap;
+    }
+    // A rail that runs off the window used to end mid-letter ("Iro", "202").
+    // A short fade says the row continues, which the hard clip did not.
+    if (cards_y > -card_height && cards_y < height_) {
+      const float fade = 48.0f;
+      const float last_right = theme::kGutter - rail_offset + content_width;
+      auto edge_fade = [&](float x, bool from_left) {
+        const Rect near{x, cards_y, fade * 0.42f, card_height};
+        const Rect far{x + fade * 0.42f, cards_y, fade * 0.58f, card_height};
+        const Color soft = rgba(theme::kBg, 210);
+        if (from_left) {
+          canvas.fill_gradient_h(near, theme::bg(), soft);
+          canvas.fill_gradient_h(far, soft, rgba(theme::kBg, 0));
+        } else {
+          canvas.fill_gradient_h(near, rgba(theme::kBg, 0), soft);
+          canvas.fill_gradient_h(far, soft, theme::bg());
+        }
+      };
+      if (rail_offset > 8.0f) edge_fade(0, true);
+      if (last_right > static_cast<float>(width_) - 4.0f) {
+        edge_fade(static_cast<float>(width_) - fade, false);
+      }
     }
     y = cards_y + card_height + 34.0f;
   }
@@ -1039,7 +1069,7 @@ void App::draw_home(Canvas& canvas) {
   if (y < height_ && y + footer_h > theme::kHeaderHeight) {
     canvas.fill_rect(Rect{0, y, float(width_), 1}, rgba(0xffffff, 18));
     float fy = y + 28.0f;
-    bold_.draw(canvas, "VLCFLIX", theme::kGutter, fy, 16, theme::text());
+    draw_wordmark(bold_, canvas, theme::kGutter, fy, 16);
     fy += 28.0f;
     regular_.draw_wrapped(
         canvas,
@@ -1058,7 +1088,7 @@ void App::draw_home(Canvas& canvas) {
     if (!clock.empty()) meta += "  ·  last scan " + clock;
     regular_.draw(canvas,
                   regular_.ellipsize(meta, 11.5f, static_cast<float>(width_) - 2 * theme::kGutter),
-                  theme::kGutter, fy, 11.5f, rgb(0x56565f));
+                  theme::kGutter, fy, 11.5f, rgb(0x8a8a94));
   }
   y += footer_h;
   canvas.pop_clip();
@@ -1117,7 +1147,7 @@ void App::draw_grid_view(Canvas& canvas, const std::string& title,
   const float footer_top = grid_top + static_cast<float>(rows_total) * row_height + 28.0f - page_offset;
   if (footer_top < height_ && footer_top + 120.0f > grid_top) {
     canvas.fill_rect(Rect{0, footer_top, float(width_), 1}, rgba(0xffffff, 18));
-    bold_.draw(canvas, "VLCFLIX", theme::kGutter, footer_top + 28, 16, theme::text());
+    draw_wordmark(bold_, canvas, theme::kGutter, footer_top + 28, 16);
     regular_.draw_wrapped(
         canvas,
         "Browsing front-end for your own media. Playback is handled by VLC through its HTTP control "
@@ -1134,7 +1164,7 @@ void App::draw_grid_view(Canvas& canvas, const std::string& title,
     const std::string clock = scan_clock(catalog_.scanned_at);
     if (!clock.empty()) meta += "  ·  last scan " + clock;
     regular_.draw(canvas, regular_.ellipsize(meta, 11.5f, static_cast<float>(width_) - 2 * theme::kGutter),
-                  theme::kGutter, footer_top + 108, 11.5f, rgb(0x56565f));
+                  theme::kGutter, footer_top + 108, 11.5f, rgb(0x8a8a94));
   }
   canvas.pop_clip();
 
@@ -1401,6 +1431,8 @@ int App::scan_now() {
     return -1;
   }
   scanning_ = true;
+  scan_done_ = 0;
+  scan_total_ = 0;
   scan_label_ = "Reading files…";
   if (pump) pump();
 
@@ -1412,6 +1444,8 @@ int App::scan_now() {
   options.hw_decode = settings_.hw_decode;
   const double started = now_seconds();
   options.on_progress = [&](const ScanProgress& progress) {
+    scan_done_ = progress.done;
+    scan_total_ = std::max(progress.total, 1);
     scan_label_ = progress.phase == "read"
                       ? "Reading " + progress.current
                       : "Drawing artwork " + std::to_string(progress.done) + "/" +
@@ -1427,9 +1461,11 @@ int App::scan_now() {
   catalog_ = result;
   store_.save_catalog(result);
   scanning_ = false;
+  scan_done_ = 0;
+  scan_total_ = 0;
   scan_label_.clear();
   const double seconds = now_seconds() - started;
-  notify("Scanned " + std::to_string(result.items.size()) + " film(s) in " +
+  notify("Scanned " + counted(result.items.size(), " film in ", " films in ") +
          std::to_string(static_cast<int>(seconds + 0.5)) + " s");
   LOG_INFO("ui: scan finished with %zu item(s) in %.2f s", result.items.size(), seconds);
   return static_cast<int>(result.items.size());
@@ -1705,7 +1741,16 @@ void App::draw_settings(Canvas& canvas) {
     regular_.draw(canvas, scan_line, left, y, 12.0f, theme::faint());
   }
   y += 16.0f;
-  canvas.fill_rect(Rect{left, y, inner, 2}, theme::accent());
+  // Idle, this is a track. A solid yellow bar here looked like a scan that had
+  // finished and forgotten to leave. The fill only moves while a scan is running.
+  const Rect scan_bar{left, y, inner, 4};
+  canvas.fill_round_rect(scan_bar, 2, rgba(0xffffff, 28));
+  if (scanning_ && scan_total_ > 0) {
+    const float frac = std::clamp(static_cast<float>(scan_done_) / static_cast<float>(scan_total_),
+                                  0.0f, 1.0f);
+    canvas.fill_round_rect(Rect{scan_bar.x, scan_bar.y, std::max(4.0f, scan_bar.w * frac), scan_bar.h},
+                           2, theme::accent());
+  }
   y += 16.0f;
 
   section("PLAYBACK");
@@ -1718,8 +1763,14 @@ void App::draw_settings(Canvas& canvas) {
   float mx = seg.x + 4;
   for (int i = 0; i < 3; ++i) {
     const float mw = i == 0 ? 96.0f : (i == 1 ? 84.0f : 130.0f);
-    if (i == 0) canvas.fill_round_rect(Rect{mx, seg.y + 3, mw, 26}, 4, rgba(0xe50914, 40));
-    regular_.draw(canvas, modes[i], mx + 12, seg.y + 8, 13.0f, i == 0 ? theme::accent() : theme::text());
+    if (i == 0) {
+      // Selected engine is a yellow chip. The old wash was Netflix red at low
+      // alpha, which read as a stain rather than a choice.
+      canvas.fill_round_rect(Rect{mx, seg.y + 3, mw, 26}, 4, theme::accent());
+      bold_.draw(canvas, modes[i], mx + 12, seg.y + 6, 13.0f, rgb(0x140800));
+    } else {
+      regular_.draw(canvas, modes[i], mx + 12, seg.y + 8, 13.0f, theme::dim());
+    }
     mx += mw;
   }
   y += 36.0f;
@@ -1746,7 +1797,7 @@ void App::draw_settings(Canvas& canvas) {
 
   section("HARDWARE DECODING (EXPERIMENTAL)");
   const Rect track{left, y + 2, 44, 24};
-  canvas.fill_round_rect(track, 12, settings_.hw_decode ? rgb(0xe50914) : rgba(0xffffff, 40));
+  canvas.fill_round_rect(track, 12, settings_.hw_decode ? theme::accent() : rgba(0xffffff, 40));
   canvas.fill_circle(settings_.hw_decode ? track.right() - 12 : track.x + 12, track.y + 12, 8, rgb(0xffffff));
   add_hit(Rect{track.x - 6, track.y - 6, track.w + 12, track.h + 12},
           Action{Action::Kind::ToggleSetting, -1, "hwDecode"});

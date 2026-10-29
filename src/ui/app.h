@@ -354,6 +354,8 @@ class App {
   std::string folder_input_;
   bool folder_input_focused_ = false;
   bool scanning_ = false;
+  int scan_done_ = 0;
+  int scan_total_ = 0;
   std::string sample_folder_;
   Catalog catalog_;
   std::map<std::string, Progress> progress_;

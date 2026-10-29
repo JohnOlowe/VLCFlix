@@ -322,6 +322,8 @@ class App {
   // Where the hovered card was drawn this pass, so the hover can grow it in place.
   Rect hover_card_rect_{};
   bool hover_card_valid_ = false;
+  Rect focus_card_rect_{};
+  bool focus_card_valid_ = false;
   bool preview_warned_ = false;
   void draw_hover_card(Canvas& canvas);
   Presenter presenter_;

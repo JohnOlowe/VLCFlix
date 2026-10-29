@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VLCFlix captures — JS against C++</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #141414; color: #eee; font: 15px/1.45 system-ui, sans-serif; }
+  header { padding: 20px 24px 8px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { margin: 0 0 8px; color: #bbb; max-width: 70ch; }
+  a { color: #e50914; }
+  section { padding: 8px 24px 28px; }
+  h2 { font-size: 16px; margin: 18px 0 8px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  figure { margin: 0; background: #000; border: 1px solid #333; }
+  figcaption { padding: 6px 8px; color: #aaa; font-size: 12px; }
+  img { width: 100%; height: auto; display: block; background: #000; }
+  @media (max-width: 800px) { .pair { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Turn 2 captures</h1>
+  <p>Left is the Node app, running here. Right is the current C++ UI. A viewport is not the whole screen — open the full-page shots.</p>
+  <p>Written gap list: <a href="GAP.md">GAP.md</a></p>
+</header>
+<section>
+  <h2>Home, first screen</h2>
+  <div class="pair">
+    <figure><img src="js/home-viewport.png" alt="JS home viewport" /><figcaption>js/home-viewport.png — title on the art</figcaption></figure>
+    <figure><img src="cpp/home.png" alt="C++ home render" /><figcaption>cpp/home.png — title under the art, row cut off</figcaption></figure>
+  </div>
+  <h2>Home, after scrolling</h2>
+  <div class="pair">
+    <figure><img src="js/home-scroll-1400.png" alt="JS home scrolled 1400px" /><figcaption>js/home-scroll-1400.png — scrollY 1400 of 1542</figcaption></figure>
+    <figure><img src="cpp/window-after-wheel.png" alt="C++ window after wheel" /><figcaption>cpp/window-after-wheel.png — stuck, Mystery row clipped</figcaption></figure>
+  </div>
+  <h2>Home, the whole JS document (2442 px)</h2>
+  <figure><img src="js/home-full.png" alt="JS home full page" /><figcaption>js/home-full.png</figcaption></figure>
+  <h2>Detail</h2>
+  <div class="pair">
+    <figure><img src="js/detail-top.png" alt="JS detail" /><figcaption>js/detail-top.png</figcaption></figure>
+    <figure><img src="cpp/detail.png" alt="C++ detail" /><figcaption>cpp/detail.png</figcaption></figure>
+  </div>
+  <h2>Browse</h2>
+  <div class="pair">
+    <figure><img src="js/browse-full.png" alt="JS browse full" /><figcaption>js/browse-full.png</figcaption></figure>
+    <figure><img src="cpp/browse.png" alt="C++ browse" /><figcaption>cpp/browse.png</figcaption></figure>
+  </div>
+  <h2>Search — the JS match is below the fold</h2>
+  <div class="pair">
+    <figure><img src="js/search-full.png" alt="JS search full page" /><figcaption>js/search-full.png</figcaption></figure>
+    <figure><img src="cpp/search-ghost.png" alt="C++ search ghost" /><figcaption>cpp/search-ghost.png</figcaption></figure>
+  </div>
+  <h2>Settings — JS bottom of the sheet</h2>
+  <div class="pair">
+    <figure><img src="js/settings-scrolled.png" alt="JS settings scrolled" /><figcaption>js/settings-scrolled.png</figcaption></figure>
+    <figure><img src="cpp/settings.png" alt="C++ settings" /><figcaption>cpp/settings.png — scrollbar, top only</figcaption></figure>
+  </div>
+  <h2>Player</h2>
+  <div class="pair">
+    <figure><img src="js/player.png" alt="JS player" /><figcaption>js/player.png</figcaption></figure>
+    <figure><img src="cpp/player.png" alt="C++ player" /><figcaption>cpp/player.png</figcaption></figure>
+  </div>
+</section>
+</body>
+</html>

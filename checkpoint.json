@@ -8,7 +8,7 @@
   "local_head": "a1d7e65",
   "remote_sha": "a1d7e6535256ead3057abc0a9113a7f661fc5b18",
   "pushed": true,
-  "awaiting": "Turn 2: run the Node app, capture every screen, render the current C++ UI, write a gap row per screen. No UI edit before those captures exist.",
+  "awaiting": "Turn 3: rewrite the home billboard to match docs/captures/js/home-viewport.png, and fix the scroll limit so the page can reach the last rail the way docs/captures/js/home-full.png does. Do not stop at the first screen.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
   "remote_sha_verified_at": "2026-10-29",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
@@ -450,7 +450,7 @@
   "no_arguments": "no arguments now means 'open the window' (it used to run `help`, so the Desktop shortcut appeared to do nothing); --help still prints the command list; a window that cannot be created shows a message box naming the log"
  },
  "session_2026_10_29": {
-  "turn": 1,
+  "turn": 2,
   "of": 6,
   "branch": "studio-ui",
   "cut_from": "cpp @ 5b867066e8052fa4f802365268dd9eeea33d7d12",
@@ -468,13 +468,29 @@
    "branch_protection": 403,
    "note": "GET /user/repos lists 15 public repos with permissions.admin true. That is not token scope."
   },
-  "next": "Turn 2 captures. Install ffmpeg libsdl2 libvlc xvfb xdotool cmake. They do not survive a snapshot.",
+  "next": "Turn 3 home billboard plus scroll limit. Gap list is the spec.",
   "remote_sha": "a1d7e6535256ead3057abc0a9113a7f661fc5b18",
   "remote_verified": {
    "ls_remote": "a1d7e6535256ead3057abc0a9113a7f661fc5b18",
    "contents_github_token": 404,
    "contents_git_credentials": 404,
    "token_in_commit_payload": false
+  },
+  "captures": "docs/captures/GAP.md",
+  "scroll": {
+   "js_home_scrollHeight": 2442,
+   "js_home_innerHeight": 900,
+   "js_scrollTo_landed": [
+    0,
+    700,
+    1400,
+    1542
+   ],
+   "js_wheel_scrollY": 960,
+   "cpp_wheel_then_stuck": true,
+   "cpp_first_wheel_sampled_pixels_changed": 0.537,
+   "cpp_further_wheel_changed": 0.0,
+   "cpp_stuck_frame": "docs/captures/cpp/window-after-wheel.png"
   }
  }
 }

@@ -1,0 +1,211 @@
+[
+  {
+    "name": "home-metrics-top",
+    "scrollY": 0,
+    "innerHeight": 900,
+    "scrollHeight": 2442,
+    "bodyHeight": 2442,
+    "heroH": 792,
+    "railsTop": 696,
+    "cardCount": 27,
+    "title": "The Silent Coast",
+    "overflow": 1542
+  },
+  {
+    "name": "home-viewport",
+    "bytes": 875873,
+    "fullPage": false
+  },
+  {
+    "name": "home-full",
+    "bytes": 1517592,
+    "fullPage": true
+  },
+  {
+    "name": "home-scroll-step",
+    "asked": 0,
+    "got": 0
+  },
+  {
+    "name": "home-scroll-0",
+    "bytes": 875873,
+    "fullPage": false
+  },
+  {
+    "name": "home-scroll-step",
+    "asked": 700,
+    "got": 700
+  },
+  {
+    "name": "home-scroll-700",
+    "bytes": 438678,
+    "fullPage": false
+  },
+  {
+    "name": "home-scroll-step",
+    "asked": 1400,
+    "got": 1400
+  },
+  {
+    "name": "home-scroll-1400",
+    "bytes": 407188,
+    "fullPage": false
+  },
+  {
+    "name": "home-scroll-step",
+    "asked": 1542,
+    "got": 1542
+  },
+  {
+    "name": "home-scroll-1542",
+    "bytes": 385423,
+    "fullPage": false
+  },
+  {
+    "name": "home-after-wheel",
+    "scrollY": 960,
+    "scrollHeight": 2442
+  },
+  {
+    "name": "home-after-wheel",
+    "bytes": 315609,
+    "fullPage": false
+  },
+  {
+    "name": "hover",
+    "videos": 0,
+    "playing": []
+  },
+  {
+    "name": "home-hover",
+    "bytes": 877000,
+    "fullPage": false
+  },
+  {
+    "name": "detail-metrics",
+    "modalScrollH": 900,
+    "modalClientH": 900,
+    "bodyScrollH": 794,
+    "title": "Recently Added"
+  },
+  {
+    "name": "detail-top",
+    "bytes": 332115,
+    "fullPage": false
+  },
+  {
+    "name": "detail-scrolled",
+    "scrollTop": 0,
+    "scrollHeight": 900,
+    "clientHeight": 900
+  },
+  {
+    "name": "detail-scrolled",
+    "bytes": 301174,
+    "fullPage": false
+  },
+  {
+    "name": "browse-metrics",
+    "scrollHeight": 1203,
+    "innerHeight": 900,
+    "cards": 35,
+    "title": "Browse All"
+  },
+  {
+    "name": "browse-viewport",
+    "bytes": 456452,
+    "fullPage": false
+  },
+  {
+    "name": "browse-full",
+    "bytes": 495463,
+    "fullPage": true
+  },
+  {
+    "name": "browse-scrolled",
+    "scrollY": 303
+  },
+  {
+    "name": "browse-scrolled",
+    "bytes": 345247,
+    "fullPage": false
+  },
+  {
+    "name": "search-metrics",
+    "title": "Results for “ghost”",
+    "cards": 1,
+    "scrollHeight": 1834
+  },
+  {
+    "name": "search",
+    "bytes": 456085,
+    "fullPage": false
+  },
+  {
+    "name": "search-full",
+    "bytes": 564915,
+    "fullPage": true
+  },
+  {
+    "name": "mylist-empty",
+    "text": "My List\n\nTitles you save appear here.\n\nNothing saved yet — hover a card and press +.",
+    "cards": 0
+  },
+  {
+    "name": "mylist-empty",
+    "bytes": 456351,
+    "fullPage": false
+  },
+  {
+    "name": "mylist-add",
+    "ok": true,
+    "status": 200,
+    "id": "aba5a1637d3d"
+  },
+  {
+    "name": "mylist",
+    "cards": 0
+  },
+  {
+    "name": "mylist",
+    "bytes": 35931,
+    "fullPage": false
+  },
+  {
+    "name": "settings-metrics",
+    "scrollHeight": 1417,
+    "clientHeight": 900,
+    "text": "Settings\nLIBRARY FOLDERS\n/home/user/VLCFlix/samples\nAdd folder\n\nVLCFlix reads files only — it never moves or deletes them. Artwork and previews are written to data/media.\n\nScan library\nDemo library already loaded\nLast scan finished 12:39:44 PM — 8 titles.\nPLAYBACK\nReal VLC\nFFmpeg\nBuilt-in player\n\n“Real VLC” launches VLC and controls it over its HTTP interface. “Built-in player” plays inside this w"
+  },
+  {
+    "name": "settings-top",
+    "bytes": 192372,
+    "fullPage": false
+  },
+  {
+    "name": "settings-scrolled",
+    "scrollTop": 517,
+    "scrollHeight": 1417,
+    "clientHeight": 900
+  },
+  {
+    "name": "settings-scrolled",
+    "bytes": 220525,
+    "fullPage": false
+  },
+  {
+    "name": "player",
+    "hidden": false,
+    "active": true,
+    "paused": false,
+    "time": 1.1409,
+    "ready": 4,
+    "error": null,
+    "w": 1280
+  },
+  {
+    "name": "player",
+    "bytes": 287762,
+    "fullPage": false
+  }
+]

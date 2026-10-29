@@ -1650,3 +1650,29 @@ will not survive a snapshot.
 
 Next: turn 2 captures the Node app, then the current C++ UI, and writes a gap
 row per screen. No screen is rewritten before its pair of captures exists.
+
+## 2026-10-29 — Turn 2: captures, no UI edit
+
+Node app started with `start_process` on `0.0.0.0:4173`, samples folder set,
+scan finished 8/8. Chromium 156 took the shots in `docs/captures/js/`.
+C++ built with `make -j2` (`./build/vlcflix`), scanned the same samples into
+`/tmp/vlcflix-cpp-data` (8 items, 0 errors, artwork 8/8), and rendered into
+`docs/captures/cpp/`. The window was opened on Xvfb `:99` and scrolled with
+`xdotool`.
+
+Scroll, measured, not recalled:
+
+- JS home `scrollHeight` 2442, `innerHeight` 900. `scrollTo` hit 0/700/1400/1542.
+  Wheel moved `scrollY` to 960. Full document is `docs/captures/js/home-full.png`.
+- C++ window: one wheel burst changed 53.70% of sampled pixels. Page Down matched
+  that frame exactly. Four more wheel clicks changed nothing. The stuck frame
+  (`docs/captures/cpp/window-after-wheel.png`) still clips the Mystery row.
+- JS settings sheet scrolled to its maximum (`scrollTop` 517). The lower half
+  is only in `settings-scrolled.png`.
+
+Every comparison is in `docs/captures/GAP.md`. I opened the files named there.
+No `native/src` change. Touchpad not tested. C++ settings and detail sheets
+were not wheel-driven.
+
+Side effect: the Node server and the C++ window were left running for the
+gallery. They do not survive a snapshot.

@@ -2,9 +2,13 @@
 
 ## This session (2026-10-29) — read this first
 
-Turn 1 of 6 is the plan. No UI code has been written. Branch **`studio-ui`**
+Turn 2 of 6 is the captures. No UI code has been written. Branch **`studio-ui`**
 is cut from `cpp` at `5b86706` and is the only branch this session commits to.
 `cpp` and `main` are not moved.
+
+The gap list is `docs/captures/GAP.md`. Every row cites a file opened this turn.
+Home scroll is the first fix: the JS document is 2442 px and scrolls to the
+footer; the C++ window moves once and then sticks while a row is still clipped.
 
 User decisions, locked this turn (not assumed):
 

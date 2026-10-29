@@ -75,7 +75,11 @@ Stored at `.secrets/github-token`, mode 600, git-ignored. Never printed.
 `scripts/setup-git-auth.sh` rebuilds the helper after a snapshot. Probe results
 are in `TURN_LOG.md` for 2026-10-29. Do not infer scope from `GET /user/repos`.
 
-## Not started
+## Turn 2 result (2026-10-29)
 
-The C++ UI has not been edited. Turn 2 is the first code-adjacent work, and it
-starts with the Node screenshots, not with a rewrite.
+Captures are in `docs/captures/`. The gap list is `docs/captures/GAP.md`.
+No UI code was edited.
+
+Turn 3 starts with the home billboard **and** the scroll limit. A top-of-page
+match is not done until a scroll reaches the last rail the way
+`docs/captures/js/home-full.png` does.

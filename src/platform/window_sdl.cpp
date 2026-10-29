@@ -176,11 +176,34 @@ void Window::toggle_fullscreen() {
   LOG_INFO("window: fullscreen %s", fullscreen_ ? "on" : "off");
 }
 
+bool Window::emit_pad_scroll(ui::InputEvent* event) {
+  float ox = 0.0f, oy = 0.0f, mx = 0.0f, my = 0.0f;
+  if (!pad_take_scroll(&ox, &oy, &mx, &my)) return false;
+  float flush_x = 0.0f, flush_y = 0.0f;
+  if (!wheel_.push(ox, oy, &flush_x, &flush_y)) return false;
+  event->type = ui::InputEvent::Type::Wheel;
+  event->wheel = flush_y;
+  event->wheel_x = flush_x;
+  event->x = mx;
+  event->y = my;
+  last_mouse_x_ = mx;
+  last_mouse_y_ = my;
+  return true;
+}
+
 bool Window::poll(ui::InputEvent* event, int timeout_ms) {
   if (!impl_) return false;
+  // ELAN two-finger drag is collected on the window procedure. It has to be taken
+  // here: pushing an SDL event from that procedure loses it.
+  if (emit_pad_scroll(event)) return true;
   SDL_Event sdl_event;
   if (SDL_PollEvent(&sdl_event) == 0) {
-    if (SDL_WaitEventTimeout(&sdl_event, timeout_ms) == 0) return true;  // no input yet
+    if (SDL_WaitEventTimeout(&sdl_event, timeout_ms) == 0) {
+      // Nothing else arrived. A two-finger drag during the wait is sitting in the
+      // hook's buffer; deliver it now rather than waiting for a mouse move.
+      if (emit_pad_scroll(event)) return true;
+      return true;
+    }
   }
   do {
     switch (sdl_event.type) {

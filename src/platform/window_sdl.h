@@ -41,6 +41,7 @@ class Window {
 
  private:
   void close_cursors();
+  bool emit_pad_scroll(ui::InputEvent* event);
   struct Impl;
   Impl* impl_ = nullptr;
   // One shared cursor per shape: creating them per frame leaks handles on Windows.

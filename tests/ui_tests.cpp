@@ -1150,6 +1150,54 @@ void test_ui_hover_grows_in_place() {
 // Two-finger scrolling on a touchpad: Windows sends fractional deltas that SDL rounds to
 // zero in the integer fields, so a build reading only wheel.y feels nothing at all. The
 // arithmetic is in platform/wheel.h so it can be checked without a touchpad.
+void test_home_page_bar() {
+  TEST("ui: home shows a page scrollbar, and it does not cover a card's click");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-home-bar");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1280, 720);
+  app.set_catalog(make_big_catalog(12));
+  draw_once(app);
+
+  CHECK(app.scroll_limit(ui::App::page_region()) > 40.0f);
+  bool thumb = false;
+  Rect thumb_rect{};
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind == ui::Action::Kind::ScrollThumb && hit.second.value == "page") {
+      thumb = true;
+      thumb_rect = hit.first;
+    }
+  }
+  CHECK(thumb);
+  CHECK(thumb_rect.h >= 28.0f);
+  CHECK(thumb_rect.x > 1280.0f - 20.0f);  // the right margin, not across the row
+
+  int overlaps = 0;
+  const auto& hits = app.hit_rects();
+  for (std::size_t i = 0; i < hits.size(); ++i) {
+    for (std::size_t j = i + 1; j < hits.size(); ++j) {
+      const Rect& a = hits[i].first;
+      const Rect& b = hits[j].first;
+      const float overlap_x = std::min(a.right(), b.right()) - std::max(a.x, b.x);
+      const float overlap_y = std::min(a.bottom(), b.bottom()) - std::max(a.y, b.y);
+      if (overlap_x > 2 && overlap_y > 2) ++overlaps;
+    }
+  }
+  CHECK_EQ(overlaps, 0);
+
+  // A page that fits has no bar. The empty library is that page at this size; if a
+  // future layout makes it overflow, the bar is allowed and this still checks the rule.
+  ui::App empty(dir, dir);
+  empty.resize(1600, 900);
+  empty.set_catalog(Catalog{});
+  draw_once(empty);
+  if (empty.scroll_limit(ui::App::page_region()) <= 0.5f) {
+    for (const auto& hit : empty.hit_rects()) {
+      CHECK(hit.second.kind != ui::Action::Kind::ScrollThumb);
+    }
+  }
+}
+
 void test_touchpad_wheel_input() {
   TEST("input: a touchpad's fractional wheel deltas add up to real scrolling");
 
@@ -1174,6 +1222,25 @@ void test_touchpad_wheel_input() {
   CHECK(!acc.push(0.0f, 0.04f, &out_x, &out_y));
   CHECK(acc.push(0.0f, 0.04f, &out_x, &out_y));
   CHECK_NEAR(out_y, 0.05f, 1e-6);
+
+  // Two fingers dragging, the gesture an ELAN pad delivers as touch contacts rather
+  // than a wheel. 48px of travel is one notch. Down, with the Windows default
+  // ("down motion scrolls up"), is a positive notch — the app scrolls toward the top.
+  float ox = 0.0f, oy = 0.0f;
+  vf::touch_drag_to_wheel(0.0f, 48.0f / 900.0f, 1600.0f, 900.0f, vf::kTouchDragPixelsPerNotch,
+                          true, &ox, &oy);
+  CHECK_NEAR(oy, 1.0f, 1e-4);
+  CHECK_NEAR(ox, 0.0f, 1e-4);
+  vf::touch_drag_to_wheel(0.0f, 48.0f / 900.0f, 1600.0f, 900.0f, vf::kTouchDragPixelsPerNotch,
+                          false, &ox, &oy);
+  CHECK_NEAR(oy, -1.0f, 1e-4);
+  vf::touch_drag_to_wheel(24.0f / 1600.0f, 0.0f, 1600.0f, 900.0f, vf::kTouchDragPixelsPerNotch,
+                          true, &ox, &oy);
+  CHECK_NEAR(ox, 0.5f, 1e-4);
+  // A contact that jumps most of the window is clamped, not flung.
+  vf::touch_drag_to_wheel(0.0f, 800.0f / 900.0f, 1600.0f, 900.0f, vf::kTouchDragPixelsPerNotch,
+                          true, &ox, &oy);
+  CHECK(oy <= 240.0f / vf::kTouchDragPixelsPerNotch + 0.01f);
 
   // A long swipe of small deltas adds up to all of it, and loses nothing.
   acc.reset();
@@ -1260,6 +1327,7 @@ void run_ui_tests(const std::string& out_dir) {
   test_ui_home_scroll_reaches_the_last_rail();
   test_ui_hover_grows_in_place();
   test_touchpad_wheel_input();
+  test_home_page_bar();
 }
 
 }  // namespace vf

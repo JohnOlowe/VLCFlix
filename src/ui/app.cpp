@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 
 #include "core/catalog.h"
 #include "core/log.h"
@@ -42,9 +43,36 @@ constexpr float kWheelStep = 96.0f;
 constexpr float kRailStep = 140.0f;
 constexpr int kKeyF = 'f';
 
-constexpr float kPosterWidth = 156.0f;
-constexpr float kWideWidth = 268.0f;
 constexpr float kGridWidth = 172.0f;
+
+std::string hero_runtime(double seconds) {
+  if (!(seconds >= 30.0)) return "";
+  const int total = static_cast<int>(seconds / 60.0 + 0.5);
+  const int hours = total / 60;
+  const int minutes = total % 60;
+  if (hours > 0) return std::to_string(hours) + "h " + std::to_string(minutes) + "m";
+  return std::to_string(std::max(1, minutes)) + "m";
+}
+
+std::string resolution_label(int height) {
+  if (height >= 2000) return "4K";
+  if (height >= 1000) return "1080p";
+  if (height >= 700) return "720p";
+  if (height > 0) return std::to_string(height) + "p";
+  return "";
+}
+
+std::string scan_clock(long long ms) {
+  if (ms <= 0) return "";
+  const std::time_t t = static_cast<std::time_t>(ms / 1000);
+  std::tm local {};
+  if (!localtime_r(&t, &local)) return "";
+  char buf[32];
+  if (std::strftime(buf, sizeof buf, "%I:%M:%S %p", &local) == 0) return "";
+  std::string out = buf;
+  if (!out.empty() && out[0] == '0') out.erase(0, 1);
+  return out;
+}
 
 void draw_triangle_right(Canvas& canvas, const Rect& area, Color color) {
   // Filled play triangle, drawn as scanlines: the canvas has no path filling.
@@ -337,30 +365,19 @@ void App::draw(Canvas& canvas) {
   draw_toast(canvas);
 }
 
-namespace {
-// The hero's height, and therefore where the rails begin, is derived from its own
-// content: title (52), meta line, two synopsis lines and a row of buttons. The rails
-// start *below* that block, which is what stops a rail title from being drawn over
-// the hero's buttons (a real overlap I found in the first screenshot, not a guess).
-constexpr float kHeroTextBlock = 200.0f;
-constexpr float kRailsGap = 26.0f;
-}  // namespace
-
 Rect App::hero_rect(float scroll) const {
-  const float available = static_cast<float>(height_) - theme::kHeaderHeight - 120.0f;
-  const float hero_height = std::clamp(static_cast<float>(height_) * 0.64f, 360.0f, 560.0f);
-  (void)available;
+  const float wanted = std::min(static_cast<float>(height_) * 0.88f, 860.0f);
+  const float floor = std::min(540.0f, static_cast<float>(height_) * 0.72f);
+  const float hero_height =
+      std::clamp(wanted, floor, std::min(860.0f, static_cast<float>(height_) * 0.92f));
   return Rect{0, -scroll, static_cast<float>(width_), hero_height};
 }
 
 Rect App::rails_rect(float scroll) const {
-  const float hero_height = hero_rect(0).h;
-  // Everything on the page moves the same way. This used to be `+ scroll` while the
-  // hero was `- scroll`, so dragging the page bar *opened a gap* between the hero and
-  // the rails instead of scrolling: the two sections moved apart until both were off
-  // the screen, and dragging back closed it again.
-  const float top = hero_height + kRailsGap - scroll;
-  return Rect{0, top, static_cast<float>(width_), static_cast<float>(height_) - top};
+  const Rect hero = hero_rect(scroll);
+  const float overlap = std::min(96.0f, hero.h * 0.18f);
+  return Rect{0, hero.bottom() - overlap, static_cast<float>(width_),
+              static_cast<float>(height_) - (hero.bottom() - overlap)};
 }
 
 void App::draw_backdrop_or_fallback(Canvas& canvas, const Rect& rect, const Item& item,
@@ -412,7 +429,7 @@ void App::draw_button(Canvas& canvas, const Rect& rect, const std::string& label
 }
 
 void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, bool wide,
-                           float scroll) {
+                           float scroll, bool title_on_art) {
   (void)scroll;
   const float card_height = wide ? rect.w / theme::kBackdropAspect : rect.w / theme::kPosterAspect;
   const Rect card{rect.x, rect.y, rect.w, card_height};
@@ -445,19 +462,20 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
     }
   }
 
-  // Bottom scrim keeps the progress bar and title legible over a bright still.
+  const float shade = title_on_art ? card.h * 0.62f : 74.0f;
   canvas.push_clip(card);
-  canvas.fill_gradient_v(Rect{card.x, card.bottom() - 74, card.w, 74}, rgba(0x000000, 0),
-                         rgba(0x000000, 190));
+  canvas.fill_gradient_v(Rect{card.x, card.bottom() - shade, card.w, shade}, rgba(0x06060a, 0),
+                         rgba(0x06060a, title_on_art ? 240 : 190));
   canvas.pop_clip();
 
+  const float label_lift = title_on_art ? 34.0f : 0.0f;
   if (const int percent = percent_for(item); percent > 0) {
     const float bar_height = 4;
-    canvas.fill_round_rect(Rect{card.x + 10, card.bottom() - bar_height - 8, card.w - 20, bar_height},
-                           bar_height / 2, rgba(0xffffff, 60));
-    canvas.fill_round_rect(
-        Rect{card.x + 10, card.bottom() - bar_height - 8, (card.w - 20) * percent / 100.0f, bar_height},
-        bar_height / 2, theme::accent());
+    const float bar_y = card.bottom() - bar_height - 8 - label_lift;
+    canvas.fill_round_rect(Rect{card.x + 10, bar_y, card.w - 20, bar_height}, bar_height / 2,
+                           rgba(0xffffff, 60));
+    canvas.fill_round_rect(Rect{card.x + 10, bar_y, (card.w - 20) * percent / 100.0f, bar_height},
+                           bar_height / 2, theme::accent());
   }
 
   if (hovered || focused) {
@@ -477,9 +495,41 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
     regular_.draw_centered(canvas, badge, badge_rect, theme::kFontTiny, rgb(0x1a0505));
   }
 
-  const Rect label{card.x, card.bottom() + 8, card.w, 18};
-  bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontSmall, card.w), label.x, label.y,
-             theme::kFontSmall, theme::text());
+  if (title_on_art) {
+    const float title_size = 13.0f;
+    const float title_y = card.bottom() - 30.0f;
+    bold_.draw(canvas, bold_.ellipsize(item.title, title_size, card.w - 22), card.x + 11, title_y,
+               title_size, theme::text());
+    std::string year;
+    std::string rest;
+    if (item.year) year = std::to_string(item.year);
+    const std::string runtime = hero_runtime(item.duration);
+    if (!runtime.empty()) rest += runtime;
+    if (!item.rating.empty()) {
+      if (!rest.empty()) rest += "  ·  ";
+      rest += item.rating;
+    }
+    if (!item.genres.empty()) {
+      if (!rest.empty()) rest += "  ·  ";
+      rest += item.genres.front();
+    }
+    float meta_x = card.x + 11;
+    const float meta_y = title_y + 15.0f;
+    if (!year.empty()) {
+      regular_.draw(canvas, year, meta_x, meta_y, 10.5f, rgba(0xffffff, 210));
+      meta_x += regular_.measure(year, 10.5f).width + 6;
+    }
+    if (!rest.empty()) {
+      regular_.draw(canvas, regular_.ellipsize(rest, 10.5f, card.right() - meta_x - 10), meta_x,
+                    meta_y, 10.5f, rgba(0xffffff, 158));
+    }
+  } else {
+    // Browse and My List still draw the title under the card until those screens
+    // are rewritten. A screenshot of them has no hover, so the title has to be there.
+    const Rect label{card.x, card.bottom() + 8, card.w, 18};
+    bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontSmall, card.w), label.x, label.y,
+               theme::kFontSmall, theme::text());
+  }
 
   Action action;
   action.kind = Action::Kind::OpenDetail;
@@ -616,73 +666,90 @@ void App::draw_hover_preview(Canvas& canvas) { draw_hover_card(canvas); }
 
 void App::draw_header(Canvas& canvas) {
   const float header_height = theme::kHeaderHeight;
-  // A transparent header over the hero, solid elsewhere.
-  if (view_ == View::Home && scroll_offset("page") < 40) {
-    canvas.fill_gradient_v(Rect{0, 0, float(width_), header_height + 60}, rgba(0x000000, 190),
+  const bool header_solid = view_ != View::Home || scroll_offset("page") > 26.0f;
+  const bool reveal_nav = header_solid || scroll_limit("page") < 1.0f;
+  if (!header_solid) {
+    canvas.fill_gradient_v(Rect{0, 0, float(width_), header_height}, rgba(0x000000, 184),
                            rgba(0x000000, 0));
   } else {
-    canvas.fill_rect(Rect{0, 0, float(width_), header_height}, rgba(theme::kBgRaised, 246));
-    canvas.fill_rect(Rect{0, header_height, float(width_), 1}, rgba(0xffffff, 18));
+    canvas.fill_rect(Rect{0, 0, float(width_), header_height}, rgb(0x0b0b0f));
+    canvas.fill_rect(Rect{0, header_height, float(width_), 1}, rgba(0xffffff, 16));
   }
 
   float x = theme::kGutter;
   const float mid = header_height / 2;
   bold_.draw(canvas, "VLC", x, mid - 11, 21, theme::accent());
   const float vlc_width = bold_.measure("VLC", 21).width;
-  bold_.draw(canvas, "FLIX", x + vlc_width, mid - 11, 21, theme::text());
-  x += vlc_width + bold_.measure("FLIX", 21).width + 42;
+  bold_.draw(canvas, "FLIX", x + vlc_width + 1, mid - 11, 21, theme::text());
+  x += vlc_width + bold_.measure("FLIX", 21).width + 36;
 
-  struct NavEntry {
-    const char* label;
-    View view;
-    bool selected;
-    Action action;
-  };
-  const NavEntry nav[] = {
-      {"Home", View::Home, view_ == View::Home, Action{Action::Kind::Navigate, -1, "home"}},
-      {"Browse All", View::Browse, view_ == View::Browse, Action{Action::Kind::Navigate, -1, "browse"}},
-      {"My List", View::MyList, view_ == View::MyList, Action{Action::Kind::Navigate, -1, "mylist"}},
-  };
-  for (const auto& entry : nav) {
-    const float text_width = regular_.measure(entry.label, theme::kFontBody).width;
-    const Rect area{x, mid - 11, text_width + 8, 22};
-    regular_.draw(canvas, entry.label, x, mid - 9, theme::kFontBody,
-                  entry.selected ? theme::text() : theme::dim());
-    add_hit(area, entry.action);
-    x += text_width + 26;
+  if (reveal_nav) {
+    struct NavEntry {
+      const char* label;
+      bool selected;
+      Action action;
+    };
+    const NavEntry nav[] = {
+        {"Home", view_ == View::Home, Action{Action::Kind::Navigate, -1, "home"}},
+        {"Browse All", view_ == View::Browse, Action{Action::Kind::Navigate, -1, "browse"}},
+        {"My List", view_ == View::MyList, Action{Action::Kind::Navigate, -1, "mylist"}},
+    };
+    for (const auto& entry : nav) {
+      const float text_width = regular_.measure(entry.label, 13.5f).width;
+      const Rect area{x, mid - 11, text_width + 8, 22};
+      regular_.draw(canvas, entry.label, x, mid - 8, 13.5f,
+                    entry.selected ? theme::text() : theme::dim());
+      add_hit(area, entry.action);
+      x += text_width + 22;
+    }
   }
 
-  // Right-hand cluster: search, engine chip, settings.
-  float right = width_ - theme::kGutter;
-  const Rect settings_rect{right - 100, mid - 17, 100, 34};
-  canvas.fill_round_rect(settings_rect, 17, rgba(0xffffff, 16));
-  regular_.draw_centered(canvas, "Settings", settings_rect, theme::kFontSmall, theme::text());
-  add_hit(settings_rect, Action{Action::Kind::OpenSettings, -1, ""});
-  right = settings_rect.x - 12;
-
-  const std::string chip = scan_label_.empty() ? "libVLC · native" : scan_label_;
-  const float chip_width = regular_.measure(chip, theme::kFontTiny).width + 34;
-  const Rect chip_rect{right - chip_width, mid - 15, chip_width, 30};
-  canvas.fill_round_rect(chip_rect, 15, rgba(theme::kAccent, 30));
-  canvas.fill_circle(chip_rect.x + 13, mid, 4, theme::accent());
-  regular_.draw(canvas, chip, chip_rect.x + 23, mid - 8, theme::kFontTiny, theme::text());
-  right = chip_rect.x - 12;
-
-  const Rect search_rect{right - 250, mid - 18, 250, 36};
-  canvas.fill_round_rect(search_rect, 18, rgba(0xffffff, search_focused_ ? 34 : 18));
-  if (search_focused_) {
-    canvas.stroke_round_rect(search_rect, 18, 1.5f, rgba(theme::kAccent, 200));
+  float right = static_cast<float>(width_) - theme::kGutter;
+  const Rect gear{right - 32, mid - 16, 32, 32};
+  const float gear_cx = gear.x + 16;
+  const float gear_cy = mid;
+  canvas.stroke_circle(gear_cx, gear_cy, 6.5f, 1.5f, theme::text());
+  canvas.fill_circle(gear_cx, gear_cy, 2.1f, theme::text());
+  for (int tooth = 0; tooth < 8; ++tooth) {
+    const float angle = tooth * 3.1415926f / 4.0f;
+    canvas.fill_rect(Rect{gear_cx + std::cos(angle) * 8.4f - 1.3f,
+                          gear_cy + std::sin(angle) * 8.4f - 1.3f, 2.6f, 2.6f},
+                     theme::text());
   }
-  const std::string shown = query_.empty() ? "Titles, genres, years" : query_;
-  regular_.draw(canvas, shown, search_rect.x + 34, mid - 9, theme::kFontSmall,
-                query_.empty() ? theme::faint() : theme::text());
-  if (search_focused_ && query_.empty()) {
-    canvas.fill_rect(Rect{search_rect.x + 32, mid - 10, 1.5f, 20}, theme::accent());
+  add_hit(gear, Action{Action::Kind::OpenSettings, -1, ""});
+  right = gear.x - 12;
+
+  const std::string pill = "VLC";
+  const float pill_w = regular_.measure(pill, 12).width + 28;
+  const Rect pill_rect{right - pill_w, mid - 13, pill_w, 26};
+  canvas.fill_round_rect(pill_rect, 13, rgba(0xffffff, 22));
+  canvas.stroke_round_rect(pill_rect, 13, 1, rgba(0xffffff, 36));
+  canvas.fill_circle(pill_rect.x + 11, mid, 3.2f, theme::accent());
+  regular_.draw(canvas, pill, pill_rect.x + 18, mid - 7, 12, theme::text());
+  right = pill_rect.x - 12;
+
+  const bool show_field = search_focused_ || view_ == View::Search;
+  const float field_w = show_field ? std::min(220.0f, std::max(96.0f, width_ * 0.18f)) : 0.0f;
+  const Rect search_icon{right - 32, mid - 16, 32, 32};
+  if (show_field) {
+    const Rect field{search_icon.x - 6 - field_w, mid - 16, field_w, 32};
+    canvas.fill_round_rect(field, 4, rgba(0x0c0c10, 240));
+    canvas.stroke_round_rect(field, 4, 1, rgba(0xffffff, search_focused_ ? 70 : 28));
+    const std::string shown = query_.empty() ? "Titles, genres, years" : query_;
+    regular_.draw(canvas, regular_.ellipsize(shown, theme::kFontSmall, field.w - 18), field.x + 10,
+                  mid - 8, theme::kFontSmall, query_.empty() ? theme::faint() : theme::text());
+    if (search_focused_ && query_.empty()) {
+      canvas.fill_rect(Rect{field.x + 10, mid - 9, 1.5f, 18}, theme::accent());
+    }
+    add_hit(field, Action{Action::Kind::FocusSearch, -1, ""});
   }
-  // Magnifier.
-  canvas.stroke_circle(search_rect.x + 19, mid - 2, 6.5f, 1.6f, theme::dim());
-  canvas.fill_rect(Rect{search_rect.x + 24, mid + 3, 7, 1.6f}, theme::dim());
-  add_hit(search_rect, Action{Action::Kind::FocusSearch, -1, ""});
+  const float mag_x = search_icon.x + 13;
+  const float mag_y = mid - 1;
+  canvas.stroke_circle(mag_x, mag_y, 6.2f, 1.6f, theme::text());
+  for (int i = 0; i < 5; ++i) {
+    canvas.fill_rect(Rect{mag_x + 4.2f + i * 0.9f, mag_y + 4.2f + i * 0.9f, 1.7f, 1.7f}, theme::text());
+  }
+  add_hit(search_icon, Action{Action::Kind::FocusSearch, -1, ""});
 }
 
 void App::draw_home(Canvas& canvas) {
@@ -694,46 +761,127 @@ void App::draw_home(Canvas& canvas) {
   }
 
   if (featured) {
-    canvas.push_clip(Rect{0, 0, float(width_), hero.h + hero.y + (hero.y < 0 ? 0 : 0)});
+    const float visible_h = hero.bottom() > 0 ? std::min(hero.bottom(), hero.h) : 0.0f;
+    if (visible_h > 0) {
+      canvas.push_clip(Rect{0, std::max(0.0f, hero.y), float(width_), visible_h});
+    }
     const Rect full{0, hero.y, float(width_), hero.h};
     draw_backdrop_or_fallback(canvas, full, *featured, 0);
-    // Scrims: left-to-right for the text, bottom-to-top into the page background.
-    canvas.fill_gradient_h(Rect{0, hero.y, width_ * 0.62f, hero.h}, rgba(0x000000, 205),
+    // Left scrim for the title, bottom fade so the rails emerge from the still
+    // instead of sitting under an opaque band.
+    canvas.fill_gradient_h(Rect{0, hero.y, width_ * 0.72f, hero.h}, rgba(0x000000, 220),
                            rgba(0x000000, 0));
-    // Opaque band under the text: the gradient above it fades the still, so the rails
-    // start on solid background and nothing is ever drawn over the title or synopsis.
-    const float band_top = hero.bottom() - kHeroTextBlock - 36;
-    canvas.fill_gradient_v(Rect{0, band_top - 150, float(width_), 150}, rgba(theme::kBg, 0),
-                           theme::bg());
-    canvas.fill_rect(Rect{0, band_top, float(width_), hero.bottom() - band_top + 1}, theme::bg());
-    canvas.pop_clip();
+    canvas.fill_gradient_v(Rect{0, hero.y + hero.h * 0.42f, float(width_), hero.h * 0.58f},
+                           rgba(theme::kBg, 0), rgba(theme::kBg, 250));
 
     const float text_x = theme::kGutter;
-    const float text_width = std::min(width_ * 0.46f, 620.0f);
-    const float title_size = theme::kFontHero;
-    float y = hero.bottom() - kHeroTextBlock + 4;
-    bold_.draw(canvas, bold_.ellipsize(featured->title, title_size, text_width), text_x, y,
+    const float text_width = std::min(540.0f, width_ * 0.46f);
+    const float title_size = std::clamp(width_ * 0.05f, 40.0f, 70.4f);
+    const float btn_h = 42.0f;
+    // Buttons end just above the first rail title, which overlaps the hero fade.
+    const float btn_y = rails_rect(page).y - 16.0f - btn_h;
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    // A real added-date is Unix milliseconds. file_clock on this toolchain is not
+    // that, so a scan can store a negative mtime; fall back to the scan time rather
+    // than treating a garbage clock as "added in the 1800s".
+    const auto plausible_ms = [](long long ms) {
+      return ms > 946684800000LL && ms < 4102444800000LL;
+    };
+    long long added = featured->added_at;
+    if (!plausible_ms(added)) added = catalog_.scanned_at;
+    const bool is_new =
+        plausible_ms(added) && (now_ms - added) < 14LL * 24 * 60 * 60 * 1000;
+    const std::string flag = is_new ? "ADDED TO YOUR LIBRARY" : "FEATURED IN YOUR LIBRARY";
+    const float synopsis_h = 52.0f;
+    const float synopsis_y = btn_y - 22.0f - synopsis_h;
+    const float meta_y = synopsis_y - 28.0f;
+    const float title_y = meta_y - 14.0f - bold_.line_height(title_size);
+    const float flag_y = title_y - 22.0f;
+
+    canvas.fill_rect(Rect{text_x, flag_y + 8, 16, 2.4f}, theme::accent());
+    bold_.draw(canvas, flag, text_x + 24, flag_y, 12, theme::accent());
+    const float title_max = std::max(text_width, static_cast<float>(width_) - text_x - 64.0f);
+    bold_.draw(canvas, bold_.ellipsize(featured->title, title_size, title_max), text_x, title_y,
                title_size, theme::text());
-    y += bold_.line_height(title_size) + 10;
-    regular_.draw(canvas, meta_line(*featured), text_x, y, theme::kFontSmall, theme::dim());
-    y += 26;
-    if (!featured->synopsis.empty()) {
-      regular_.draw_wrapped(canvas, featured->synopsis, Rect{text_x, y, text_width, 44},
-                            theme::kFontSmall, theme::text(), 2);
-      y += 50;
-    } else {
-      y += 8;
+
+    float meta_x = text_x;
+    if (!featured->rating.empty()) {
+      const float chip_w = regular_.measure(featured->rating, 11).width + 12;
+      const Rect chip{meta_x, meta_y, chip_w, 18};
+      canvas.stroke_round_rect(chip, 2, 1, rgba(0xffffff, 107));
+      regular_.draw_centered(canvas, featured->rating, chip, 11, rgb(0xf0f0f2));
+      meta_x = chip.right() + 8;
     }
-    const Rect play_rect{text_x, y, button_width("Play", true), 42};
-    draw_button(canvas, play_rect, "Play", true,
-                Action{Action::Kind::Play, 0, ""});
-    const bool in_list = std::find(my_list_.begin(), my_list_.end(), featured->id) != my_list_.end();
-    const std::string list_label = in_list ? "In My List" : "My List";
-    const Rect list_rect{play_rect.right() + 12, y, button_width(list_label, false), 42};
-    draw_button(canvas, list_rect, list_label, false,
-                Action{Action::Kind::ToggleMyList, 0, ""});
-    draw_button(canvas, Rect{list_rect.right() + 12, y, button_width("Details", false), 42},
-                "Details", false, Action{Action::Kind::OpenDetail, 0, ""});
+    if (is_new) {
+      const float badge_w = bold_.measure("NEW", 11).width + 12;
+      const Rect badge{meta_x, meta_y, badge_w, 18};
+      canvas.fill_round_rect(badge, 2, theme::accent());
+      bold_.draw_centered(canvas, "NEW", badge, 11, rgb(0x140800));
+      meta_x = badge.right() + 10;
+    }
+    std::string meta;
+    auto add_meta = [&](const std::string& bit) {
+      if (bit.empty()) return;
+      if (!meta.empty()) meta += "   ·   ";
+      meta += bit;
+    };
+    if (featured->year) add_meta(std::to_string(featured->year));
+    add_meta(hero_runtime(featured->duration));
+    add_meta(resolution_label(featured->height));
+    if (!featured->genres.empty()) {
+      std::string genres;
+      for (std::size_t i = 0; i < featured->genres.size() && i < 3; ++i) {
+        if (i) genres += " · ";
+        genres += featured->genres[i];
+      }
+      add_meta(genres);
+    }
+    if (!meta.empty()) {
+      regular_.draw(canvas, regular_.ellipsize(meta, 13.5f, text_width), meta_x, meta_y + 1, 13.5f,
+                    rgb(0xe2e2e6));
+    }
+
+    const std::string synopsis = !featured->synopsis.empty()
+                                     ? featured->synopsis
+                                     : featured->filename;
+    if (!synopsis.empty()) {
+      regular_.draw_wrapped(canvas, synopsis, Rect{text_x, synopsis_y, text_width, synopsis_h + 8},
+                            15.5f, rgb(0xd8d8de), 3);
+    }
+
+    const int watched = percent_for(*featured);
+    const std::string play_label = watched > 0 && watched < 95 ? "Resume" : "Play";
+    const float play_w = 34.0f + bold_.measure(play_label, 15.5f).width + 22.0f;
+    const float info_w = 34.0f + bold_.measure("More Info", 15.5f).width + 22.0f;
+    const Rect play_rect{text_x, btn_y, play_w, btn_h};
+    const Rect info_rect{play_rect.right() + 12, btn_y, info_w, btn_h};
+    const Rect plus_rect{info_rect.right() + 12, btn_y - 2, 46, 46};
+    const Color ink = rgb(0x0b0b0f);
+
+    canvas.fill_round_rect(play_rect, 4, rgb(0xffffff));
+    draw_triangle_right(canvas, Rect{play_rect.x + 16, play_rect.y + btn_h / 2 - 6, 10, 12}, ink);
+    bold_.draw(canvas, play_label, play_rect.x + 34,
+               play_rect.y + (btn_h - bold_.line_height(15.5f)) / 2, 15.5f, ink);
+    add_hit(play_rect, Action{Action::Kind::Play, 0, ""});
+
+    canvas.fill_round_rect(info_rect, 4, rgba(0x6d6d6e, 158));
+    const float info_cx = info_rect.x + 20;
+    const float info_cy = info_rect.y + btn_h / 2;
+    canvas.stroke_circle(info_cx, info_cy, 8, 1.5f, theme::text());
+    canvas.fill_circle(info_cx, info_cy - 3.2f, 1.2f, theme::text());
+    canvas.fill_rect(Rect{info_cx - 1.0f, info_cy - 0.4f, 2.0f, 6.0f}, theme::text());
+    bold_.draw(canvas, "More Info", info_rect.x + 34,
+               info_rect.y + (btn_h - bold_.line_height(15.5f)) / 2, 15.5f, theme::text());
+    add_hit(info_rect, Action{Action::Kind::OpenDetail, 0, ""});
+
+    canvas.stroke_circle(plus_rect.x + 23, plus_rect.y + 23, 16, 1.7f, rgba(0xffffff, 210));
+    canvas.fill_rect(Rect{plus_rect.x + 16, plus_rect.y + 22, 14, 2.2f}, theme::text());
+    canvas.fill_rect(Rect{plus_rect.x + 21.9f, plus_rect.y + 16, 2.2f, 14}, theme::text());
+    add_hit(plus_rect, Action{Action::Kind::ToggleMyList, 0, ""});
+
+    if (visible_h > 0) canvas.pop_clip();
   } else {
     // Empty library: say what to do rather than showing a blank window.
     const Rect box{theme::kGutter, 140, width_ - 2 * theme::kGutter, 236};
@@ -754,69 +902,87 @@ void App::draw_home(Canvas& canvas) {
                        static_cast<float>(height_) - theme::kHeaderHeight};
   canvas.push_clip(Rect{0, theme::kHeaderHeight, float(width_), float(height_) - theme::kHeaderHeight});
 
+  const float card_width = 246.0f;
+  const float card_height = card_width / theme::kBackdropAspect;
+  const float card_gap = 7.0f;
+  const float title_size = 21.0f;
   for (const auto& rail : rails) {
-    const bool wide = rail.id == "continue";
-    const float card_width = wide ? kWideWidth : kPosterWidth;
-    const float card_height = wide ? card_width / theme::kBackdropAspect : card_width / theme::kPosterAspect;
-    const float rail_gap = theme::kRailGap;
     const std::string region = "rail:" + rail.id;
-
-    if (y > -card_height && y < height_) {
-      bold_.draw(canvas, rail.title, theme::kGutter, y, theme::kFontLabel, theme::text());
-      regular_.draw_right(canvas, std::to_string(rail.items.size()) + " films",
-                          Rect{theme::kGutter, y, width_ - 2 * theme::kGutter, 22},
-                          theme::kFontTiny, theme::faint());
-    }
-    y += 30;
-
-    // The rail's own bar sits in its heading line, left of the film count: it is the
-    // one place that is always on screen, where a bar under the cards is often below
-    // the fold. It is drawn only when the rail really overflows.
-    {
-      const float rail_view_width = static_cast<float>(width_) - 2 * theme::kGutter;
-      const float content_width = rail.items.empty()
-                                      ? 0.0f
-                                      : static_cast<float>(rail.items.size()) *
-                                                (card_width + theme::kRailGap) -
-                                            theme::kRailGap;
-      const Rect rail_view{theme::kGutter, y, rail_view_width, card_height};
-      declare_scroll(region, content_width - rail_view_width, rail_view, true);
-      if (y > theme::kHeaderHeight && y < height_ && scroll_limit(region) > 0.5f) {
-        draw_scrollbar(canvas,
-                       Rect{static_cast<float>(width_) - theme::kGutter - 210.0f, y - 22, 128, 3},
-                       region);
-      }
+    const float title_block = bold_.line_height(title_size) + 12.0f;
+    if (y > -40.0f && y < height_) {
+      bold_.draw(canvas, rail.title, theme::kGutter, y, title_size, theme::text());
     }
 
-    // A rail scrolls sideways now. Before this it simply stopped drawing at the right
+    const float cards_y = y + title_block;
+    const float rail_view_width = static_cast<float>(width_) - 2 * theme::kGutter;
+    const float content_width = rail.items.empty()
+                                    ? 0.0f
+                                    : static_cast<float>(rail.items.size()) * (card_width + card_gap) -
+                                          card_gap;
+    const Rect rail_view{theme::kGutter, cards_y, rail_view_width, card_height};
+    declare_scroll(region, content_width - rail_view_width, rail_view, true);
+
+    // A rail scrolls sideways. Before this it simply stopped drawing at the right
     // edge, so a library of more than about eight films per row had films in it that
     // could not be reached by any input at all.
     const float rail_offset = scroll_offset(region);
-    if (y > -card_height && y < height_) {
-      rail_bands_.push_back({Rect{0, y, static_cast<float>(width_), card_height}, rail.id});
+    if (cards_y > -card_height && cards_y < height_) {
+      rail_bands_.push_back({Rect{0, cards_y, static_cast<float>(width_), card_height}, rail.id});
     }
 
     float x = theme::kGutter - rail_offset;
     for (std::size_t index : rail.items) {
-      const Rect card{x, y, card_width, card_height};
+      const Rect card{x, cards_y, card_width, card_height};
       if (card.x > width_) break;
       if (card.right() > 0) {
-        draw_poster_card(canvas, card, catalog_.items[index], wide, page);
+        draw_poster_card(canvas, card, catalog_.items[index], true, page, true);
         order_.push_back(static_cast<int>(index));
         order_rects_.push_back(card);
       }
-      x += card_width + rail_gap;
+      x += card_width + card_gap;
     }
-    y += card_height + 48;
+    y = cards_y + card_height + 34.0f;
   }
+
+  y += 8.0f;
+  const float footer_h = 148.0f;
+  if (y < height_ && y + footer_h > theme::kHeaderHeight) {
+    canvas.fill_rect(Rect{0, y, float(width_), 1}, rgba(0xffffff, 18));
+    float fy = y + 28.0f;
+    bold_.draw(canvas, "VLCFLIX", theme::kGutter, fy, 16, theme::text());
+    fy += 28.0f;
+    regular_.draw_wrapped(
+        canvas,
+        "Browsing front-end for your own media. Playback is handled by VLC through its HTTP control "
+        "interface, or by the built-in player.",
+        Rect{theme::kGutter, fy, std::min(620.0f, static_cast<float>(width_) - 2 * theme::kGutter), 52},
+        12.5f, theme::faint(), 3);
+    fy += 56.0f;
+    const std::size_t count = catalog_.items.size();
+    std::string meta = std::to_string(count) + (count == 1 ? " title in library" : " titles in library");
+    meta += catalog_.have_ffmpeg ? "  ·  ffmpeg artwork: on" : "  ·  ffmpeg artwork: off";
+    std::string vlc = settings_.vlc_path;
+    if (vlc.empty() && file_exists("/usr/bin/vlc")) vlc = "/usr/bin/vlc";
+    meta += vlc.empty() ? "  ·  VLC: not detected" : "  ·  VLC: " + vlc;
+    const std::string clock = scan_clock(catalog_.scanned_at);
+    if (!clock.empty()) meta += "  ·  last scan " + clock;
+    regular_.draw(canvas,
+                  regular_.ellipsize(meta, 11.5f, static_cast<float>(width_) - 2 * theme::kGutter),
+                  theme::kGutter, fy, 11.5f, rgb(0x56565f));
+  }
+  y += footer_h;
   canvas.pop_clip();
 
-  // Scroll bounds, so the last rail can be reached but no further.
-  const float content_height = y - rails_rect(0).y;
-  const float max_scroll = std::max(0.0f, content_height - page_view.h + 80);
+  // Measure the unscrolled stack. `y` was advanced from the already-scrolled origin,
+  // so adding the offset back is required: subtracting rails_rect(0) from the
+  // scrolled `y` makes the limit shrink by whatever you have already scrolled, and
+  // the page sticks after one notch with the last rail still clipped.
+  const float content_bottom = y + page;
+  const float rails_top = rails_rect(0).y;
+  const float content_height = content_bottom - rails_top;
+  const float visible = static_cast<float>(height_) - rails_top;
+  const float max_scroll = std::max(0.0f, content_height - visible + 8.0f);
   declare_scroll("page", max_scroll, page_view, false);
-  draw_scrollbar(canvas, Rect{static_cast<float>(width_) - 9, page_view.y + 10, 4, page_view.h - 20},
-                 "page");
 
   if (rails.empty() && featured) {
     regular_.draw(canvas, "Nothing in progress yet — press Play to start a film.",

@@ -258,17 +258,22 @@ void test_ui_input() {
   draw_once(app);
 
   CHECK_STR_EQ(app.screen_name(), "home");
-  // The nav links are Navigate actions carrying the view name.
   bool went_to_browse = false;
-  for (const auto& hit : app.hit_rects()) {
-    if (hit.second.kind == ui::Action::Kind::Navigate && hit.second.value == "browse") {
-      ui::InputEvent click;
-      click.type = ui::InputEvent::Type::MouseDown;
-      click.x = hit.first.x + 4;
-      click.y = hit.first.y + 4;
-      app.handle(click);
-      went_to_browse = true;
-      break;
+  for (int step = 0; step < 40 && !went_to_browse; ++step) {
+    for (const auto& hit : app.hit_rects()) {
+      if (hit.second.kind == ui::Action::Kind::Navigate && hit.second.value == "browse") {
+        ui::InputEvent click;
+        click.type = ui::InputEvent::Type::MouseDown;
+        click.x = hit.first.x + 4;
+        click.y = hit.first.y + 4;
+        app.handle(click);
+        went_to_browse = true;
+        break;
+      }
+    }
+    if (!went_to_browse) {
+      app.handle(wheel_at(800, 160, -2));
+      draw_once(app);
     }
   }
   CHECK(went_to_browse);
@@ -1183,6 +1188,46 @@ void test_touchpad_wheel_input() {
 
 }  // namespace
 
+// The home page used to measure its height from an already-scrolled origin, so the
+// limit shrank by the current offset and a second wheel did nothing while the last
+// rail was still clipped. The limit has to stay put, and scrolling to it has to put
+// the last card fully inside the window.
+void test_ui_home_scroll_reaches_the_last_rail() {
+  TEST("ui: home scroll limit does not shrink, and the last rail reaches the window");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-home-end");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_big_catalog(24));
+  draw_once(app);
+
+  const float limit = app.scroll_limit(ui::App::page_region());
+  CHECK(limit > 200.0f);
+  app.handle(wheel_at(800, 160, -1));
+  draw_once(app);
+  CHECK_NEAR(app.scroll_limit(ui::App::page_region()), limit, 1.0f);
+
+  for (int i = 0; i < 80; ++i) app.handle(wheel_at(800, 160, -1));
+  draw_once(app);
+  CHECK_NEAR(app.scroll_offset(ui::App::page_region()), app.scroll_limit(ui::App::page_region()), 0.5f);
+  CHECK_NEAR(app.scroll_limit(ui::App::page_region()), limit, 1.0f);
+
+  float lowest = -1.0f;
+  float lowest_top = 0.0f;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::OpenDetail) continue;
+    if (hit.first.w < 100 || hit.first.h < 100) continue;
+    if (hit.first.bottom() > lowest) {
+      lowest = hit.first.bottom();
+      lowest_top = hit.first.y;
+    }
+  }
+  CHECK(lowest > 0.0f);
+  CHECK(lowest <= 901.0f);
+  CHECK(lowest_top >= 68.0f);
+  CHECK(lowest_top < 900.0f);
+}
+
 void run_ui_tests(const std::string& out_dir) {
   ensure_dir(out_dir);
   test_ui_screens(out_dir);
@@ -1199,6 +1244,7 @@ void run_ui_tests(const std::string& out_dir) {
   test_ui_folder_browser();
   test_render_driver_policy();
   test_ui_home_scroll_moves_content();
+  test_ui_home_scroll_reaches_the_last_rail();
   test_ui_hover_grows_in_place();
   test_touchpad_wheel_input();
 }

@@ -10,6 +10,7 @@
 #ifndef VLCFLIX_PLATFORM_WHEEL_H
 #define VLCFLIX_PLATFORM_WHEEL_H
 
+#include <algorithm>
 #include <cmath>
 
 namespace vf {
@@ -58,6 +59,31 @@ inline float wheel_axis(float precise, float integer) {
 // A precision touchpad event carries FLIPPED direction only when the user chose
 // "natural" scrolling; flip the numbers to the direction the user expects.
 inline float wheel_direction(float value, bool flipped) { return flipped ? -value : value; }
+
+// How far a finger has to travel to equal one mouse-wheel notch, when the driver
+// delivers the gesture as two touch contacts instead of a wheel message. The UI
+// treats one notch as about a hundred pixels of page, so this is a modest
+// amplification: a short drag moves the page, a long one does not fling it.
+inline constexpr float kTouchDragPixelsPerNotch = 48.0f;
+
+// Two fingers dragging. dx/dy are window-normalized (SDL's touch events). One notch
+// is `pixels_per_notch` of travel.
+//
+// `down_scrolls_up` is the Windows default ("Down motion scrolls up", registry
+// ScrollDirection = 0): a finger moving down produces a positive vertical notch,
+// which this app treats as scrolling toward the top. The other setting flips both
+// axes, matching the one switch Windows exposes.
+inline void touch_drag_to_wheel(float dx, float dy, float window_w, float window_h,
+                                float pixels_per_notch, bool down_scrolls_up, float* out_x,
+                                float* out_y) {
+  const float step = pixels_per_notch < 1.0f ? 1.0f : pixels_per_notch;
+  const float sign = down_scrolls_up ? 1.0f : -1.0f;
+  // A contact that jumps (palm, driver glitch) must not fling the page.
+  const float px = std::max(-240.0f, std::min(240.0f, dx * window_w));
+  const float py = std::max(-240.0f, std::min(240.0f, dy * window_h));
+  if (out_x) *out_x = sign * px / step;
+  if (out_y) *out_y = sign * py / step;
+}
 
 }  // namespace vf
 

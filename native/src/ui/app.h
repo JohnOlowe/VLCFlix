@@ -285,7 +285,8 @@ class App {
   void set_scroll(const std::string& region, float value);
   bool scroll_by(const std::string& region, float delta);
   // Draws a bar (only when the region actually overflows) and registers its hit areas.
-  void draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& region);
+  void draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& region,
+                      int thumb_alpha = 96, int track_alpha = 26);
   // Scrolls whatever contains `rect` just enough to show it - used when the keyboard
   // moves focus, and when a rail is scrolled.
   void reveal_rect(const Rect& rect);

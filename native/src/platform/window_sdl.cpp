@@ -8,6 +8,7 @@
 #include "core/log.h"
 #include "platform/render_driver.h"
 #include "platform/wheel.h"
+#include "platform/window_pad.h"
 #include "platform/window_size.h"
 
 namespace vf {
@@ -97,6 +98,8 @@ bool Window::open(int width, int height, const std::string& title) {
   SDL_SetWindowMinimumSize(impl_->window, 640, 420);
   SDL_SetRenderDrawColor(impl_->renderer, 11, 11, 15, 255);
   SDL_StartTextInput();
+  // After the window exists: a Lenovo ELAN two-finger drag is not a mouse wheel.
+  pad_install(impl_->window);
   window_ = impl_->window;
   width_ = width;
   height_ = height;
@@ -137,6 +140,7 @@ void show_error_box(const std::string& title, const std::string& text) {
 
 void Window::close() {
   if (!impl_) return;
+  pad_uninstall(impl_->window);
   if (impl_->texture) SDL_DestroyTexture(impl_->texture);
   if (impl_->renderer) SDL_DestroyRenderer(impl_->renderer);
   if (impl_->window) SDL_DestroyWindow(impl_->window);
@@ -194,6 +198,9 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         }
         break;
       case SDL_MOUSEMOTION:
+        // Two fingers down is a scroll, not a cursor. SDL also synthesizes a mouse
+        // from the touch contacts; following it would click the card under the pad.
+        if (pad_ignore_touch_mouse(sdl_event.motion.which)) break;
         event->type = ui::InputEvent::Type::MouseMove;
         event->x = static_cast<float>(sdl_event.motion.x);
         event->y = static_cast<float>(sdl_event.motion.y);
@@ -201,6 +208,7 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         last_mouse_y_ = event->y;
         return true;
       case SDL_MOUSEBUTTONDOWN:
+        if (pad_ignore_touch_mouse(sdl_event.button.which)) break;
         if (sdl_event.button.button == SDL_BUTTON_LEFT) {
           event->type = ui::InputEvent::Type::MouseDown;
           event->x = static_cast<float>(sdl_event.button.x);
@@ -211,6 +219,7 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
       case SDL_MOUSEBUTTONUP:
         // Released: this is what ends a scroll-bar drag. Without it a drag could only
         // ever start, never stop.
+        if (pad_ignore_touch_mouse(sdl_event.button.which)) break;
         if (sdl_event.button.button == SDL_BUTTON_LEFT) {
           event->type = ui::InputEvent::Type::MouseUp;
           event->x = static_cast<float>(sdl_event.button.x);
@@ -219,6 +228,10 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         }
         break;
       case SDL_MOUSEWHEEL: {
+        // A two-finger drag we already turned into a scroll must not be applied again
+        // when the driver also injects a wheel for the same gesture.
+        if (pad_drop_wheel()) break;
+        pad_note_wheel();
         // Both axes, and both directions: a trackpad swipe is a horizontal wheel, and
         // a "natural scrolling" device reports the opposite sign.
         float y = static_cast<float>(sdl_event.wheel.y);
@@ -253,6 +266,23 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
           event->x = last_mouse_x_;
           event->y = last_mouse_y_;
         }
+        return true;
+      }
+      case SDL_FINGERDOWN:
+      case SDL_FINGERUP:
+      case SDL_FINGERMOTION: {
+        // ELAN two-finger drag arrives as touch contacts, not a wheel. SDL registers
+        // for them and then drops them on the floor; the browser turns the same
+        // contacts into a scroll. One finger stays a click.
+        float ox = 0.0f, oy = 0.0f;
+        if (!pad_finger_to_wheel(sdl_event, width_, height_, &ox, &oy)) break;
+        float flush_x = 0.0f, flush_y = 0.0f;
+        if (!wheel_.push(ox, oy, &flush_x, &flush_y)) break;
+        event->type = ui::InputEvent::Type::Wheel;
+        event->wheel = flush_y;
+        event->wheel_x = flush_x;
+        event->x = last_mouse_x_;
+        event->y = last_mouse_y_;
         return true;
       }
       case SDL_KEYDOWN:

@@ -257,7 +257,8 @@ std::string App::scroll_region_at(float x, float y) const {
   return "page";
 }
 
-void App::draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& region) {
+void App::draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& region,
+                         int thumb_alpha, int track_alpha) {
   ScrollState& state = scrolls_[region];
   if (state.max <= 0.5f) {
     state.thumb = Rect{0, 0, 0, 0};
@@ -275,8 +276,8 @@ void App::draw_scrollbar(Canvas& canvas, const Rect& track, const std::string& r
                                 : Rect{track.x, track.y + span * t, track.w, thumb_len};
   state.thumb = thumb;
 
-  const Color rail_color = rgba(0xffffff, 26);
-  const Color thumb_color = rgba(0xffffff, 96);
+  const Color rail_color = rgba(0xffffff, track_alpha);
+  const Color thumb_color = rgba(0xffffff, thumb_alpha);
   canvas.fill_round_rect(track, horizontal ? track.h / 2 : track.w / 2, rail_color);
   canvas.fill_round_rect(thumb, horizontal ? thumb.h / 2 : thumb.w / 2, thumb_color);
 
@@ -624,7 +625,15 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   Action action;
   action.kind = Action::Kind::OpenDetail;
   action.index = static_cast<int>(&item - catalog_.items.data());
-  add_hit(card, action);
+  // Home cards run off the right edge. The page bar lives in the last 14px; a hit
+  // that includes that strip overlaps the bar, and a click there would open the film
+  // instead of grabbing the thumb.
+  Rect hit = card;
+  if (view_ == View::Home && open_item_ < 0 && !settings_open_ && !browser_open_) {
+    const float limit = static_cast<float>(width_) - 16.0f;
+    if (hit.right() > limit) hit.w = limit - hit.x;
+  }
+  if (hit.w > 8.0f) add_hit(hit, action);
 
   // Remember where this card actually is, so the hover can grow it in place. Looking the
   // rectangle up in the hit list afterwards found the wrong thing (the hero has clickable
@@ -1160,9 +1169,25 @@ void App::draw_home(Canvas& canvas) {
   const float visible = static_cast<float>(height_) - rails_top;
   const float max_scroll = std::max(0.0f, content_height - visible + 8.0f);
   declare_scroll("page", max_scroll, page_view, false);
-  // The web home has no page bar (the wheel is the control). A bar here sat on top
-  // of the last card in the row. The region is still declared, so the wheel, Page
-  // Down and End keep working.
+  // The bar sits in the right margin, not across the last card. It is drawn after the
+  // clip is popped so scrolling the page does not scroll the bar off the window.
+  // A sheet covers this page; drawing the bar anyway left a strip of it beside the
+  // sheet, because the sheet does not reach the last few pixels of the window.
+  if (max_scroll > 0.5f && open_item_ < 0 && !settings_open_ && !browser_open_) {
+    const float top = theme::kHeaderHeight + 8.0f;
+    const float bar_h = static_cast<float>(height_) - top - 10.0f;
+    if (bar_h >= 36.0f) {
+      const Rect track{static_cast<float>(width_) - 11.0f, top, 6.0f, bar_h};
+      draw_scrollbar(canvas, track, "page", 230, 70);
+      // A dark edge so the thumb still reads when the last card is a bright poster.
+      const Rect thumb = scrolls_["page"].thumb;
+      if (thumb.w > 0.0f && thumb.h > 0.0f) {
+        canvas.fill_round_rect(Rect{thumb.x - 1.0f, thumb.y, thumb.w + 2.0f, thumb.h},
+                               (thumb.w + 2.0f) / 2.0f, rgba(0x000000, 180));
+        canvas.fill_round_rect(thumb, thumb.w / 2.0f, rgba(0xffffff, 235));
+      }
+    }
+  }
 
   if (rails.empty() && featured) {
     regular_.draw(canvas, "Nothing in progress yet — press Play to start a film.",

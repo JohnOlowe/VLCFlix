@@ -2,13 +2,18 @@
 
 ## This session (2026-10-29) — read this first
 
-Turn 2 of 6 is the captures. No UI code has been written. Branch **`studio-ui`**
-is cut from `cpp` at `5b86706` and is the only branch this session commits to.
-`cpp` and `main` are not moved.
+Turn 3 of 6 closed the home screen. Branch **`studio-ui`** is cut from `cpp` at
+`5b86706` and is the only branch this session commits to. `cpp` and `main` are
+not moved.
 
-The gap list is `docs/captures/GAP.md`. Every row cites a file opened this turn.
-Home scroll is the first fix: the JS document is 2442 px and scrolls to the
-footer; the C++ window moves once and then sticks while a row is still clipped.
+Home now matches the opened JS shots: billboard, 16:9 cards with the title on
+the art, and a page scroll that reaches the footer. Proof is in
+`docs/captures/GAP.md` (Turn 3 result) and `docs/captures/cpp/window-home-end.png`.
+The old stuck frame is still `docs/captures/cpp/window-after-wheel.png`. Do not
+describe that file as the current UI.
+
+Next is the detail sheet, then browse, search, My List, settings. No engine
+rewrite. Play in browser and the HTTP dock stay deleted.
 
 User decisions, locked this turn (not assumed):
 

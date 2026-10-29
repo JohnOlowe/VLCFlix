@@ -247,7 +247,7 @@ class App {
   void draw_footer(Canvas& canvas);
 
   void draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, bool wide,
-                        float scroll);
+                        float scroll, bool title_on_art = false);
   void draw_button(Canvas& canvas, const Rect& rect, const std::string& label, bool primary,
                    Action action, bool icon = true);
   // Buttons are sized to their label, so no label can be clipped by a fixed width

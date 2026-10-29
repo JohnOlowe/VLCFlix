@@ -64,6 +64,32 @@ Order after that stays the plan: detail, browse, search, My List, settings,
 then hover and player chrome. No engine rewrite. Play in browser and the HTTP
 dock stay deleted.
 
+## Turn 3 result (2026-10-29) — home closed
+
+The home rows above are the before. They stay, because the stuck frame is the
+measurement. The after is a different set of files, opened this turn:
+
+| What | File opened |
+|---|---|
+| JS top, the target | `docs/captures/js/home-viewport.png` |
+| JS rest of the page, the target | `docs/captures/js/home-full.png` |
+| C++ render, top, 1600×900 | `docs/captures/cpp/home-viewport.png` |
+| C++ render, scrolled to the limit | `docs/captures/cpp/home-scrolled.png` |
+| Live window, rest, 1536×810 | `docs/captures/cpp/window-home-rest.png` |
+| Live window, 12 wheel clicks | `docs/captures/cpp/window-home-mid.png` |
+| Live window, end of the page | `docs/captures/cpp/window-home-end.png` |
+
+What the opened files show:
+
+- Billboard: eyebrow, title on the still, TV-14 chip, NEW, year · 720p · genre, synopsis, white Play, More Info, circle-plus. Header at rest is logo, search icon, VLC pill, gear. Nav stays hidden until the page moves, then it appears (`window-home-mid.png`).
+- Cards are 16:9, title and meta on the art, cut off at the right edge the way the JS row is.
+- Scroll is no longer one notch. On the live window, wheels 0→6, 6→12 and 12→18 each changed the frame (97.7%, 65.3%, 44.5% of pixels). Wheel 21 and four more clicks after that changed 0.000% against `window-home-end.png`. That end frame shows Thriller, Everything in Your Library, and the footer. Mystery, the row the old window clipped, is fully on screen in `window-home-mid.png`.
+- The limit no longer shrinks with the offset. `test_ui_home_scroll_reaches_the_last_rail` scrolls to the limit and requires the last card inside the window. `make test`: 598 checks, 0 failures.
+
+Not the same pixels as Chromium. The gutter is still 48 px, not 4 vw, and the home rails have no hover arrows. Those are not the gap that made the screen read as a different page.
+
+Turn 4 is the detail sheet, then browse, search, My List, settings. Home is not the next edit.
+
 ## Not claimed
 
 - A precision touchpad. Not present.

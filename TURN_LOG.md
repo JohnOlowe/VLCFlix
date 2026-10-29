@@ -1676,3 +1676,32 @@ were not wheel-driven.
 
 Side effect: the Node server and the C++ window were left running for the
 gallery. They do not survive a snapshot.
+
+## 2026-10-29 — Turn 3: home billboard and the scroll limit
+
+Home only. `native/src/ui/app.cpp` and the home scroll test. No engine change.
+
+The scroll limit was measured from an already-scrolled `y`, so it shrank by the
+current offset and a second wheel did nothing. It is now measured from the
+unscrolled stack, and the last card has to land inside the window
+(`test_ui_home_scroll_reaches_the_last_rail`).
+
+Opened, this turn, before calling it done:
+
+- `docs/captures/js/home-viewport.png` and `js/home-full.png` (the targets).
+- `docs/captures/cpp/home-viewport.png` and `home-scrolled.png` (renders).
+- Live window on the existing Xvfb `:99`, new binary, 1536×810. Wheels on the
+  header (so they hit the page, not a rail): 0→6 changed 97.74%, 6→12 changed
+  65.34%, 12→18 changed 44.54%, 18→21 changed 45.07%. Four more clicks after
+  wheel 21 changed 0.000% and matched `window-home-end.png`. That frame shows
+  the footer. `window-home-mid.png` shows Mystery fully on screen, which is the
+  row the turn 2 window clipped.
+
+`make test`: 598 checks, 0 failures. Golden baselines rewritten after the new
+home and header were opened (`native/tests/golden/home.png`, `browse.png`,
+`settings.png`, `empty.png`). Browse cards were not restyled; their baseline
+moved because the header did (search icon, VLC pill, gear).
+
+Not claimed: pixel identity with Chromium. Gutter is still 48 px. Home rails
+have no hover arrows. Touchpad not present. Detail, browse, search, My List
+and settings are still the turn 2 gap.

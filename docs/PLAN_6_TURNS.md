@@ -78,6 +78,14 @@ are in `TURN_LOG.md` for 2026-10-29. Do not infer scope from `GET /user/repos`.
 ## Turn 2 result (2026-10-29)
 
 Captures are in `docs/captures/`. The gap list is `docs/captures/GAP.md`.
+
+## Turn 3 result (2026-10-29)
+
+Home only. Billboard and 16:9 cards match the opened JS shots
+(`js/home-viewport.png`, `js/home-full.png`). The live window on Xvfb kept
+moving through 18 wheel clicks and stopped on the footer
+(`cpp/window-home-end.png`), not on a clipped Mystery row. `make test` 598/598.
+Detail is next. No engine rewrite.
 No UI code was edited.
 
 Turn 3 starts with the home billboard **and** the scroll limit. A top-of-page

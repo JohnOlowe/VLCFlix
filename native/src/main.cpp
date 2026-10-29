@@ -85,6 +85,7 @@ struct Args {
   int frames = 0;
   int focus = -1;
   int hover = -1;
+  float scroll = 0;  // render --scroll N: draw the page already scrolled, for the fold
   bool play_subtitles = false;
   std::string play;      // render --play <path|index>: a player screenshot
   int play_index = 0;
@@ -133,6 +134,7 @@ Args parse_args(int argc, char** argv) {
     else if (a == "--frames") args.frames = std::atoi(value("--frames").c_str());
     else if (a == "--focus") args.focus = std::atoi(value("--focus").c_str());
     else if (a == "--hover") args.hover = std::atoi(value("--hover").c_str());
+    else if (a == "--scroll") args.scroll = std::atof(value("--scroll").c_str());
     else if (a == "--play") {
       args.play = value("--play");
       args.play_index = std::atoi(args.play.c_str());
@@ -269,6 +271,17 @@ int command_render(const Args& args) {
       // Force a hover so a screenshot can show the preview card without a mouse.
       app->ensure_layout();
       app->set_hover(args.hover);
+    }
+    if (args.scroll > 0) {
+      // The limit is declared by a draw. A wheel on the hero (not on a rail) then
+      // moves the page; the app clamps it, so a large N is "the bottom".
+      app->ensure_layout();
+      ui::InputEvent wheel;
+      wheel.type = ui::InputEvent::Type::Wheel;
+      wheel.x = 80;
+      wheel.y = 120;
+      wheel.wheel = -args.scroll / 96.0f;
+      app->handle(wheel);
     }
     if (args.focus >= 0) {
       // Lay the screen out once (which is what records the card order), then put the
@@ -713,7 +726,7 @@ void print_help() {
       "                       works headless, and --frames N exits after N frames)\n"
       "  render               draw a screen to a PNG, no display required\n"
       "                       render --screen home|browse|mylist|search|detail|settings\n"
-      "                              --png out.png [--size 1600x900] [--query text]\n"
+      "                              --png out.png [--size 1600x900] [--query text] [--scroll N]\n"
       "                       render --all <dir>  draws every screen\n"
       "  crash                deliberately crash (proves the crash log works)\n"
       "  version | help\n\n"

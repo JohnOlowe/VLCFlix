@@ -43,7 +43,7 @@ constexpr float kWheelStep = 96.0f;
 constexpr float kRailStep = 140.0f;
 constexpr int kKeyF = 'f';
 
-constexpr float kGridWidth = 172.0f;
+constexpr float kGridWidth = 216.0f;  // minimum card width
 
 std::string hero_runtime(double seconds) {
   if (!(seconds >= 30.0)) return "";
@@ -60,6 +60,51 @@ std::string resolution_label(int height) {
   if (height >= 700) return "720p";
   if (height > 0) return std::to_string(height) + "p";
   return "";
+}
+
+bool plausible_unix_ms(long long ms) {
+  // 2000-01-01 through 2100. A negative value is the file-clock bug, not a date.
+  return ms > 946684800000LL && ms < 4102444800000LL;
+}
+
+std::string long_date(long long ms) {
+  if (!plausible_unix_ms(ms)) return "";
+  const std::time_t t = static_cast<std::time_t>(ms / 1000);
+  std::tm local {};
+  if (!localtime_r(&t, &local)) return "";
+  char buf[64];
+  if (std::strftime(buf, sizeof buf, "%B %e, %Y", &local) == 0) return "";
+  std::string out = buf;
+  // %e pads the day with a space. "October  9, 2026" should read "October 9, 2026".
+  const std::size_t pad = out.find("  ");
+  if (pad != std::string::npos) out.erase(pad, 1);
+  return out;
+}
+
+std::string format_bytes(long long bytes) {
+  if (bytes <= 0) return "";
+  const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+  double value = static_cast<double>(bytes);
+  int unit = 0;
+  while (value >= 1024.0 && unit < 4) {
+    value /= 1024.0;
+    ++unit;
+  }
+  char buf[32];
+  if (unit > 1) std::snprintf(buf, sizeof buf, "%.1f %s", value, units[unit]);
+  else std::snprintf(buf, sizeof buf, "%.0f %s", value, units[unit]);
+  return buf;
+}
+
+std::string clock_label(double seconds) {
+  const int total = std::max(0, static_cast<int>(seconds));
+  const int hours = total / 3600;
+  const int minutes = (total % 3600) / 60;
+  const int secs = total % 60;
+  char buf[16];
+  if (hours > 0) std::snprintf(buf, sizeof buf, "%d:%02d:%02d", hours, minutes, secs);
+  else std::snprintf(buf, sizeof buf, "%d:%02d", minutes, secs);
+  return buf;
 }
 
 std::string scan_clock(long long ms) {
@@ -335,8 +380,12 @@ void App::draw(Canvas& canvas) {
   } else if (view_ == View::Browse) {
     std::vector<std::size_t> all(catalog_.items.size());
     for (std::size_t i = 0; i < all.size(); ++i) all[i] = i;
+    const std::size_t folders = !settings_.library_folders.empty() ? settings_.library_folders.size()
+                                                                  : catalog_.folders.size();
+    const std::size_t count = catalog_.items.size();
     draw_grid_view(canvas, "Browse All", all,
-                   std::to_string(catalog_.items.size()) + " titles in your library");
+                   std::to_string(count) + (count == 1 ? " title" : " titles") + " in " +
+                       std::to_string(folders) + " folder(s)");
   } else if (view_ == View::MyList) {
     std::vector<std::size_t> mine;
     for (const auto& id : my_list_) {
@@ -345,13 +394,14 @@ void App::draw(Canvas& canvas) {
       }
     }
     draw_grid_view(canvas, "My List", mine,
-                   mine.empty() ? "Nothing here yet — add films with the + button"
-                                : std::to_string(mine.size()) + " saved");
+                   mine.empty() ? "Titles you save appear here."
+                                : std::to_string(mine.size()) +
+                                      (mine.size() == 1 ? " saved title" : " saved titles"));
   } else {
     const std::vector<std::size_t> found = search_items(catalog_.items, query_);
+    const std::string matches = std::to_string(found.size()) + (found.size() == 1 ? " match" : " matches");
     draw_grid_view(canvas, query_.empty() ? "Search" : "Results for “" + query_ + "”", found,
-                   query_.empty() ? "Type to search titles, genres and years"
-                                  : std::to_string(found.size()) + " match(es)");
+                   query_.empty() ? "Type to search titles, genres and years." : matches);
   }
 
   draw_hover_preview(canvas);
@@ -462,20 +512,27 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
     }
   }
 
-  const float shade = title_on_art ? card.h * 0.62f : 74.0f;
+  const float shade = title_on_art ? card.h * (wide ? 0.62f : 0.46f) : 74.0f;
   canvas.push_clip(card);
   canvas.fill_gradient_v(Rect{card.x, card.bottom() - shade, card.w, shade}, rgba(0x06060a, 0),
                          rgba(0x06060a, title_on_art ? 240 : 190));
   canvas.pop_clip();
 
-  const float label_lift = title_on_art ? 34.0f : 0.0f;
   if (const int percent = percent_for(item); percent > 0) {
-    const float bar_height = 4;
-    const float bar_y = card.bottom() - bar_height - 8 - label_lift;
-    canvas.fill_round_rect(Rect{card.x + 10, bar_y, card.w - 20, bar_height}, bar_height / 2,
-                           rgba(0xffffff, 60));
-    canvas.fill_round_rect(Rect{card.x + 10, bar_y, (card.w - 20) * percent / 100.0f, bar_height},
-                           bar_height / 2, theme::accent());
+    if (title_on_art && !wide) {
+      const float bar_height = 3.0f;
+      canvas.fill_rect(Rect{card.x, card.bottom() - bar_height, card.w, bar_height}, rgba(0xffffff, 40));
+      canvas.fill_rect(Rect{card.x, card.bottom() - bar_height, card.w * percent / 100.0f, bar_height},
+                       theme::accent());
+    } else {
+      const float label_lift = title_on_art ? 34.0f : 0.0f;
+      const float bar_height = 4;
+      const float bar_y = card.bottom() - bar_height - 8 - label_lift;
+      canvas.fill_round_rect(Rect{card.x + 10, bar_y, card.w - 20, bar_height}, bar_height / 2,
+                             rgba(0xffffff, 60));
+      canvas.fill_round_rect(Rect{card.x + 10, bar_y, (card.w - 20) * percent / 100.0f, bar_height},
+                             bar_height / 2, theme::accent());
+    }
   }
 
   if (hovered || focused) {
@@ -496,8 +553,9 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   }
 
   if (title_on_art) {
-    const float title_size = 13.0f;
-    const float title_y = card.bottom() - 30.0f;
+    const float title_size = wide ? 13.0f : 14.0f;
+    // Poster grids keep the type above the thin progress line on the bottom edge.
+    const float title_y = card.bottom() - (wide ? 30.0f : 44.0f);
     bold_.draw(canvas, bold_.ellipsize(item.title, title_size, card.w - 22), card.x + 11, title_y,
                title_size, theme::text());
     std::string year;
@@ -524,8 +582,6 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
                     meta_y, 10.5f, rgba(0xffffff, 158));
     }
   } else {
-    // Browse and My List still draw the title under the card until those screens
-    // are rewritten. A screenshot of them has no hover, so the title has to be there.
     const Rect label{card.x, card.bottom() + 8, card.w, 18};
     bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontSmall, card.w), label.x, label.y,
                theme::kFontSmall, theme::text());
@@ -993,8 +1049,9 @@ void App::draw_home(Canvas& canvas) {
 
 void App::draw_grid_view(Canvas& canvas, const std::string& title,
                          const std::vector<std::size_t>& items, const std::string& subtitle) {
-  const float top = theme::kHeaderHeight + 34;
-  bold_.draw(canvas, title, theme::kGutter, top, 30, theme::text());
+  const float top = theme::kHeaderHeight + 28;
+  const float title_size = std::clamp(static_cast<float>(width_) * 0.026f, 27.0f, 37.0f);
+  bold_.draw(canvas, title, theme::kGutter, top, title_size, theme::text());
   regular_.draw(canvas, subtitle, theme::kGutter, top + 44, theme::kFontSmall, theme::dim());
 
   const float grid_top = top + 84;
@@ -1002,29 +1059,54 @@ void App::draw_grid_view(Canvas& canvas, const std::string& title,
   canvas.push_clip(Rect{0, grid_top - 8, float(width_), float(height_) - grid_top + 8});
 
   const float available = static_cast<float>(width_) - 2 * theme::kGutter;
-  const float gap = 18;
-  const int columns = std::max(1, static_cast<int>((available + gap) / (kGridWidth + gap)));
-  const float card_width = (available - gap * (columns - 1)) / columns;
+  const float gap_x = 12.0f;
+  const float gap_y = 18.0f;
+  const int columns = std::max(1, static_cast<int>((available + gap_x) / (kGridWidth + gap_x)));
+  const float card_width = (available - gap_x * (columns - 1)) / columns;
   const float card_height = card_width / theme::kPosterAspect;
-  const float row_height = card_height + 44;
+  const float row_height = card_height + gap_y;
 
   order_columns_ = columns;
-  order_row_height_ = card_height + 44;
+  order_row_height_ = row_height;
   for (std::size_t i = 0; i < items.size(); ++i) {
     order_.push_back(static_cast<int>(items[i]));
     const int column = static_cast<int>(i) % columns;
     const int row = static_cast<int>(i) / columns;
-    const Rect card{theme::kGutter + column * (card_width + gap),
+    const Rect card{theme::kGutter + column * (card_width + gap_x),
                     grid_top + row * row_height - page_offset, card_width, card_height};
     if (card.bottom() < grid_top - 40 || card.y > height_) continue;
-    draw_poster_card(canvas, card, catalog_.items[items[i]], false, page_offset);
+    draw_poster_card(canvas, card, catalog_.items[items[i]], false, page_offset, true);
     order_rects_.push_back(card);
+  }
+
+  const int rows_total = columns > 0 ? static_cast<int>((items.size() + columns - 1) / columns) : 0;
+  const float footer_top = grid_top + static_cast<float>(rows_total) * row_height + 28.0f - page_offset;
+  if (footer_top < height_ && footer_top + 120.0f > grid_top) {
+    canvas.fill_rect(Rect{0, footer_top, float(width_), 1}, rgba(0xffffff, 18));
+    bold_.draw(canvas, "VLCFLIX", theme::kGutter, footer_top + 28, 16, theme::text());
+    regular_.draw_wrapped(
+        canvas,
+        "Browsing front-end for your own media. Playback is handled by VLC through its HTTP control "
+        "interface, or by the built-in player.",
+        Rect{theme::kGutter, footer_top + 52, std::min(620.0f, static_cast<float>(width_) - 2 * theme::kGutter),
+             48},
+        12.5f, theme::faint(), 3);
+    const std::size_t count = catalog_.items.size();
+    std::string meta = std::to_string(count) + (count == 1 ? " title in library" : " titles in library");
+    meta += catalog_.have_ffmpeg ? "  ·  ffmpeg artwork: on" : "  ·  ffmpeg artwork: off";
+    std::string vlc = settings_.vlc_path;
+    if (vlc.empty() && file_exists("/usr/bin/vlc")) vlc = "/usr/bin/vlc";
+    meta += vlc.empty() ? "  ·  VLC: not detected" : "  ·  VLC: " + vlc;
+    const std::string clock = scan_clock(catalog_.scanned_at);
+    if (!clock.empty()) meta += "  ·  last scan " + clock;
+    regular_.draw(canvas, regular_.ellipsize(meta, 11.5f, static_cast<float>(width_) - 2 * theme::kGutter),
+                  theme::kGutter, footer_top + 108, 11.5f, rgb(0x56565f));
   }
   canvas.pop_clip();
 
-  const int rows_total = columns > 0 ? static_cast<int>((items.size() + columns - 1) / columns) : 0;
-  const float content = rows_total * row_height;
-  const float max_scroll = std::max(0.0f, content - (height_ - grid_top) + 40);
+  const float footer_h = 140.0f;
+  const float content = static_cast<float>(rows_total) * row_height + 28.0f + footer_h;
+  const float max_scroll = std::max(0.0f, content - (static_cast<float>(height_) - grid_top) + 8.0f);
   const Rect page_view{0, grid_top, static_cast<float>(width_), static_cast<float>(height_) - grid_top};
   declare_scroll("page", max_scroll, page_view, false);
   // The bar is drawn outside the clip so it does not scroll with the cards.
@@ -1032,82 +1114,182 @@ void App::draw_grid_view(Canvas& canvas, const std::string& title,
                  "page");
 
   if (items.empty()) {
-    regular_.draw(canvas, "No films here.", theme::kGutter, grid_top, theme::kFontBody, theme::faint());
+    const char* empty = "No films here.";
+    if (view_ == View::MyList) empty = "Nothing saved yet — hover a card and press +.";
+    else if (view_ == View::Search && !query_.empty()) empty = "No titles matched. Try a different word.";
+    else if (view_ == View::Search) empty = "";
+    if (empty[0] != '\0') {
+      regular_.draw(canvas, empty, theme::kGutter, grid_top, theme::kFontBody, theme::faint());
+    }
   }
 }
 
 void App::draw_detail(Canvas& canvas, const Item& item) {
-  canvas.fill_rect(Rect{0, 0, float(width_), float(height_)}, rgba(0x000000, 190));
+  canvas.fill_rect(Rect{0, 0, float(width_), float(height_)}, rgba(0x050508, 209));
 
-  const float panel_width = std::min(width_ - 120.0f, 980.0f);
-  const float art_height = std::min(panel_width / 2.55f, 360.0f);
-  const float panel_height = std::min(static_cast<float>(height_) - 100.0f, art_height + 136.0f);
-  const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
-                   panel_height};
-  canvas.fill_round_rect(panel, 14, theme::panel());
-  // Bottom of the sheet's z-order, registered before anything inside it: the scrim
-  // closes the sheet and the panel swallows clicks so they cannot reach the page
-  // behind. Hit testing takes the last match, so registering these two *last* put them
-  // on top of the sheet's own buttons and made every control in here dead.
+  const float panel_width = std::min(static_cast<float>(width_) - 48.0f, 940.0f);
+  const float art_height = panel_width * 8.2f / 16.0f;
+  const float pad_x = 28.0f;
+  const float gap = 34.0f;
+  const float inner = panel_width - pad_x * 2;
+  const float left_w = inner * 1.7f / 2.7f;
+  const float right_x_off = pad_x + left_w + gap;
+  const float right_w = panel_width - right_x_off - pad_x;
+  const float synopsis_size = 14.5f;
+  const float synopsis_line = regular_.line_height(synopsis_size);
+  const std::string synopsis =
+      item.synopsis.empty()
+          ? "No synopsis. Add a sidecar JSON file next to the video with a \"synopsis\" field to "
+            "describe it."
+          : item.synopsis;
+  const std::vector<std::string> synopsis_lines = regular_.wrap(synopsis, synopsis_size, left_w);
+  const float synopsis_height = std::max(synopsis_line, static_cast<float>(synopsis_lines.size()) * synopsis_line);
+
+  // Body is the taller of the two columns, counted from the rows that will
+  // actually be drawn. A fixed allowance here made a sheet that fitted claim a
+  // scrollbar. Measured unscrolled, so the limit does not shrink after one wheel.
+  long long added_ms = item.added_at;
+  if (!plausible_unix_ms(added_ms)) added_ms = catalog_.scanned_at;
+  const std::string added_label = long_date(added_ms);
+  int info_rows = 0;
+  if (!item.genres.empty()) ++info_rows;
+  if (!added_label.empty()) ++info_rows;
+  if (item.size > 0) ++info_rows;
+  if (item.width > 0 && item.height > 0) ++info_rows;
+  const float left_body = 26.0f + 22.0f + 16.0f + synopsis_height +
+                          (item.genres.empty() ? 0.0f : 18.0f + synopsis_line) + 28.0f;
+  float right_body = 26.0f + static_cast<float>(info_rows) * 40.0f + 28.0f;
+  if (!item.filename.empty()) right_body += 24.0f;
+  const float body_height = std::max(left_body, right_body);
+  const float content_height = art_height + body_height;
+  const float max_panel = std::max(180.0f, static_cast<float>(height_) - 40.0f);
+  const float panel_height = std::min(content_height, max_panel);
+  const float panel_y = content_height <= max_panel
+                            ? (static_cast<float>(height_) - panel_height) / 2.0f
+                            : 36.0f;
+  const Rect panel{(static_cast<float>(width_) - panel_width) / 2.0f, panel_y, panel_width, panel_height};
+  canvas.fill_round_rect(panel, 8, theme::panel());
+  // Scrim first, then the panel swallow, then the controls. Hit testing takes the
+  // last match, so this order is what keeps Play clickable and a click on the
+  // sheet body from closing it.
   add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
   swallow(panel);
 
-  // The sheet scrolls. Art, title, meta, the whole synopsis and the buttons are one
-  // column whose height is measured before anything is drawn, so a long synopsis or a
-  // short window no longer hides the buttons with no way to reach them.
-  const float text_width = panel.w - 72;
-  const float title_line = bold_.line_height(36);
-  const float small_line = regular_.line_height(theme::kFontSmall);
-  const std::vector<std::string> synopsis_lines =
-      item.synopsis.empty() ? std::vector<std::string>{}
-                            : regular_.wrap(item.synopsis, theme::kFontSmall, text_width);
-  const float synopsis_height =
-      item.synopsis.empty() ? small_line
-                            : static_cast<float>(synopsis_lines.size()) * small_line;
-  // The text block starts 96 px above the bottom of the art (the original design draws
-  // the title over the still), so the content is (art - 96) plus the text column. Using
-  // the full art height here made every sheet claim it could scroll by ~90 px when it
-  // fitted perfectly - a scroll bar that does nothing is its own bug.
-  const float content_height = (art_height - 96) + title_line + 8 + 30 + synopsis_height + 22 +
-                               42 + 24;
   const Rect viewport{panel.x + 1, panel.y + 1, panel.w - 2, panel.h - 2};
-  declare_scroll("detail", content_height - panel.h, viewport, false);
+  declare_scroll("detail", std::max(0.0f, content_height - panel_height), viewport, false);
   const float scroll = scroll_offset("detail");
 
   canvas.push_clip(viewport);
   const Rect art{panel.x, panel.y - scroll, panel.w, art_height};
-  draw_backdrop_or_fallback(canvas, art, item, 14);
-  canvas.fill_gradient_v(Rect{art.x, art.bottom() - art.h * 0.7f, art.w, art.h * 0.7f},
+  draw_backdrop_or_fallback(canvas, art, item, 8);
+  // Square off the art's bottom corners so the body meets it, and fade into the panel.
+  canvas.fill_rect(Rect{art.x, art.bottom() - 12, art.w, 12}, theme::panel());
+  canvas.fill_gradient_v(Rect{art.x, art.y + art.h * 0.34f, art.w, art.h * 0.66f},
                          rgba(theme::kPanel, 0), theme::panel());
 
-  const float x = panel.x + 36;
-  float y = art.bottom() - 96;
-  bold_.draw(canvas, bold_.ellipsize(item.title, 36, text_width), x, y, 36, theme::text());
-  y += title_line + 8;
-  regular_.draw(canvas, meta_line(item), x, y, theme::kFontSmall, theme::dim());
-  y += 30;
-  if (item.synopsis.empty()) {
-    regular_.draw(canvas, "No synopsis. Drop a JSON file beside the film with the same name to add "
-                          "one.",
-                  x, y, theme::kFontSmall, theme::faint());
-  } else {
-    regular_.draw_wrapped(canvas, item.synopsis,
-                          Rect{x, y, text_width, synopsis_height + small_line * 0.5f},
-                          theme::kFontSmall, theme::text());
-  }
-  y += synopsis_height + 22;
-
-  const Rect play{x, y, button_width("Play", true), 42};
-  draw_button(canvas, play, "Play", true, Action{Action::Kind::Play, open_item_, ""});
-  const bool in_list = std::find(my_list_.begin(), my_list_.end(), item.id) != my_list_.end();
-  const std::string list_label = in_list ? "In My List" : "My List";
-  const Rect list{play.right() + 12, y, button_width(list_label, false), 42};
-  draw_button(canvas, list, list_label, false, Action{Action::Kind::ToggleMyList, open_item_, ""});
+  const float title_size = std::clamp(panel_width * 0.044f, 27.0f, 42.0f);
+  const float btn_h = 42.0f;
+  const float btn_y = art.bottom() - 22.0f - btn_h;
+  const float title_y = btn_y - 16.0f - bold_.line_height(title_size);
+  const float text_x = panel.x + pad_x;
+  bold_.draw(canvas, bold_.ellipsize(item.title, title_size, panel.w - 120), text_x, title_y,
+             title_size, theme::text());
 
   const int percent = percent_for(item);
+  const std::string play_label =
+      percent > 0 ? "Resume from " + clock_label(progress_.count(item.id) ? progress_.at(item.id).position : 0)
+                  : "Play";
+  const float play_w = 34.0f + bold_.measure(play_label, 15.5f).width + 22.0f;
+  const Rect play{text_x, btn_y, play_w, btn_h};
+  canvas.fill_round_rect(play, 4, rgb(0xffffff));
+  draw_triangle_right(canvas, Rect{play.x + 16, play.y + btn_h / 2 - 6, 10, 12}, rgb(0x0b0b0f));
+  bold_.draw(canvas, play_label, play.x + 34, play.y + (btn_h - bold_.line_height(15.5f)) / 2, 15.5f,
+             rgb(0x0b0b0f));
+  add_hit(play, Action{Action::Kind::Play, open_item_, ""});
+
+  const bool in_list = std::find(my_list_.begin(), my_list_.end(), item.id) != my_list_.end();
+  const Rect plus{play.right() + 10, btn_y - 2, 46, 46};
+  canvas.stroke_circle(plus.x + 23, plus.y + 23, 16, 1.7f, rgba(0xffffff, in_list ? 255 : 210));
+  if (in_list) {
+    canvas.fill_circle(plus.x + 23, plus.y + 23, 14, rgba(theme::kAccent, 230));
+  }
+  canvas.fill_rect(Rect{plus.x + 16, plus.y + 22, 14, 2.2f}, in_list ? rgb(0x140800) : theme::text());
+  canvas.fill_rect(Rect{plus.x + 21.9f, plus.y + 16, 2.2f, 14}, in_list ? rgb(0x140800) : theme::text());
+  add_hit(plus, Action{Action::Kind::ToggleMyList, open_item_, ""});
+
+  // Two columns under the hero. Left is the synopsis. Right is the file facts.
+  const float body_y = art.bottom() + 26.0f;
+  float meta_x = text_x;
+  const float meta_y = body_y;
   if (percent > 0) {
-    regular_.draw_right(canvas, std::to_string(percent) + "% watched",
-                        Rect{x, y, text_width, 42}, theme::kFontSmall, theme::dim());
+    const std::string watched = std::to_string(percent) + "% watched";
+    regular_.draw(canvas, watched, meta_x, meta_y, 13, rgb(0x46d369));
+    meta_x += regular_.measure(watched, 13).width + 10;
+  }
+  const std::string runtime = hero_runtime(item.duration);
+  if (!runtime.empty()) {
+    regular_.draw(canvas, runtime, meta_x, meta_y, 13, rgb(0xd5d5db));
+    meta_x += regular_.measure(runtime, 13).width + 10;
+  }
+  if (item.year) {
+    const std::string year = std::to_string(item.year);
+    regular_.draw(canvas, year, meta_x, meta_y, 13, rgb(0xd5d5db));
+    meta_x += regular_.measure(year, 13).width + 10;
+  }
+  if (!item.rating.empty()) {
+    const float chip_w = regular_.measure(item.rating, 11).width + 12;
+    const Rect chip{meta_x, meta_y - 1, chip_w, 18};
+    canvas.stroke_round_rect(chip, 2, 1, rgba(0xffffff, 107));
+    regular_.draw_centered(canvas, item.rating, chip, 11, rgb(0xf0f0f2));
+    meta_x = chip.right() + 10;
+  }
+  const std::string res = resolution_label(item.height);
+  if (!res.empty()) {
+    regular_.draw(canvas, res, meta_x, meta_y, 13, rgb(0xd5d5db));
+    meta_x += regular_.measure(res, 13).width + 10;
+  }
+  regular_.draw(canvas, "HD", meta_x, meta_y, 13, rgb(0xd5d5db));
+
+  regular_.draw_wrapped(canvas, synopsis,
+                        Rect{text_x, meta_y + 22.0f + 16.0f, left_w, synopsis_height + synopsis_line},
+                        synopsis_size, rgb(0xd2d2d9));
+  if (!item.genres.empty()) {
+    const float genres_y = meta_y + 22.0f + 16.0f + synopsis_height + 18.0f;
+    const std::string label = "Genres: ";
+    regular_.draw(canvas, label, text_x, genres_y, synopsis_size, theme::faint());
+    std::string genres;
+    for (std::size_t i = 0; i < item.genres.size(); ++i) {
+      if (i) genres += " · ";
+      genres += item.genres[i];
+    }
+    regular_.draw(canvas, regular_.ellipsize(genres, synopsis_size, left_w - regular_.measure(label, synopsis_size).width),
+                  text_x + regular_.measure(label, synopsis_size).width, genres_y, synopsis_size, rgb(0xd2d2d9));
+  }
+
+  float info_y = body_y;
+  const float info_x = panel.x + right_x_off;
+  auto info_row = [&](const std::string& label, const std::string& value) {
+    if (value.empty()) return;
+    regular_.draw(canvas, label, info_x, info_y, 13, theme::faint());
+    info_y += 18;
+    regular_.draw(canvas, regular_.ellipsize(value, 13, right_w), info_x, info_y, 13, rgb(0xe6e6ea));
+    info_y += 22;
+  };
+  std::string genre_list;
+  for (std::size_t i = 0; i < item.genres.size(); ++i) {
+    if (i) genre_list += ", ";
+    genre_list += item.genres[i];
+  }
+  info_row("Genres:", genre_list);
+  info_row("Added:", added_label);
+  info_row("File size:", format_bytes(item.size));
+  if (item.width > 0 && item.height > 0) {
+    info_row("Resolution:", std::to_string(item.width) + " × " + std::to_string(item.height));
+  }
+  if (!item.filename.empty()) {
+    info_y += 8;
+    regular_.draw(canvas, regular_.ellipsize(item.filename, 11.5f, right_w), info_x, info_y, 11.5f,
+                  theme::faint());
   }
   canvas.pop_clip();
 
@@ -1359,126 +1541,193 @@ void App::draw_folder_browser(Canvas& canvas) {
 }
 
 void App::draw_settings(Canvas& canvas) {
-  canvas.fill_rect(Rect{0, 0, float(width_), float(height_)}, rgba(0x000000, 190));
-  const float panel_width = std::min(width_ - 160.0f, 760.0f);
-  // The panel is as tall as its rows. A once-fixed 560 left a dead band under two
-  // toggles; the arithmetic below is the layout, so it has to stay in step with the
-  // drawing order underneath it.
-  const float folder_rows = 22.0f * static_cast<float>(settings_.library_folders.size());
-  const float samples_row =
-      (!sample_folder_.empty() && settings_.library_folders.empty()) ? 38.0f : 0.0f;
-  const float needed =
-      84 + 34 + folder_rows + 42 + samples_row + 8 + 34 * 3 + 44 /*toggle*/ + 34 /*latency*/ +
-      26 + 42 + 34 + 78 /*scan button*/;
-  const float panel_height = std::min(static_cast<float>(height_) - 100.0f, needed);
-  const Rect panel{(width_ - panel_width) / 2, (height_ - panel_height) / 2, panel_width,
-                   panel_height};
-  canvas.fill_round_rect(panel, 14, theme::panel());
-  // Same rule as the detail sheet: scrim and swallow first, controls after them.
+  canvas.fill_rect(Rect{0, 0, float(width_), float(height_)}, rgba(0x050508, 210));
+  const float panel_width = std::min(static_cast<float>(width_) - 40.0f, 660.0f);
+  const float pad = 24.0f;
+  const float header_h = 58.0f;
+  const float inner = panel_width - pad * 2.0f;
+  const bool samples = !sample_folder_.empty() && settings_.library_folders.empty();
+  const int folders = static_cast<int>(settings_.library_folders.size());
+
+  // This sum is the drawing order below. A short window has to scroll to Scan; a
+  // 1600x900 sheet has to keep Add, Scan and the hardware switch on screen.
+  float body = 18.0f;
+  body += 22.0f;
+  body += folders > 0 ? folders * 44.0f : 28.0f;
+  body += 10.0f + 38.0f;
+  body += 10.0f + 38.0f;
+  body += 8.0f + 40.0f;
+  body += 12.0f + 40.0f;
+  body += 22.0f;
+  body += 16.0f;
+  body += 22.0f;
+  body += 36.0f;
+  body += 52.0f;
+  body += 66.0f;
+  body += 20.0f;
+  body += 22.0f;
+  body += 36.0f;
+  body += 56.0f;
+  body += 18.0f;
+
+  const float max_panel = static_cast<float>(height_) - 72.0f;
+  const float panel_height = std::max(220.0f, std::min(max_panel, header_h + body));
+  const Rect panel{(static_cast<float>(width_) - panel_width) / 2.0f, 36.0f, panel_width, panel_height};
+  canvas.fill_round_rect(panel, 8, rgb(0x15151b));
   add_hit(Rect{0, 0, float(width_), float(height_)}, Action{Action::Kind::CloseOverlay, -1, ""});
   swallow(panel);
 
-  bold_.draw(canvas, "Settings", panel.x + 32, panel.y + 28, 24, theme::text());
-  const Rect close{panel.right() - 54, panel.y + 22, 32, 32};
-  canvas.fill_circle(close.x + 16, close.y + 16, 16, rgba(0xffffff, 18));
-  regular_.draw_centered(canvas, "\u00d7", close, 20, theme::text());
+  bold_.draw(canvas, "Settings", panel.x + pad, panel.y + 18, 22, theme::text());
+  const Rect close{panel.right() - 24 - 32, panel.y + 14, 32, 32};
+  regular_.draw_centered(canvas, "\u00d7", close, 22, theme::text());
   add_hit(close, Action{Action::Kind::CloseOverlay, -1, ""});
+  canvas.fill_rect(Rect{panel.x, panel.y + header_h - 1, panel.w, 1}, rgba(0xffffff, 18));
 
-  // Scrollable body: everything below the title, above nothing - the Scan button is
-  // part of the content now, so it is reachable by scrolling instead of being pinned
-  // to a panel edge that may not exist.
-  const Rect viewport{panel.x + 1, panel.y + 66, panel.w - 2, panel.h - 78};
-  declare_scroll("settings", needed - viewport.h - 12, viewport, false);
+  const Rect viewport{panel.x + 1, panel.y + header_h, panel.w - 2, std::max(40.0f, panel.h - header_h)};
+  declare_scroll("settings", std::max(0.0f, body - viewport.h), viewport, false);
   const float scroll = scroll_offset("settings");
   canvas.push_clip(viewport);
 
-  float y = panel.y + 84 - scroll;
-  const float row_width = panel.w - 64;
-  auto row = [&](const std::string& label, const std::string& value) {
-    regular_.draw(canvas, label, panel.x + 32, y, theme::kFontBody, theme::dim());
-    regular_.draw_right(canvas, value, Rect{panel.x + 32, y, row_width, 22}, theme::kFontBody,
-                        theme::text());
-    y += 34;
+  float y = viewport.y + 18.0f - scroll;
+  const float left = panel.x + pad;
+  auto section = [&](const char* label) {
+    regular_.draw(canvas, label, left, y, 11.5f, rgb(0x8a8a96));
+    y += 22.0f;
   };
 
-  row("Library folders", std::to_string(settings_.library_folders.size()) + " configured");
-  for (const auto& folder : settings_.library_folders) {
-    regular_.draw(canvas, regular_.ellipsize(folder, theme::kFontSmall, row_width - 90),
-                  panel.x + 44, y, theme::kFontSmall, theme::faint());
-    const Rect remove{panel.right() - 120, y - 3, 76, 20};
-    regular_.draw_centered(canvas, "Remove", remove, theme::kFontTiny, theme::dim());
-    add_hit(remove, Action{Action::Kind::RemoveFolder, -1, folder});
-    y += 22;
+  section("LIBRARY FOLDERS");
+  if (folders == 0) {
+    regular_.draw(canvas, "No folders yet. Add one below, or load the demo library.", left, y, 12.5f,
+                  theme::faint());
+    y += 28.0f;
   }
-  // A folder can be typed or browsed to. The Browse button sits beside the field so
-  // both ways in are visible at once; the picker ends in the same add_library_folder()
-  // call as Enter does, so there is one set of validation rules.
-  const float browse_width = button_width("Browse...", false, false);
-  const Rect browse_button{panel.right() - 32 - browse_width, y + 2, browse_width, 32};
-  draw_button(canvas, browse_button, "Browse...", false,
-              Action{Action::Kind::BrowseForFolder, -1, ""});
-  const Rect field{panel.x + 32, y + 2, row_width - browse_width - 12, 32};
-  canvas.fill_round_rect(field, theme::kRadius, rgba(0xffffff, 12));
-  canvas.stroke_round_rect(field, theme::kRadius, 1.0f,
-                           folder_input_focused_ ? rgba(theme::kAccent, 220) : rgba(0xffffff, 45));
+  for (const auto& folder : settings_.library_folders) {
+    const Rect row{left, y, inner, 36};
+    canvas.fill_round_rect(row, 6, rgb(0x0d0d12));
+    canvas.stroke_round_rect(row, 6, 1.0f, rgba(0xffffff, 26));
+    regular_.draw(canvas, regular_.ellipsize(folder, 12.5f, inner - 52), row.x + 12, row.y + 10, 12.5f,
+                  theme::text());
+    const Rect remove{row.right() - 32, row.y + 4, 28, 28};
+    regular_.draw_centered(canvas, "\u00d7", remove, 16, theme::dim());
+    add_hit(remove, Action{Action::Kind::RemoveFolder, -1, folder});
+    y += 44.0f;
+  }
+
+  y += 10.0f;
+  const Rect field{left, y, inner, 38};
+  canvas.fill_round_rect(field, 6, rgb(0x0d0d12));
+  canvas.stroke_round_rect(field, 6, 1.0f,
+                           folder_input_focused_ ? rgba(theme::kAccent, 220) : rgba(0xffffff, 36));
   if (folder_input_.empty() && !folder_input_focused_) {
-    regular_.draw(canvas, "Add a folder path, then press Enter", field.x + 12, field.y + 7,
-                  theme::kFontSmall, theme::faint());
+    regular_.draw(canvas, "e.g. D:\\Movies  or  /home/me/Videos", field.x + 12, field.y + 11, 13.0f,
+                  theme::faint());
   } else {
-    regular_.draw(canvas, regular_.ellipsize(folder_input_, theme::kFontSmall, field.w - 24),
-                  field.x + 12, field.y + 7, theme::kFontSmall, theme::text());
+    regular_.draw(canvas, regular_.ellipsize(folder_input_, 13.0f, field.w - 24), field.x + 12, field.y + 11,
+                  13.0f, theme::text());
     if (folder_input_focused_) {
-      const float caret_x = field.x + 12 + regular_.measure(folder_input_, theme::kFontSmall).width;
-      canvas.fill_rect(Rect{caret_x + 1, field.y + 8, 1.5f, 16}, theme::accent());
+      const float caret_x = field.x + 12 + regular_.measure(folder_input_, 13.0f).width;
+      canvas.fill_rect(Rect{caret_x + 1, field.y + 11, 1.5f, 16}, theme::accent());
     }
   }
   add_hit(field, Action{Action::Kind::AddFolder, -1, folder_input_});
-  y += 42;
-  if (!sample_folder_.empty() && settings_.library_folders.empty()) {
-    const Rect link{panel.x + 32, y, button_width("Use the bundled samples", false), 30};
-    draw_button(canvas, link, "Use the bundled samples", false,
+  y += 38.0f;
+
+  y += 10.0f;
+  const Rect add_btn{left, y, 132, 36};
+  draw_button(canvas, add_btn, "Add folder", true, Action{Action::Kind::AddFolder, -1, folder_input_}, false);
+  const Rect browse_btn{add_btn.right() + 10, y, 118, 36};
+  draw_button(canvas, browse_btn, "Browse...", false, Action{Action::Kind::BrowseForFolder, -1, ""});
+  y += 38.0f;
+
+  y += 8.0f;
+  regular_.draw_wrapped(
+      canvas,
+      "VLCFlix reads files only — it never moves or deletes them. Artwork and previews are written to "
+      "data/media.",
+      Rect{left, y, inner, 36}, 12.0f, theme::faint(), 2);
+  y += 40.0f;
+
+  y += 12.0f;
+  const Rect scan{left, y, 168, 40};
+  canvas.fill_round_rect(scan, 6, rgb(0xffffff));
+  bold_.draw(canvas, "Scan library", scan.x + 18, scan.y + 11, 14.5f, rgb(0x141418));
+  add_hit(scan, Action{Action::Kind::ScanLibrary, -1, ""});
+  if (samples) {
+    const Rect demo{scan.right() + 10, y, 230, 40};
+    draw_button(canvas, demo, "Use the bundled samples", false,
                 Action{Action::Kind::UseSampleFolder, -1, sample_folder_});
-    y += 38;
   }
-  y += 8;
+  y += 40.0f;
 
-  row("Playback engine", "libVLC (in this window)");
-  row("Films in library", std::to_string(catalog_.items.size()));
-  row("With artwork", std::to_string(std::count_if(catalog_.items.begin(), catalog_.items.end(),
-                                                   [](const Item& item) {
-                                                     return !item.poster.empty();
-                                                   })));
+  y += 6.0f;
+  std::string scan_line;
+  const std::string clock = scan_clock(catalog_.scanned_at);
+  if (!clock.empty()) {
+    scan_line = "Last scan finished " + clock + " — " + std::to_string(catalog_.items.size()) + " titles.";
+  } else if (!catalog_.items.empty()) {
+    scan_line = std::to_string(catalog_.items.size()) + " titles in the library.";
+  }
+  if (!scan_line.empty()) {
+    regular_.draw(canvas, scan_line, left, y, 12.0f, theme::faint());
+  }
+  y += 16.0f;
+  canvas.fill_rect(Rect{left, y, inner, 2}, theme::accent());
+  y += 16.0f;
 
-  // Two toggles, drawn as switches and hit-tested as rows.
-  auto toggle = [&](const std::string& label, bool on, const std::string& key) {
-    regular_.draw(canvas, label, panel.x + 32, y + 6, theme::kFontBody, theme::text());
-    const Rect track{panel.right() - 104, y, 52, 26};
-    canvas.fill_round_rect(track, 13, on ? rgba(theme::kAccent, 220) : rgba(0xffffff, 40));
-    canvas.fill_circle(on ? track.right() - 13 : track.x + 13, track.y + 13, 9,
-                       on ? rgb(0x1a0d00) : rgb(0xd8d8de));
-    add_hit(Rect{panel.x + 24, y - 6, row_width, 40},
-            Action{Action::Kind::ToggleSetting, -1, key});
-    y += 44;
+  section("PLAYBACK");
+  // Display only. The native app always plays in this window, so the other two engines
+  // are not buttons — a click must not pretend the engine changed.
+  const Rect seg{left, y, std::min(inner, 420.0f), 32};
+  canvas.fill_round_rect(seg, 6, rgb(0x0d0d12));
+  canvas.stroke_round_rect(seg, 6, 1.0f, rgba(0xffffff, 30));
+  const char* modes[] = {"Real VLC", "FFmpeg", "Built-in player"};
+  float mx = seg.x + 4;
+  for (int i = 0; i < 3; ++i) {
+    const float mw = i == 0 ? 96.0f : (i == 1 ? 84.0f : 130.0f);
+    if (i == 0) canvas.fill_round_rect(Rect{mx, seg.y + 3, mw, 26}, 4, rgba(0xe50914, 40));
+    regular_.draw(canvas, modes[i], mx + 12, seg.y + 8, 13.0f, i == 0 ? theme::accent() : theme::text());
+    mx += mw;
+  }
+  y += 36.0f;
+  regular_.draw_wrapped(
+      canvas,
+      "“Real VLC” launches VLC and controls it over its HTTP interface. “Built-in player” plays inside this "
+      "window using the browser engine, which cannot decode every codec VLC can.",
+      Rect{left, y, inner, 48}, 12.5f, theme::faint(), 3);
+  y += 52.0f;
+
+  auto status = [&](Color dot, const std::string& text) {
+    canvas.fill_circle(left + 5, y + 6, 4, dot);
+    regular_.draw(canvas, regular_.ellipsize(text, 12.5f, inner - 20), left + 18, y, 12.5f, theme::text());
+    y += 22.0f;
   };
-  toggle("Hardware decoding for artwork (ffmpeg)", settings_.hw_decode, "hwDecode");
-  // No switch for device-latency compensation: libVLC 3 cannot report the output
-  // latency, so a switch would be a lie. The player's sync control is the real one.
-  regular_.draw(canvas, "Device latency compensation",
-                panel.x + 32, y + 4, theme::kFontBody, theme::faint());
-  regular_.draw_right(canvas, "not available with libVLC 3 - use - / + in the player",
-                      Rect{panel.x + 32, y + 4, row_width, 22}, theme::kFontTiny, theme::faint());
-  y += 34;
+  std::string vlc = settings_.vlc_path;
+  if (vlc.empty() && file_exists("/usr/bin/vlc")) vlc = "/usr/bin/vlc";
+  if (vlc.empty()) status(rgb(0xe23b3b), "VLC was not found on this machine.");
+  else status(rgb(0x46d369), "VLC found (auto-detect): " + vlc);
+  status(rgb(0xe8a317), "VLC is not running yet — it starts on first play.");
+  if (catalog_.have_ffmpeg) status(rgb(0x46d369), "ffmpeg available — artwork and previews will be generated.");
+  else status(rgb(0xe8a317), "ffmpeg not on PATH — cards fall back to generated gradients.");
+  y += 20.0f;
 
-  y += 6;
-  const Rect scan_button{panel.x + 32, y, button_width("Scan library", true), 42};
-  draw_button(canvas, scan_button, "Scan library", true,
-              Action{Action::Kind::ScanLibrary, -1, ""});
-  regular_.draw(canvas, "Scans the folders above and draws missing artwork.",
-                scan_button.right() + 16, scan_button.y + 12, theme::kFontSmall, theme::faint());
+  section("HARDWARE DECODING (EXPERIMENTAL)");
+  const Rect track{left, y + 2, 44, 24};
+  canvas.fill_round_rect(track, 12, settings_.hw_decode ? rgb(0xe50914) : rgba(0xffffff, 40));
+  canvas.fill_circle(settings_.hw_decode ? track.right() - 12 : track.x + 12, track.y + 12, 8, rgb(0xffffff));
+  add_hit(Rect{track.x - 6, track.y - 6, track.w + 12, track.h + 12},
+          Action{Action::Kind::ToggleSetting, -1, "hwDecode"});
+  y += 36.0f;
+  regular_.draw_wrapped(
+      canvas,
+      "Off by default. When on, artwork that needs transcoding is tried on the GPU first, and falls back "
+      "to software if no frame arrives.",
+      Rect{left, y, inner, 48}, 12.0f, theme::faint(), 3);
+  y += 56.0f;
+
   canvas.pop_clip();
-
-  draw_scrollbar(canvas, Rect{panel.right() - 16, viewport.y + 4, 4, viewport.h - 8}, "settings");
-
+  if (scroll_limit("settings") > 0.0f) {
+    draw_scrollbar(canvas, Rect{panel.right() - 14, viewport.y + 4, 4, viewport.h - 8}, "settings");
+  }
 }
 
 void App::draw_footer(Canvas& canvas) {

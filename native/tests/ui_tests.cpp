@@ -1252,6 +1252,25 @@ void test_touchpad_wheel_input() {
                           true, &ox, &oy);
   CHECK(oy <= 240.0f / vf::kTouchDragPixelsPerNotch + 0.01f);
 
+  // ELAN sends WM_VSCROLL, not a wheel. One line up, with 3 lines per notch, is a
+  // third of a notch toward the top. A scrollbar control (lparam is some other
+  // window) is not the touchpad and must be left alone.
+  const vf::LegacyScroll up = vf::legacy_scroll_message(0x0115, 0, 0, 0, 3.0f, 5.0f);
+  CHECK(up.from_driver);
+  CHECK_NEAR(up.y, 1.0f / 3.0f, 1e-4);
+  CHECK_NEAR(up.x, 0.0f, 1e-4);
+  const vf::LegacyScroll down = vf::legacy_scroll_message(0x0115, 1, 0, 0, 3.0f, 5.0f);
+  CHECK_NEAR(down.y, -1.0f / 3.0f, 1e-4);
+  const vf::LegacyScroll right = vf::legacy_scroll_message(0x0114, 1, 0, 42, 3.0f, 5.0f);
+  CHECK(right.from_driver);
+  CHECK_NEAR(right.x, -1.0f / 3.0f, 1e-4);
+  const vf::LegacyScroll page = vf::legacy_scroll_message(0x0115, 3, 42, 42, 3.0f, 5.0f);
+  CHECK_NEAR(page.y, -5.0f, 1e-4);
+  const vf::LegacyScroll control = vf::legacy_scroll_message(0x0115, 1, 99, 42, 3.0f, 5.0f);
+  CHECK(!control.from_driver);
+  const vf::LegacyScroll wheel = vf::legacy_scroll_message(0x020A, 120, 0, 0, 3.0f, 5.0f);
+  CHECK(!wheel.from_driver);
+
   // A long swipe of small deltas adds up to all of it, and loses nothing.
   acc.reset();
   float total = 0.0f;

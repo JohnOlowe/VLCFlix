@@ -29,6 +29,11 @@ bool pad_ignore_touch_mouse(unsigned int which);
 bool pad_finger_to_wheel(const SDL_Event& event, int window_w, int window_h, float* out_x,
                          float* out_y);
 
+// Scroll the Windows hook has already collected (ELAN WM_VSCROLL, pointer wheel).
+// The hook cannot safely inject an SDL event from inside the window procedure, so
+// the poll loop takes the notches from here. Returns false when nothing is waiting.
+bool pad_take_scroll(float* out_x, float* out_y, float* mouse_x, float* mouse_y);
+
 }  // namespace vf
 
 #endif  // VLCFLIX_PLATFORM_WINDOW_PAD_H

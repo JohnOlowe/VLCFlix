@@ -85,6 +85,53 @@ inline void touch_drag_to_wheel(float dx, float dy, float window_w, float window
   if (out_y) *out_y = sign * py / step;
 }
 
+// What an Elantech-style scrollbar message is worth, in mouse-wheel notches.
+//
+// Lenovo ELAN drivers do not send WM_MOUSEWHEEL for "drag two fingers to scroll".
+// They send WM_VSCROLL / WM_HSCROLL, the messages a window with a standard scrollbar
+// would get. Chrome turns those into a wheel. An SDL window has no scrollbar, so it
+// drops them, and a physical mouse wheel — which really is WM_MOUSEWHEEL — still works.
+//
+// msg/wparam/lparam are the Win32 values (WM_VSCROLL is 0x0115, WM_HSCROLL is 0x0114).
+// A child scrollbar control sets lparam to its HWND; the touchpad driver sets it to 0,
+// or to the window the gesture is aimed at. `owner` is that window, so a real control
+// is left alone.
+// `lines_per_notch` is SPI_GETWHEELSCROLLLINES (3 unless the user changed it): one
+// SB_LINE is one line, and one notch is that many lines. `page_notches` is one screen.
+struct LegacyScroll {
+  bool from_driver = false;
+  float x = 0.0f;
+  float y = 0.0f;
+};
+
+inline LegacyScroll legacy_scroll_message(unsigned msg, unsigned wparam, long long lparam,
+                                          long long owner, float lines_per_notch,
+                                          float page_notches) {
+  LegacyScroll out;
+  if (msg != 0x0114u && msg != 0x0115u) return out;
+  if (lparam != 0 && lparam != owner) return out;
+  out.from_driver = true;
+  const unsigned request = wparam & 0xFFFFu;
+  const float lines = lines_per_notch < 1.0f ? 1.0f : lines_per_notch;
+  const float page = page_notches < 1.0f ? 1.0f : page_notches;
+  // SB_LINEUP / SB_LINELEFT are 0. Positive notches scroll toward the start, which is
+  // what this app does with a positive wheel (the mouse-wheel tests rely on that).
+  float sign = 0.0f;
+  float mag = 0.0f;
+  switch (request) {
+    case 0: sign = 1.0f; mag = 1.0f / lines; break;   // line up / left
+    case 1: sign = -1.0f; mag = 1.0f / lines; break;  // line down / right
+    case 2: sign = 1.0f; mag = page; break;           // page up / left
+    case 3: sign = -1.0f; mag = page; break;          // page down / right
+    case 6: sign = 1.0f; mag = page * 8.0f; break;    // top / left end
+    case 7: sign = -1.0f; mag = page * 8.0f; break;   // bottom / right end
+    default: return out;  // thumb-track and end-scroll are not this gesture
+  }
+  if (msg == 0x0115u) out.y = sign * mag;
+  else out.x = sign * mag;
+  return out;
+}
+
 }  // namespace vf
 
 #endif  // VLCFLIX_PLATFORM_WHEEL_H

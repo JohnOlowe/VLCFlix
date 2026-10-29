@@ -75,6 +75,39 @@ Stored at `.secrets/github-token`, mode 600, git-ignored. Never printed.
 `scripts/setup-git-auth.sh` rebuilds the helper after a snapshot. Probe results
 are in `TURN_LOG.md` for 2026-10-29. Do not infer scope from `GET /user/repos`.
 
+## Turn 6 result (2026-10-29)
+
+Empty library matches the web empty state: centred “Your shelf is empty”, the
+folder copy, “Choose library folders”, and “Load the demo library”. Opened
+`docs/captures/js/empty.png` and `docs/captures/cpp/empty.png`. A 640×420 window
+scrolls far enough to show the footer (`cpp-empty` proof is the 1600×900 still).
+Keyboard focus grows the focused card the same way a hover does
+(`docs/captures/cpp/focus.png`).
+
+### Not verified
+
+These were not checked, or were checked only as far as the note says. Do not
+read a green `make verify` as covering them.
+
+- A Windows desktop, audio output, and a GPU. This machine has none.
+- Pixel-identical output against Chromium. FreeType and the browser do not match.
+- Play in browser, and the VLC-over-HTTP dock. Out of scope.
+- Settings fields the native player does not use: audio latency, VLC path, control
+  port, password, and fullscreen-on-play. The playback segment is drawn, and only
+  Real VLC is the engine. FFmpeg and Built-in player are not buttons.
+- The player sync control. The web player has no equivalent. It stays because
+  this player still applies a manual offset, and the tests require the hits.
+- The footer brand is one white “VLCFLIX”, not the orange/white split in the web
+  footer. Home was already accepted with that footer, so it was not restyled.
+- The gutter is 48 px, not 4 vw. Home rails have no hover arrows.
+- A precision touchpad. Not present. Wheel and Page Down are what the tests drive.
+- A live window resize by dragging. Short and wide sizes were rendered
+  (640×420 empty, 900×520 browse) and opened. The window was not dragged.
+- A live keypress in the window. Keyboard focus was a `--focus` render, plus the
+  existing key tests. It was not an xdotool key capture.
+- Dragging the settings scrollbar in the live window. The unit test scrolls that
+  sheet to Scan. The bar was not dragged by hand this turn.
+
 ## Turn 2 result (2026-10-29)
 
 Captures are in `docs/captures/`. The gap list is `docs/captures/GAP.md`.

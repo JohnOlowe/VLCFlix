@@ -375,6 +375,7 @@ void App::draw(Canvas& canvas) {
   // Browse and My List are grids and get their real column count below.
   order_columns_ = 1 << 20;
   hover_card_valid_ = false;
+  focus_card_valid_ = false;
   canvas.clear(theme::bg());
 
   if (view_ == View::Home) {
@@ -615,6 +616,10 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
     hover_card_rect_ = card;
     hover_card_valid_ = true;
   }
+  if (focused) {
+    focus_card_rect_ = card;
+    focus_card_valid_ = true;
+  }
 }
 
 void App::set_hover_preview(int index) {
@@ -658,12 +663,19 @@ void App::set_hover_preview(int index) {
 void App::draw_hover_card(Canvas& canvas) {
   if (view_ == View::Search && query_.empty()) return;
   if (open_item_ >= 0 || settings_open_ || browser_open_ || player_open_) return;
-  if (hover_item_ < 0 || static_cast<std::size_t>(hover_item_) >= catalog_.items.size()) return;
-
-  // Where the hovered card was drawn, recorded by draw_poster_card in this same pass.
-  if (!hover_card_valid_) return;
-  const Rect* card = &hover_card_rect_;
-  const Item& item = catalog_.items[static_cast<std::size_t>(hover_item_)];
+  // Pointer hover wins. Keyboard focus grows the same way when nothing is hovered,
+  // which is what the web card does for :focus-visible.
+  int shown = -1;
+  const Rect* card = nullptr;
+  if (hover_item_ >= 0 && hover_card_valid_) {
+    shown = hover_item_;
+    card = &hover_card_rect_;
+  } else if (focus_item_ >= 0 && focus_card_valid_) {
+    shown = focus_item_;
+    card = &focus_card_rect_;
+  }
+  if (card == nullptr || shown < 0 || static_cast<std::size_t>(shown) >= catalog_.items.size()) return;
+  const Item& item = catalog_.items[static_cast<std::size_t>(shown)];
   const bool wide = card->w > card->h * 1.2f;  // "Continue Watching" cards are 16:9
 
   // Grow around the card's own centre, so it looks like the card rising towards the
@@ -698,7 +710,8 @@ void App::draw_hover_card(Canvas& canvas) {
   const Rect media = grown;
   canvas.push_clip(Rect{grown.x + 2, grown.y + 2, grown.w - 4, grown.h - 4});
   const Image* still = wide ? backdrop_for(item) : poster_for(item);
-  if (preview_has_frame_ && preview_frame_.width > 0 && preview_index_ == hover_item_) {
+  if (preview_has_frame_ && preview_frame_.width > 0 && preview_index_ >= 0 &&
+      preview_index_ == hover_item_) {
     // The preview itself, from the film: the montage when the scan made one, otherwise
     // the film playing from a fifth of the way in. This is the motion the web build had.
     canvas.blit_raw(preview_frame_.pixels.data(), preview_frame_.width, preview_frame_.height,
@@ -707,7 +720,7 @@ void App::draw_hover_card(Canvas& canvas) {
     canvas.blit(*still, media, false);
     // "Preview starting" is worth saying only while it is true: a card that silently
     // shows a still looks broken on a machine where the preview cannot start.
-    if (preview_index_ == hover_item_) {
+    if (preview_index_ >= 0 && preview_index_ == hover_item_) {
       const std::string waiting = "preview starting...";
       const float badge_width = regular_.measure(waiting, theme::kFontTiny).width + 18;
       const Rect badge{grown.x + 10, grown.y + 10, badge_width, 20};
@@ -739,10 +752,10 @@ void App::draw_hover_card(Canvas& canvas) {
   };
   canvas.pop_clip();
 
-  add_hit(grown, Action{Action::Kind::OpenDetail, hover_item_, ""});
-  mini(grown.x + 12, true, "", Action{Action::Kind::Play, hover_item_, ""});
-  mini(grown.x + 43, false, "+", Action{Action::Kind::ToggleMyList, hover_item_, ""});
-  mini(grown.x + 74, false, "i", Action{Action::Kind::OpenDetail, hover_item_, ""});
+  add_hit(grown, Action{Action::Kind::OpenDetail, shown, ""});
+  mini(grown.x + 12, true, "", Action{Action::Kind::Play, shown, ""});
+  mini(grown.x + 43, false, "+", Action{Action::Kind::ToggleMyList, shown, ""});
+  mini(grown.x + 74, false, "i", Action{Action::Kind::OpenDetail, shown, ""});
 }
 
 void App::draw_hover_preview(Canvas& canvas) { draw_hover_card(canvas); }
@@ -752,7 +765,9 @@ void App::draw_header(Canvas& canvas) {
   // The web header stays a fade over the hero until the page has moved 26px, then
   // it goes solid and the nav fades in. Other screens always show the nav.
   const bool header_solid = view_ != View::Home || scroll_offset("page") > 26.0f;
-  const bool reveal_nav = header_solid || scroll_limit("page") < 1.0f;
+  // Nav appears once the home page has moved, the same rule as the web header.
+  // A short home page does not invent a scroll just to reveal it.
+  const bool reveal_nav = header_solid;
   if (!header_solid) {
     canvas.fill_gradient_v(Rect{0, 0, float(width_), header_height}, rgba(0x000000, 184),
                            rgba(0x000000, 0));
@@ -971,16 +986,36 @@ void App::draw_home(Canvas& canvas) {
 
     if (visible_h > 0) canvas.pop_clip();
   } else {
-    // Empty library: say what to do rather than showing a blank window.
-    const Rect box{theme::kGutter, 140, width_ - 2 * theme::kGutter, 236};
-    canvas.fill_round_rect(box, 12, theme::panel());
-    bold_.draw(canvas, "Your library is empty", box.x + 32, box.y + 40, 26, theme::text());
-    regular_.draw_wrapped(canvas,
-                          "Point VLCFlix Studio at the folders that hold your films in Settings, "
-                          "then press Scan library. Artwork is generated from the films themselves.",
-                          Rect{box.x + 32, box.y + 92, box.w - 64, 90}, theme::kFontBody, theme::dim());
-    draw_button(canvas, Rect{box.x + 32, box.y + 168, button_width("Open Settings", true), 40},
-                "Open Settings", true, Action{Action::Kind::OpenSettings, -1, ""});
+    // The web empty state is centred type, not a panel. Copy follows whether a
+    // folder has been chosen yet.
+    const float top = theme::kHeaderHeight + 90.0f - page;
+    const char* title = "Your shelf is empty";
+    const float title_size = 26.0f;
+    const float title_w = bold_.measure(title, title_size).width;
+    bold_.draw(canvas, title, (static_cast<float>(width_) - title_w) / 2.0f, top, title_size,
+               theme::text());
+    const bool have_folders = !settings_.library_folders.empty();
+    const char* body = have_folders
+                           ? "The folders you selected contain no video files yet — or the last scan has not "
+                             "run. Try scanning again."
+                           : "Point VLCFlix at a folder of videos. It reads the files, generates artwork "
+                             "with ffmpeg, and lays everything out like a streaming service.";
+    const float body_w = std::min(560.0f, static_cast<float>(width_) - 2 * theme::kGutter);
+    regular_.draw_wrapped(canvas, body,
+                          Rect{(static_cast<float>(width_) - body_w) / 2.0f, top + 46, body_w, 72}, 14.5f,
+                          theme::dim(), 3);
+    const float btn_h = 42.0f;
+    const float choose_w = button_width("Choose library folders", true, false);
+    const float demo_w = button_width("Load the demo library", false, false);
+    const float gap = 12.0f;
+    float bx = (static_cast<float>(width_) - (choose_w + gap + demo_w)) / 2.0f;
+    const float by = top + 132.0f;
+    draw_button(canvas, Rect{bx, by, choose_w, btn_h}, "Choose library folders", true,
+                Action{Action::Kind::OpenSettings, -1, ""}, false);
+    const Rect demo{bx + choose_w + gap, by, demo_w, btn_h};
+    canvas.stroke_round_rect(demo, 6, 1.0f, rgba(0xffffff, 82));
+    bold_.draw_centered(canvas, "Load the demo library", demo, 14.5f, theme::text());
+    add_hit(demo, Action{Action::Kind::UseSampleFolder, -1, sample_folder_});
   }
 
   /* --------------------------------- rails -------------------------------- */
@@ -988,6 +1023,11 @@ void App::draw_home(Canvas& canvas) {
   // Continue Watching used to be the only wide row; every home row is wide now.
   const std::vector<Rail> rails = build_rails(catalog_.items, progress_, my_list_);
   float y = rails_rect(page).y;
+  if (catalog_.items.empty()) {
+    // The empty copy is drawn in the hero area. On a short window the hero ends
+    // before those buttons do, and the footer was cutting through them.
+    y = std::max(y, theme::kHeaderHeight + 90.0f + 132.0f + 42.0f + 28.0f - page);
+  }
   const Rect page_view{0, static_cast<float>(theme::kHeaderHeight), static_cast<float>(width_),
                        static_cast<float>(height_) - theme::kHeaderHeight};
   canvas.push_clip(Rect{0, theme::kHeaderHeight, float(width_), float(height_) - theme::kHeaderHeight});

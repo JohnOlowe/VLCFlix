@@ -609,7 +609,9 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   // rectangle up in the hit list afterwards found the wrong thing (the hero has clickable
   // areas for the same film), which drew the enlarged card over the buttons instead of
   // over the poster the pointer is on.
-  if (hovered && pointer_known_ && card.contains(pointer_x_, pointer_y_)) {
+  // A real pointer has to be on this card. A render that forced the hover has no
+  // pointer yet, and still needs the card it named.
+  if (hovered && (!pointer_known_ || card.contains(pointer_x_, pointer_y_))) {
     hover_card_rect_ = card;
     hover_card_valid_ = true;
   }
@@ -666,7 +668,8 @@ void App::draw_hover_card(Canvas& canvas) {
 
   // Grow around the card's own centre, so it looks like the card rising towards the
   // pointer rather than sliding away from it.
-  const float scale = wide ? 1.12f : 1.24f;
+  // Home rails grow like the web card (1.34). Poster grids only nudge (1.06).
+  const float scale = wide ? 1.34f : 1.06f;
   float w = card->w * scale;
   float h = card->h * scale;
   float x = card->x + card->w / 2 - w / 2;
@@ -724,21 +727,22 @@ void App::draw_hover_card(Canvas& canvas) {
                          rgba(0x000000, 0), rgba(0x000000, 215));
   bold_.draw(canvas, bold_.ellipsize(item.title, theme::kFontBody, grown.w - 24), grown.x + 12,
              grown.bottom() - text_block + 6, theme::kFontBody, theme::text());
-  regular_.draw(canvas, regular_.ellipsize(meta_line(item), theme::kFontTiny, grown.w - 24),
-                grown.x + 12, grown.bottom() - text_block + 32, theme::kFontTiny,
-                rgba(0xffffff, 200));
-  if (const int percent = percent_for(item); percent > 0) {
-    const float bar_height = 4;
-    const float bar_y = grown.bottom() - text_block + 50;
-    canvas.fill_round_rect(Rect{grown.x + 12, bar_y, grown.w - 24, bar_height}, bar_height / 2,
-                           rgba(0xffffff, 70));
-    canvas.fill_round_rect(Rect{grown.x + 12, bar_y, (grown.w - 24) * percent / 100.0f, bar_height},
-                           bar_height / 2, theme::accent());
-  }
-  canvas.stroke_round_rect(grown, radius, 2.0f, rgba(theme::kAccent, 235));
+  // The web hover hides the meta line and the progress bar, and shows play / add / info.
+  const float by = grown.bottom() - text_block - 36;
+  auto mini = [&](float x, bool filled, const char* mark, Action action) {
+    const Rect box{x, by, 25, 25};
+    if (filled) canvas.fill_circle(box.x + 12.5f, box.y + 12.5f, 12.5f, rgb(0xffffff));
+    else canvas.stroke_circle(box.x + 12.5f, box.y + 12.5f, 12.0f, 1.5f, rgba(0xffffff, 180));
+    if (filled) canvas.fill_triangle_right(Rect{box.x + 9, box.y + 7, 9, 11}, rgb(0x0b0b0f));
+    else regular_.draw_centered(canvas, mark, box, 12, theme::text());
+    add_hit(box, action);
+  };
   canvas.pop_clip();
 
   add_hit(grown, Action{Action::Kind::OpenDetail, hover_item_, ""});
+  mini(grown.x + 12, true, "", Action{Action::Kind::Play, hover_item_, ""});
+  mini(grown.x + 43, false, "+", Action{Action::Kind::ToggleMyList, hover_item_, ""});
+  mini(grown.x + 74, false, "i", Action{Action::Kind::OpenDetail, hover_item_, ""});
 }
 
 void App::draw_hover_preview(Canvas& canvas) { draw_hover_card(canvas); }
@@ -2063,6 +2067,7 @@ bool App::handle(const InputEvent& event) {
         case Action::Kind::Volume:
         case Action::Kind::CycleSubtitles:
         case Action::Kind::NudgeSync:
+        case Action::Kind::ToggleFullscreen:
           return false;
       }
       return false;

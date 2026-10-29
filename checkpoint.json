@@ -4,16 +4,16 @@
   "path": "/home/user/VLCFlix",
   "remote": "https://github.com/JohnOlowe/VLCFlix.git",
   "branch": "studio-ui",
-  "tracking_branch": "origin/studio-ui (not pushed yet \u2014 this commit creates it)",
-  "local_head": "c743595",
-  "remote_sha": "c7435953e47a03dc4247c81b20c50d0132d8a299",
+  "tracking_branch": "origin/studio-ui",
+  "local_head": "a1d7e65",
+  "remote_sha": "a1d7e6535256ead3057abc0a9113a7f661fc5b18",
   "pushed": true,
   "awaiting": "Turn 2: run the Node app, capture every screen, render the current C++ UI, write a gap row per screen. No UI edit before those captures exist.",
   "credential_file": ".secrets/github-token (mode 600, git-ignored, persisted; .git-credentials and .git/config are stripped by snapshots, so scripts/setup-git-auth.sh must be re-run)",
-  "remote_sha_verified_at": "2026-10-28",
+  "remote_sha_verified_at": "2026-10-29",
   "note": "local_head is the Windows-execution commit on top of the v1.2.0 base",
-  "remote_sha_ref": "origin/cpp via git ls-remote, 2026-10-28",
-  "push_blocked_by": "nothing, once this commit is pushed. Token is local and git-ignored.",
+  "remote_sha_ref": "origin/studio-ui via git ls-remote and the branches API, 2026-10-29",
+  "push_blocked_by": null,
   "base_commit": "d4606a7 (main, v1.2.0)",
   "main_sha": "d4606a7c68090ddecd49ffaeaa175fb3d1284d75",
   "remote_sha_note": "git ls-remote origin cpp returned c7435953e47a03dc4247c81b20c50d0132d8a299 (2026-10-28): 2.0.4 - Home scrolls (touchpad fractional deltas, and the hero/rails no longer move in opposite directions) and the hover preview grows the card in place and plays the video. On top of 1ecb261 (2.0.3 checkpoint), a5c0d1b (2.0.3: software renderer, the D3D9 crash), 5a3bab3 (2.0.2), 8c3fbb9 (2.0.1), 4f1fb02 (manifest), 1d2cadf (one-file installer), de10fc5 (scrolling). main untouched at d4606a7. Verified: make verify (33 static + 590 test checks + 15 journey steps), make asan 590/590, a live Xvfb/xdotool run (preview frames differ inside the grown card; a page-bar drag moves content), and the 2.0.4 installer installed + verified under Wine 11.19 (372 files, version 2.0.4, scan 8/0, playback decoded=64 presented=62).",
@@ -468,6 +468,13 @@
    "branch_protection": 403,
    "note": "GET /user/repos lists 15 public repos with permissions.admin true. That is not token scope."
   },
-  "next": "Turn 2 captures. Install ffmpeg libsdl2 libvlc xvfb xdotool cmake. They do not survive a snapshot."
+  "next": "Turn 2 captures. Install ffmpeg libsdl2 libvlc xvfb xdotool cmake. They do not survive a snapshot.",
+  "remote_sha": "a1d7e6535256ead3057abc0a9113a7f661fc5b18",
+  "remote_verified": {
+   "ls_remote": "a1d7e6535256ead3057abc0a9113a7f661fc5b18",
+   "contents_github_token": 404,
+   "contents_git_credentials": 404,
+   "token_in_commit_payload": false
+  }
  }
 }

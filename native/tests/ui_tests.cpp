@@ -464,19 +464,21 @@ void test_ui_scrolling() {
     draw_once(app);
     CHECK(app.scroll_limit("detail") > 0.0f);
     // The sheet's own Play button, not the one the Home screen drew underneath it.
+    // Play sits on the hero now, so it is on screen at the top and scrolls away.
     auto sheet_play_y = [&](ui::App& screen) {
       float y = -1;
       for (const auto& hit : screen.hit_rects()) {
         if (hit.second.kind != ui::Action::Kind::Play) continue;
-        if (hit.first.x < 80) continue;  // the Home button sits at the gutter
+        if (top_action_at(screen, hit.first.x + hit.first.w / 2, hit.first.y + hit.first.h / 2).kind !=
+            ui::Action::Kind::Play) {
+          continue;
+        }
         y = hit.first.y;
       }
       return y;
     };
     const float play_before = sheet_play_y(app);
-    // At the top the buttons are below the fold, so they must NOT be clickable: an
-    // invisible target is the same bug as an unreachable one.
-    CHECK_EQ(play_before, -1.0f);
+    CHECK(play_before >= 0.0f);
     Canvas top(app.width(), app.height());
     app.draw(top);
     for (int i = 0; i < 40; ++i) app.handle(wheel_at(450, 260, -1));
@@ -490,9 +492,19 @@ void test_ui_scrolling() {
       if (top.pixels()[i] != end.pixels()[i]) ++differing;
     }
     CHECK(differing > top.pixels().size() / 4 / 20);
-    // And the buttons moved with the text, so they are reachable at the end.
+    // The hero buttons moved up with the art. Once they leave the sheet they must
+    // not stay clickable: an invisible target is the same bug as an unreachable one.
     const float play_after = sheet_play_y(app);
-    CHECK(play_after >= 0);
+    CHECK(play_after < play_before);
+    for (const auto& hit : app.hit_rects()) {
+      if (hit.second.kind != ui::Action::Kind::Play &&
+          hit.second.kind != ui::Action::Kind::ToggleMyList) {
+        continue;
+      }
+      if (hit.first.x < 40) continue;
+      CHECK(hit.first.bottom() > 0.0f);
+      CHECK(hit.first.y < static_cast<float>(app.height()));
+    }
   }
 
   TEST("ui: the settings sheet scrolls down to the Scan button");

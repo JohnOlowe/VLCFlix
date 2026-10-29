@@ -79,17 +79,30 @@ bool plausible_unix_ms(long long ms) {
   return ms > 946684800000LL && ms < 4102444800000LL;
 }
 
+bool fill_local_tm(std::time_t t, std::tm* out) {
+  // POSIX and the Windows CRT take the arguments in opposite orders, and MinGW's
+  // UCRT headers do not provide localtime_r at all.
+#if defined(_WIN32)
+  return localtime_s(out, &t) == 0;
+#else
+  return localtime_r(&t, out) != nullptr;
+#endif
+}
+
 std::string long_date(long long ms) {
   if (!plausible_unix_ms(ms)) return "";
   const std::time_t t = static_cast<std::time_t>(ms / 1000);
   std::tm local {};
-  if (!localtime_r(&t, &local)) return "";
+  if (!fill_local_tm(t, &local)) return "";
   char buf[64];
-  if (std::strftime(buf, sizeof buf, "%B %e, %Y", &local) == 0) return "";
+  // %d, not %e: %e is a glibc extension and the Windows CRT leaves it unexpanded.
+  if (std::strftime(buf, sizeof buf, "%B %d, %Y", &local) == 0) return "";
   std::string out = buf;
-  // %e pads the day with a space. "October  9, 2026" should read "October 9, 2026".
-  const std::size_t pad = out.find("  ");
-  if (pad != std::string::npos) out.erase(pad, 1);
+  // "October 09, 2026" should read "October 9, 2026".
+  const auto comma = out.find(',');
+  if (comma != std::string::npos && comma >= 3 && out[comma - 3] == ' ' && out[comma - 2] == '0') {
+    out.erase(comma - 2, 1);
+  }
   return out;
 }
 
@@ -123,7 +136,7 @@ std::string scan_clock(long long ms) {
   if (ms <= 0) return "";
   const std::time_t t = static_cast<std::time_t>(ms / 1000);
   std::tm local {};
-  if (!localtime_r(&t, &local)) return "";
+  if (!fill_local_tm(t, &local)) return "";
   char buf[32];
   if (std::strftime(buf, sizeof buf, "%I:%M:%S %p", &local) == 0) return "";
   std::string out = buf;

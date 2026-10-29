@@ -97,8 +97,8 @@ read a green `make verify` as covering them.
   Real VLC is the engine. FFmpeg and Built-in player are not buttons.
 - The player sync control. The web player has no equivalent. It stays because
   this player still applies a manual offset, and the tests require the hits.
-- The footer brand is one white “VLCFLIX”, not the orange/white split in the web
-  footer. Home was already accepted with that footer, so it was not restyled.
+- The footer brand is yellow “VLC” and white “FLIX”, same as the header. The
+  all-white wordmark was the thing that looked unfinished.
 - The gutter is 48 px, not 4 vw. Home rails have no hover arrows.
 - A precision touchpad. Not present. Wheel and Page Down are what the tests drive.
 - A live window resize by dragging. Short and wide sizes were rendered

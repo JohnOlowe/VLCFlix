@@ -446,8 +446,27 @@ function cardEl(item, { poster = false } = {}) {
   }
 
   if (item.previewUrl) wireHoverPreview(card, item);
+  card.addEventListener('mouseenter', () => schedulePreviewPriority(item.id));
+  card.addEventListener('mouseleave', () => cancelPreviewPriority(item.id));
   card.addEventListener('click', () => openDetail(item.id));
   return card;
+}
+
+let previewPriorityTimer = null;
+let previewPriorityId = '';
+
+/** 120ms: dragging across a row must not send ten films to the front. */
+function schedulePreviewPriority(id) {
+  previewPriorityId = id;
+  clearTimeout(previewPriorityTimer);
+  previewPriorityTimer = setTimeout(() => {
+    if (previewPriorityId !== id) return;
+    fetch(`/api/preview/priority/${encodeURIComponent(id)}`, { method: 'POST' }).catch(() => {});
+  }, 120);
+}
+
+function cancelPreviewPriority(id) {
+  if (previewPriorityId === id) previewPriorityId = '';
 }
 
 function wireHoverPreview(card, item) {

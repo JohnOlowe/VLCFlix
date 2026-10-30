@@ -1,6 +1,7 @@
 #include "ui/app.h"
 
 #include "library/fs_browse.h"
+#include "library/probe.h"
 
 #include <algorithm>
 #include <chrono>
@@ -205,12 +206,20 @@ App::App(std::string media_dir, std::string data_dir)
 }
 
 App::~App() {
+  join_scan_thread();
   {
     std::lock_guard<std::mutex> lock(preview_mu_);
     preview_stop_thread_ = true;
   }
   preview_cv_.notify_all();
   if (preview_thread_.joinable()) preview_thread_.join();
+}
+
+void App::join_scan_thread() {
+  scan_cancel_.store(true);
+  if (scan_thread_.joinable()) scan_thread_.join();
+  scan_cancel_.store(false);
+  scan_running_.store(false);
 }
 
 void App::set_catalog(Catalog catalog) { catalog_ = std::move(catalog); }
@@ -800,25 +809,52 @@ void App::preview_thread_main() {
 }
 
 void App::set_hover_preview(int index) {
-  if (index == preview_index_) return;
+  std::string desired;
+  bool montage = false;
+  std::string hovered_id;
+  int version = -1;
+  if (index >= 0 && static_cast<std::size_t>(index) < catalog_.items.size()) {
+    const Item& item = catalog_.items[static_cast<std::size_t>(index)];
+    hovered_id = item.id;
+    version = item.preview_version;
+    // The montage is what hover should show. Opening the whole film fights the
+    // encoder on a 2-core machine and was the first-hover freeze. While a pass is
+    // running, wait for the clip and let this film jump the queue.
+    if (!item.preview.empty()) {
+      const std::string candidate = join(media_dir_, item.preview);
+      if (file_size(candidate) > 0) {
+        desired = candidate;
+        montage = true;
+      }
+    }
+    if (desired.empty() && !scan_running_.load() && file_size(item.path) > 0) desired = item.path;
+  }
+  if (hovered_id != hover_priority_id_) {
+    hover_priority_id_ = hovered_id;
+    hover_priority_at_ = hovered_id.empty() ? -1 : clock_now();
+    if (hovered_id.empty()) prioritize_artwork("");
+  }
+  // Same path after a re-render is a new file. The version is what says so.
+  if (index == preview_index_ && desired == preview_playing_path_ && version == preview_playing_version_) {
+    return;
+  }
   preview_index_ = index;
+  preview_playing_path_ = desired;
+  preview_playing_version_ = version;
   preview_warned_ = false;
   preview_started_ = clock_now();
   PreviewRequest req;
   req.generation = preview_generation_.fetch_add(1) + 1;
   req.index = index;
-  bool has_file = false;
-  if (index >= 0 && static_cast<std::size_t>(index) < catalog_.items.size()) {
-    const Item& item = catalog_.items[static_cast<std::size_t>(index)];
-    // Prefer the generated preview montage (that is what the web build played); fall
-    // back to the film itself, from a fifth of the way in, so there is always motion.
-    std::string path = !item.preview.empty() ? join(media_dir_, item.preview) : item.path;
-    if (!file_exists(path)) path = item.path;
-    if (file_exists(path)) {
-      req.path = std::move(path);
+  const bool has_file = !desired.empty();
+  if (has_file) {
+    req.path = std::move(desired);
+    if (index >= 0 && static_cast<std::size_t>(index) < catalog_.items.size()) {
+      const Item& item = catalog_.items[static_cast<std::size_t>(index)];
       req.name = item.filename;
-      req.seek_at = item.duration > 10 ? item.duration * 0.2 : -1;
-      has_file = true;
+      // A montage starts at its first cut. Seeking by the film's duration lands
+      // past the end of a 15 second clip and the card stays blank.
+      req.seek_at = montage ? -1 : (item.duration > 10 ? item.duration * 0.2 : -1);
     }
   }
   {
@@ -981,6 +1017,14 @@ void App::draw_header(Canvas& canvas) {
       add_hit(area, entry.action);
       x += text_width + 22;
     }
+  }
+
+  // Artwork keeps running after Settings closes. Say so, in the gap before the
+  // search icon, so a hover is not a guess about whether a preview is coming.
+  const float cluster_left = static_cast<float>(width_) - theme::kGutter - 150.0f;
+  if (scanning_ && !scan_label_.empty() && cluster_left - x > 80.0f) {
+    regular_.draw(canvas, regular_.ellipsize(scan_label_, 12.0f, cluster_left - x - 12.0f), x, mid - 7,
+                  12.0f, theme::accent());
   }
 
   // Right-hand cluster: search icon, VLC pill, gear. The search field only opens
@@ -1694,45 +1738,191 @@ int App::scan_now() {
                : "Add a library folder first — the samples are at " + sample_folder_);
     return -1;
   }
+  // A resume pass and a scan must not draw the same film at once.
+  join_scan_thread();
   scanning_ = true;
+  scan_running_.store(true);
   scan_done_ = 0;
   scan_total_ = 0;
   scan_label_ = "Reading files…";
-  if (pump) pump();
 
-  ScanOptions options;
-  options.folders = settings_.library_folders;
-  options.media_dir = media_dir_;
-  options.previous = store_.load_catalog();
-  options.render_artwork = true;
-  options.hw_decode = settings_.hw_decode;
+  const std::vector<std::string> folders = settings_.library_folders;
+  Catalog previous = store_.load_catalog();
+  const bool hw = settings_.hw_decode;
+  const std::string media = media_dir_;
   const double started = now_seconds();
-  options.on_progress = [&](const ScanProgress& progress) {
-    scan_done_ = progress.done;
-    scan_total_ = std::max(progress.total, 1);
-    scan_label_ = progress.phase == "read"
-                      ? "Reading " + progress.current
-                      : "Drawing artwork " + std::to_string(progress.done) + "/" +
-                            std::to_string(progress.total);
-    if (pump) pump();
-  };
-  options.on_catalog = [&](const Catalog& catalog) {
-    catalog_ = catalog;
-    store_.save_catalog(catalog);
-    if (pump) pump();
-  };
-  const Catalog result = scan_library(options);
-  catalog_ = result;
-  store_.save_catalog(result);
-  scanning_ = false;
-  scan_done_ = 0;
-  scan_total_ = 0;
-  scan_label_.clear();
-  const double seconds = now_seconds() - started;
-  notify("Scanned " + counted(result.items.size(), " film in ", " films in ") +
-         std::to_string(static_cast<int>(seconds + 0.5)) + " s");
-  LOG_INFO("ui: scan finished with %zu item(s) in %.2f s", result.items.size(), seconds);
-  return static_cast<int>(result.items.size());
+  scan_thread_ = std::thread([this, folders, previous = std::move(previous), hw, media, started]() mutable {
+    ScanOptions options;
+    options.folders = folders;
+    options.media_dir = media;
+    options.previous = std::move(previous);
+    options.render_artwork = true;
+    options.hw_decode = hw;
+    options.cancel = [this] { return scan_cancel_.load(); };
+    options.on_progress = [this](const ScanProgress& progress) {
+      std::lock_guard<std::mutex> lock(publish_mu_);
+      pending_done_ = progress.done;
+      pending_total_ = std::max(progress.total, 1);
+      pending_label_ = progress.phase == "read"
+                           ? "Reading " + progress.current
+                           : "Drawing artwork " + std::to_string(progress.done) + "/" +
+                                 std::to_string(progress.total);
+      has_pending_progress_ = true;
+      publish_dirty_ = true;
+    };
+    options.on_catalog = [this](const Catalog& catalog) {
+      std::lock_guard<std::mutex> lock(publish_mu_);
+      pending_catalog_ = catalog;
+      has_pending_catalog_ = true;
+      publish_dirty_ = true;
+    };
+    Catalog result = scan_library(options);
+    const double seconds = now_seconds() - started;
+    const std::size_t found = result.items.size();
+    {
+      std::lock_guard<std::mutex> lock(publish_mu_);
+      pending_catalog_ = std::move(result);
+      has_pending_catalog_ = true;
+      pending_done_ = 0;
+      pending_total_ = 0;
+      pending_label_.clear();
+      has_pending_progress_ = true;
+      pending_notice_ = "Scanned " + counted(found, " film in ", " films in ") +
+                        std::to_string(static_cast<int>(seconds + 0.5)) + " s";
+      scan_running_.store(false);
+      publish_dirty_ = true;
+    }
+    LOG_INFO("ui: scan finished with %zu item(s) in %.2f s", found, seconds);
+  });
+  return 0;
+}
+
+void App::resume_missing_artwork() {
+  if (scan_running_.load() || scan_thread_.joinable()) return;
+  if (catalog_.items.empty()) return;
+  bool missing = false;
+  for (const auto& item : catalog_.items) {
+    if (item.unreadable || !should_retry_art(item)) continue;
+    if (needs_artwork(item, media_dir_)) {
+      missing = true;
+      break;
+    }
+  }
+  if (!missing) return;
+  const ToolProbe tools = probe_tools();
+  if (!tools.can_render) return;
+
+  scanning_ = true;
+  scan_running_.store(true);
+  scan_cancel_.store(false);
+  scan_label_ = "Drawing artwork…";
+  Catalog snapshot = catalog_;
+  snapshot.have_ffmpeg = tools.ffmpeg;
+  snapshot.have_ffprobe = tools.ffprobe;
+  snapshot.can_render = tools.can_render;
+  const bool hw = settings_.hw_decode;
+  const std::string media = media_dir_;
+  scan_thread_ = std::thread([this, snapshot = std::move(snapshot), hw, media]() mutable {
+    set_hwaccel_decoding(hw);
+    const ArtRunResult art = render_missing_artwork(
+        snapshot.items, media, false,
+        [this](const ArtProgress& progress) {
+          std::lock_guard<std::mutex> lock(publish_mu_);
+          pending_done_ = progress.done;
+          pending_total_ = std::max(progress.total, 1);
+          pending_label_ = "Drawing artwork " + std::to_string(progress.done) + "/" +
+                           std::to_string(progress.total);
+          has_pending_progress_ = true;
+          publish_dirty_ = true;
+        },
+        [this, &snapshot] {
+          std::lock_guard<std::mutex> lock(publish_mu_);
+          pending_catalog_ = snapshot;
+          has_pending_catalog_ = true;
+          publish_dirty_ = true;
+        },
+        [this] { return scan_cancel_.load(); });
+    std::lock_guard<std::mutex> lock(publish_mu_);
+    pending_catalog_ = std::move(snapshot);
+    has_pending_catalog_ = true;
+    pending_done_ = 0;
+    pending_total_ = 0;
+    pending_label_.clear();
+    has_pending_progress_ = true;
+    if (art.drawn > 0) {
+      pending_notice_ = "Previews ready for " + std::to_string(art.drawn) +
+                        (art.drawn == 1 ? " film" : " films");
+    }
+    scan_running_.store(false);
+    publish_dirty_ = true;
+    LOG_INFO("ui: artwork resume drew %d, %d still missing", art.drawn, art.remaining);
+  });
+}
+
+bool App::apply_scan_publish() {
+  Catalog next;
+  bool have_catalog = false;
+  bool have_progress = false;
+  int done = 0;
+  int total = 0;
+  std::string label;
+  std::string notice;
+  const bool running = scan_running_.load();
+  {
+    std::lock_guard<std::mutex> lock(publish_mu_);
+    if (!publish_dirty_) return false;
+    publish_dirty_ = false;
+    if (has_pending_catalog_) {
+      next = std::move(pending_catalog_);
+      has_pending_catalog_ = false;
+      have_catalog = true;
+    }
+    if (has_pending_progress_) {
+      done = pending_done_;
+      total = pending_total_;
+      label = std::move(pending_label_);
+      has_pending_progress_ = false;
+      have_progress = true;
+    }
+    notice = std::move(pending_notice_);
+    pending_notice_.clear();
+  }
+
+  bool changed = false;
+  scanning_ = running;
+  if (have_progress) {
+    scan_done_ = done;
+    scan_total_ = total;
+    scan_label_ = std::move(label);
+    changed = true;
+  } else if (!running) {
+    scan_done_ = 0;
+    scan_total_ = 0;
+    scan_label_.clear();
+    changed = true;
+  }
+  if (have_catalog) {
+    catalog_ = std::move(next);
+    store_.save_catalog(catalog_);
+    changed = true;
+    // The montage may have just landed under the pointer. Start it without
+    // waiting for the mouse to move.
+    if (hover_item_ >= 0) set_hover_preview(hover_item_);
+  }
+  if (!notice.empty()) {
+    notify(notice);
+    changed = true;
+  }
+  return changed;
+}
+
+void App::flush_hover_priority(double now) {
+  if (hover_priority_id_.empty() || hover_priority_at_ < 0) return;
+  if (now - hover_priority_at_ < 0.12) return;
+  if (hover_item_ < 0 || static_cast<std::size_t>(hover_item_) >= catalog_.items.size()) return;
+  if (catalog_.items[static_cast<std::size_t>(hover_item_)].id != hover_priority_id_) return;
+  prioritize_artwork(hover_priority_id_);
+  hover_priority_at_ = -1;
 }
 
 /* ------------------------------ folder picker ----------------------------- */

@@ -405,11 +405,27 @@ long long raw_now_ms() {
 
 void test_artwork_rules() {
   TEST("artwork: preview segments, deep colour (A5), versioning (A9)");
-  const auto segments = preview_segments(16.0);
-  CHECK_EQ(segments.size(), std::size_t(5));
-  CHECK(segments[0].start > 1.5 && segments[0].start < 2.5);
-  CHECK_EQ(segments[0].length, 2.0);
-  CHECK(segments.back().start <= 14.0);
+  const auto segments = preview_segments(600.0);
+  CHECK_EQ(segments.size(), std::size_t(6));
+  CHECK(segments[0].start > 40.0 && segments[0].start < 55.0);
+  CHECK_EQ(segments[0].length, 3.0);
+  CHECK(segments.back().start > 600.0 * 0.8);
+  for (std::size_t i = 1; i < segments.size(); ++i) {
+    CHECK(segments[i].start > segments[i - 1].start);
+    CHECK(segments[i].start + segments[i].length <= 600.0 + 0.001);
+  }
+  // A 16s clip still gets distinct cuts and does not run past the end.
+  const auto brief = preview_segments(16.0);
+  CHECK(!brief.empty());
+  CHECK(brief.back().start + brief.back().length <= 16.0 + 0.001);
+
+  const auto queued = preview_queue_after_hover({"a", "b", "c"}, "c");
+  CHECK_EQ(queued.size(), std::size_t(3));
+  CHECK_STR_EQ(queued[0], "c");
+  CHECK_STR_EQ(queued[1], "a");
+  const auto inserted = preview_queue_after_hover({"a", "b"}, "hovered");
+  CHECK_STR_EQ(inserted[0], "hovered");
+  CHECK_EQ(inserted.size(), std::size_t(3));
 
   // A one-second film cannot support five distinct snippets.
   CHECK(preview_segments(1.0).size() <= 2);

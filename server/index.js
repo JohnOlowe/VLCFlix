@@ -879,6 +879,37 @@ app.get('/api/subtitles/:id/file', (req, res) => {
 // drawing first competes with WebView2 for the CPU, and on a cold start the
 // window took longer than the launcher's watchdog to appear.
 let uiReady = false;
+// The film under the pointer jumps the artwork queue. The current ffmpeg cut is
+// left to finish; the next cut is this one. Scrubbing is debounced by the page.
+app.post('/api/preview/priority/:id', (req, res) => {
+  const catalog = store.getCatalog();
+  const item = (catalog.items || []).find((entry) => entry.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Unknown item' });
+  const missing = library.missingArt(item, MEDIA_DIR);
+  if (!missing.preview) return res.json({ ok: true, ready: true });
+  library.prioritizeArtwork(item.id);
+  // A pass already running will take this id next. If nothing is running, start
+  // one for this film so the hover does not wait for a manual scan.
+  if (!artState.running && !scanState.running) {
+    Object.assign(artState, {
+      running: true, done: 0, total: 1, current: item.filename || '',
+      startedAt: Date.now(), cancelled: false, finishedAt: null,
+    });
+    library.renderMissingArtwork([item], {
+      mediaDir: MEDIA_DIR,
+      retryFailed: true,
+      cancel: () => artState.cancelled || scanState.running,
+      onProgress: (p) => Object.assign(artState, p),
+      onCatalog: () => store.saveCatalog(catalog),
+    }).catch((err) => console.error('[preview] priority pass failed:', err))
+      .finally(() => {
+        artState.running = false;
+        artState.finishedAt = Date.now();
+      });
+  }
+  res.json({ ok: true, ready: false });
+});
+
 app.post('/api/ui/ready', (req, res) => {
   uiReady = true;
   res.json({ ok: true });

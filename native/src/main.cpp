@@ -430,6 +430,9 @@ int command_ui(const Args& args) {
     }
   }
   app->on_toggle_fullscreen = [&window] { window.toggle_fullscreen(); };
+  // Posters and previews that a previous run did not finish. The window stays
+  // usable; the film under the pointer is drawn next.
+  app->resume_missing_artwork();
   // The scan runs on this thread; `pump` is how it keeps the window painting.
   app->pump = [&]() {
     app->draw(canvas);

@@ -223,15 +223,18 @@ class App {
   // (A4): 92 % or more leaves Continue Watching.
   void finish_film();
 
-  // Set by the window loop to redraw and present a frame. The library scan is
-  // synchronous (it is the same code the CLI runs, and a second thread would need a
-  // second copy of every rule), but it calls this between items so the window keeps
-  // painting instead of freezing into "not responding".
+  // Kept so a caller can redraw between items. The scan itself no longer runs on
+  // the window thread: artwork workers have to be able to lose their place to the
+  // film under the pointer, and that only works if the window is still reading the mouse.
   std::function<void()> pump;
 
-  // Runs the real scan over the configured folders and returns how many films it
-  // found. Persists the catalog through the same store the CLI uses.
+  // Starts a scan on a background thread and returns 0. Returns -1 when there is
+  // nothing to scan. The window stays usable; tick() copies the catalog in as
+  // artwork lands.
   int scan_now();
+  // Draws whatever posters and previews are still missing, without walking the
+  // folders again. The film under the pointer is drawn next.
+  void resume_missing_artwork();
 
   // Settings editing, persisted immediately. Both return false and set `error` when
   // the change was rejected (a folder that does not exist, for instance).
@@ -359,6 +362,11 @@ class App {
   void draw_hover_card(Canvas& canvas);
   void ensure_preview_thread();
   void preview_thread_main();
+  // Copies a catalog the scan thread published. Called from tick, never from the
+  // scan thread: the window thread is the only one that draws and saves.
+  bool apply_scan_publish();
+  void join_scan_thread();
+  void flush_hover_priority(double now);
   Presenter presenter_;
   EngineStatus player_status_;
   bool player_open_ = false;       // a film is loaded in the player view
@@ -390,6 +398,24 @@ class App {
   int scan_done_ = 0;
   int scan_total_ = 0;
   std::string sample_folder_;
+  // The scan thread only writes these. tick() copies them onto the fields above.
+  std::mutex publish_mu_;
+  bool publish_dirty_ = false;
+  bool has_pending_catalog_ = false;
+  Catalog pending_catalog_;
+  bool has_pending_progress_ = false;
+  int pending_done_ = 0;
+  int pending_total_ = 0;
+  std::string pending_label_;
+  std::string pending_notice_;
+  std::atomic<bool> scan_cancel_{false};
+  std::atomic<bool> scan_running_{false};
+  std::thread scan_thread_;
+  // Debounce: scrubbing across ten cards must not jump ten films to the front.
+  std::string hover_priority_id_;
+  double hover_priority_at_ = -1;
+  std::string preview_playing_path_;
+  int preview_playing_version_ = -1;
   Catalog catalog_;
   std::map<std::string, Progress> progress_;
   std::vector<std::string> my_list_;

@@ -103,11 +103,12 @@ test('a video with no sidecars reports no tracks', () => {
   assert.deepEqual(findSubtitles('/v/Movie.mkv', ['Movie.mkv', 'notes.txt']), []);
 });
 
-const { previewSegments, listFolderSubtitles } = require('../server/library');
+const { previewSegments, listFolderSubtitles, previewQueueAfterHover } = require('../server/library');
 
 test('preview samples several different parts of the film', () => {
   const segments = previewSegments(600);
-  assert.equal(segments.length, 5);
+  assert.equal(segments.length, 6);
+  assert.equal(segments[0].length, 3);
   const starts = segments.map((s) => s.start);
   // Spread out, strictly increasing: one moment repeated five times is not a preview.
   for (let i = 1; i < starts.length; i += 1) assert.ok(starts[i] > starts[i - 1]);
@@ -129,6 +130,12 @@ test('a very short clip does not repeat the same frames', () => {
   assert.ok(segments.length <= 2);
   const starts = segments.map((s) => s.start);
   assert.equal(new Set(starts).size, starts.length);
+});
+
+test('a hover moves that film to the front of the preview queue', () => {
+  assert.deepEqual(previewQueueAfterHover(['a', 'b', 'c'], 'c'), ['c', 'a', 'b']);
+  assert.deepEqual(previewQueueAfterHover(['a', 'b'], 'hovered'), ['hovered', 'a', 'b']);
+  assert.deepEqual(previewQueueAfterHover(['a'], ''), ['a']);
 });
 
 test('an unreadable or empty file yields no preview', () => {

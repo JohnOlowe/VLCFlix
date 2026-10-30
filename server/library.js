@@ -7,7 +7,7 @@
  * produces the three images the Netflix-style UI needs:
  *   poster   (2:3)  - the card face
  *   backdrop (16:9) - the hero billboard
- *   preview  (8s)   - the muted clip that plays when a card is hovered
+ *   preview  (15–18s) - the muted montage that plays when a card is hovered
  *
  * Artwork is produced with ffmpeg when it is installed. When it is not, the
  * UI falls back to a deterministic gradient derived from the title, so the app
@@ -131,6 +131,22 @@ async function probeVideo(file) {
   }
 }
 
+/**
+ * The film under the pointer. Workers finish the cut they already started, then
+ * take this id next. They do not kill ffmpeg. Empty puts the queue back in order.
+ */
+let artworkPriorityId = '';
+
+function prioritizeArtwork(id) {
+  artworkPriorityId = id || '';
+}
+
+function previewQueueAfterHover(pending, hovered) {
+  const ids = pending.map((item) => (typeof item === 'string' ? item : item.id));
+  if (!hovered) return ids;
+  return [hovered, ...ids.filter((id) => id !== hovered)];
+}
+
 /** Bounded parallelism: N workers pulling from one queue, order preserved. */
 async function runPool(items, limit, worker) {
   const results = new Array(items.length);
@@ -199,21 +215,23 @@ async function correctExposure(file, target = 70) {
  * clips instead of keeping the old style forever (artwork is cached by
  * size+mtime, and a format change is invisible to that check).
  */
-const PREVIEW_VERSION = 2;
+const PREVIEW_VERSION = 3;
 
 /**
  * Where the preview snippets are taken from: spread across the film, never past
  * its end, never so short that a frame or two is all you get.
  */
-function previewSegments(duration, { count = 5, length = 2 } = {}) {
+function previewSegments(duration, { count = 6, length = 3 } = {}) {
   if (!(duration > 0)) return [];
   const len = Math.min(length, Math.max(0.6, duration / count));
-  const fractions = [0.12, 0.32, 0.52, 0.72, 0.9].slice(0, count);
+  // 8/24/40/58/76/90%: not the studio logo, not the credits.
+  const fractions = [0.08, 0.24, 0.40, 0.58, 0.76, 0.90].slice(0, count);
   const starts = [];
   for (const fraction of fractions) {
     const start = Math.max(0, Math.min(duration * fraction, duration - len));
     // A very short film cannot support distinct snippets; do not repeat frames.
-    if (starts.some((existing) => Math.abs(existing - start) < 0.15)) continue;
+    // A cut has to start a cut-length away, or a short file repeats the same frames.
+    if (starts.some((existing) => Math.abs(existing - start) < Math.max(0.15, len * 0.85))) continue;
     starts.push(start);
   }
   return starts.map((start) => ({ start, length: len }));
@@ -268,8 +286,60 @@ function sweepTempArt(outDir) {
   return removed;
 }
 
+/**
+ * Six short cuts, each an input-seek, then a byte-join. No `-hwaccel`: a scale
+ * filter cannot read a qsv surface, and that is the black 0-byte preview.
+ * `shouldYield` is asked before each cut. True means stop starting cuts — the
+ * one already running is left alone — and let the hovered film go next.
+ */
+async function renderPreviewMontage(file, duration, output, shouldYield = () => false) {
+  const segments = previewSegments(duration);
+  if (!segments.length) throw new Error('duration unknown');
+  const tag = `.tmp${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
+  const cuts = [];
+  const quote = (value) => value.replace(/\\/g, '/').replace(/'/g, "'\\''");
+  try {
+    for (let i = 0; i < segments.length; i += 1) {
+      if (shouldYield()) return { yielded: true };
+      const seg = segments[i];
+      const cut = output.replace(/(\.mp4)$/i, `${tag}.cut${i}$1`);
+      await run('ffmpeg', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-ss', seg.start.toFixed(3), '-t', seg.length.toFixed(3), '-i', file,
+        '-vf', 'scale=-2:360:flags=fast_bilinear,fps=24', '-an',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p',
+        cut,
+      ], { timeout: 30000 });
+      if (!fileHasContent(cut)) throw new Error(`cut ${i} was empty`);
+      cuts.push(cut);
+    }
+    if (!cuts.length) throw new Error('no cuts');
+    if (cuts.length === 1) {
+      fs.renameSync(cuts.pop(), output);
+      return { yielded: false };
+    }
+    const list = output.replace(/(\.mp4)$/i, `${tag}.txt`);
+    fs.writeFileSync(list, cuts.map((cut) => `file '${quote(cut)}'`).join('\n'));
+    try {
+      await run('ffmpeg', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', output,
+      ], { timeout: 20000 });
+    } finally {
+      try { fs.unlinkSync(list); } catch { /* already gone */ }
+    }
+    if (!fileHasContent(output)) throw new Error('concat produced nothing');
+    return { yielded: false };
+  } finally {
+    for (const cut of cuts) {
+      try { fs.unlinkSync(cut); } catch { /* already gone */ }
+    }
+  }
+}
+
 async function renderArt(file, duration, outDir, id,
-                        needs = { poster: true, backdrop: true, preview: true }) {
+                        needs = { poster: true, backdrop: true, preview: true },
+                        shouldYield = () => false) {
   const at = (fraction) => Math.max(0, Math.min(duration * fraction, Math.max(0, duration - 1)));
   const final = artPaths(outDir, id);
   // Render to a temp name and rename when complete, so an interrupted pass can
@@ -296,25 +366,7 @@ async function renderArt(file, duration, outDir, id,
       '-frames:v', '1', '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,' + GRADE,
       '-q:v', '3', outputs.backdrop], { timeout: 60000 }));
   }
-  if (needs.preview) {
-    const segments = previewSegments(duration);
-    if (segments.length) {
-      // One ffmpeg pass: seek to each snippet, normalise it, then concat. A single
-      // input would only ever show one moment of the film.
-      const inputs = segments.flatMap((seg) => ['-ss', String(seg.start.toFixed(3)),
-                                                '-t', String(seg.length.toFixed(3)), '-i', file]);
-      const normalise = segments
-        .map((_, i) => `[${i}:v]scale=640:-2,setsar=1,fps=24[v${i}]`)
-        .join(';');
-      const concat = segments.map((_, i) => `[v${i}]`).join('') + `concat=n=${segments.length}:v=1:a=0[out]`;
-      keys.push('preview');
-      jobs.push(run('ffmpeg', ['-y', '-loglevel', 'error', ...inputs,
-        '-filter_complex', `${normalise};${concat}`, '-map', '[out]', '-an',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30', '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart', outputs.preview], { timeout: 180000 }));
-    }
-  }
-
+  // Stills first. The montage yields between cuts, so it cannot share this burst.
   const settled = await Promise.allSettled(jobs);
   const produced = {};
   const failures = [];
@@ -334,6 +386,25 @@ async function renderArt(file, duration, outDir, id,
       .map((key) => correctExposure(outputs[key], key === 'poster' ? 64 : 72))
   );
 
+  let yielded = false;
+  if (needs.preview && !yielded) {
+    if (shouldYield()) yielded = true;
+    else {
+      try {
+        const montage = await renderPreviewMontage(file, duration, outputs.preview, shouldYield);
+        if (montage.yielded) yielded = true;
+        else if (fileHasContent(outputs.preview)) produced.preview = true;
+        else failures.push('preview');
+      } catch (err) {
+        if (err && err.yielded) yielded = true;
+        else {
+          failures.push('preview');
+          console.warn(`[library] preview failed for ${path.basename(file)}: ${err.message?.split('\n')[0]}`);
+        }
+      }
+    }
+  }
+
   const done = {};
   for (const key of Object.keys(produced)) {
     try {
@@ -348,7 +419,7 @@ async function renderArt(file, duration, outDir, id,
     if (done[key]) continue;
     try { fs.unlinkSync(outputs[key]); } catch { /* nothing to clean */ }
   }
-  return { produced: done, failures };
+  return { produced: done, failures, yielded };
 }
 
 const SUB_EXT = new Set(['.srt', '.vtt']);
@@ -522,54 +593,84 @@ async function renderMissingArtwork(items, {
   let lastPublish = Date.now();
   onProgress({ phase: 'art', done: 0, total: pending.length, current: '' });
 
-  await runPool(pending, 2, async (item) => {
-    if (cancel()) { remaining += 1; return; }
-    const files = artPaths(mediaDir, item.id);
-    try {
-      // A catalogue entry with no duration has never been probed (an interrupted
-      // first run); probe just this file rather than rescanning the library.
-      if (!item.duration) {
-        if (!fileHasContent(item.path)) throw new Error('the video file is missing');
-        const info = await probeVideo(item.path);
-        item.duration = info.duration;
-        item.width = info.width || item.width;
-        item.height = info.height || item.height;
-        item.vcodec = info.vcodec || item.vcodec;
-        item.acodec = info.acodec || item.acodec;
-      }
-      if (!item.duration) throw new Error('the video could not be read');
-
-      const needs = missingArt(item, mediaDir);
-      const { produced, failures } = await renderArt(item.path, item.duration, mediaDir, item.id, needs);
-
-      item.poster = produced.poster || (fileHasContent(files.poster) ? path.basename(files.poster) : item.poster || null);
-      item.backdrop = produced.backdrop || (fileHasContent(files.backdrop) ? path.basename(files.backdrop) : item.backdrop || null);
-      item.preview = produced.preview || (fileHasContent(files.preview) ? path.basename(files.preview) : item.preview || null);
-      // Only claim the new format once a clip exists, or a transient ffmpeg
-      // failure would mark it done and never retry.
-      if (!needs.preview || produced.preview) item.previewVersion = PREVIEW_VERSION;
-
-      if (needsArtwork(item, mediaDir)) {
-        throw new Error(failures.length ? `${failures.join(', ')} could not be drawn` : 'artwork incomplete');
-      }
-      drawn += 1;
-      delete item.artError;
-      delete item.artAttempts;
-    } catch (err) {
-      remaining += 1;
-      item.artAttempts = (item.artAttempts || 0) + 1;
-      item.artError = err.message;
-      console.warn(`[library] artwork failed for ${item.filename}: ${err.message}`);
+  // Two workers. A hover moves that id to the front; a worker finishes its current
+  // cut, then takeNext hands it the hovered film. Never more than two ffmpegs.
+  const queue = pending.slice();
+  const takeNext = () => {
+    if (!queue.length) return null;
+    if (artworkPriorityId) {
+      const index = queue.findIndex((item) => item.id === artworkPriorityId);
+      if (index >= 0) return queue.splice(index, 1)[0];
     }
+    return queue.shift();
+  };
+  const worker = async () => {
+    for (;;) {
+      const item = takeNext();
+      if (!item) return;
+      if (cancel()) { remaining += 1; continue; }
+      const files = artPaths(mediaDir, item.id);
+      let yielded = false;
+      try {
+        // A catalogue entry with no duration has never been probed (an interrupted
+        // first run); probe just this file rather than rescanning the library.
+        if (!item.duration) {
+          if (!fileHasContent(item.path)) throw new Error('the video file is missing');
+          const info = await probeVideo(item.path);
+          item.duration = info.duration;
+          item.width = info.width || item.width;
+          item.height = info.height || item.height;
+          item.vcodec = info.vcodec || item.vcodec;
+          item.acodec = info.acodec || item.acodec;
+        }
+        if (!item.duration) throw new Error('the video could not be read');
 
-    onProgress({ phase: 'art', done: drawn, total: pending.length, current: item.filename });
-    // Publish at a sane rate; one write per frame would thrash the disk. The
-    // next pass starts from whatever the last publish recorded.
-    if (Date.now() - lastPublish > 1200 || drawn + remaining === pending.length) {
-      lastPublish = Date.now();
-      onCatalog();
+        const needs = missingArt(item, mediaDir);
+        const shouldYield = () => cancel() || Boolean(
+          artworkPriorityId && artworkPriorityId !== item.id &&
+          queue.some((other) => other.id === artworkPriorityId));
+        const { produced, failures, yielded: gaveWay } = await renderArt(
+          item.path, item.duration, mediaDir, item.id, needs, shouldYield);
+        if (gaveWay) {
+          if (produced.poster) item.poster = produced.poster;
+          if (produced.backdrop) item.backdrop = produced.backdrop;
+          queue.unshift(item);
+          yielded = true;
+          onCatalog();
+          continue;
+        }
+
+        item.poster = produced.poster || (fileHasContent(files.poster) ? path.basename(files.poster) : item.poster || null);
+        item.backdrop = produced.backdrop || (fileHasContent(files.backdrop) ? path.basename(files.backdrop) : item.backdrop || null);
+        item.preview = produced.preview || (fileHasContent(files.preview) ? path.basename(files.preview) : item.preview || null);
+        // Only claim the new format once a clip exists, or a transient ffmpeg
+        // failure would mark it done and never retry.
+        if (!needs.preview || produced.preview) item.previewVersion = PREVIEW_VERSION;
+
+        if (needsArtwork(item, mediaDir)) {
+          throw new Error(failures.length ? `${failures.join(', ')} could not be drawn` : 'artwork incomplete');
+        }
+        drawn += 1;
+        delete item.artError;
+        delete item.artAttempts;
+      } catch (err) {
+        remaining += 1;
+        item.artAttempts = (item.artAttempts || 0) + 1;
+        item.artError = err.message;
+        console.warn(`[library] artwork failed for ${item.filename}: ${err.message}`);
+      }
+
+      if (yielded) continue;
+      onProgress({ phase: 'art', done: drawn, total: pending.length, current: item.filename });
+      // Publish at a sane rate; one write per frame would thrash the disk. The
+      // next pass starts from whatever the last publish recorded.
+      if (Date.now() - lastPublish > 1200 || drawn + remaining === pending.length) {
+        lastPublish = Date.now();
+        onCatalog();
+      }
     }
-  });
+  };
+  await Promise.all([worker(), worker()]);
 
   onProgress({ phase: 'art', done: drawn, total: pending.length, current: '' });
   onCatalog();
@@ -704,4 +805,4 @@ function mimeFor(file) {
 module.exports = { scan, parseName, mimeFor, probeTools, toVtt, findSubtitles,
   listFolderSubtitles, previewSegments, PREVIEW_VERSION, VIDEO_EXT,
   artPaths, missingArt, needsArtwork, shouldRetryArt, renderMissingArtwork,
-  sweepTempArt, ART_MAX_ATTEMPTS };
+  sweepTempArt, ART_MAX_ATTEMPTS, prioritizeArtwork, previewQueueAfterHover };

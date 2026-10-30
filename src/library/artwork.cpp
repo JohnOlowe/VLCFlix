@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <mutex>
 #include <thread>
 
@@ -62,19 +63,30 @@ std::vector<PreviewSegment> preview_segments(double duration, int count, double 
   std::vector<PreviewSegment> segments;
   if (!(duration > 0) || count <= 0) return segments;
   const double len = std::min(length, std::max(0.6, duration / count));
-  const double fractions[5] = {0.12, 0.32, 0.52, 0.72, 0.90};
+  // 8/24/40/58/76/90%: not the studio logo, not the credits.
+  const double fractions[] = {0.08, 0.24, 0.40, 0.58, 0.76, 0.90};
+  const int fraction_count = static_cast<int>(sizeof fractions / sizeof fractions[0]);
   std::vector<double> starts;
-  for (int i = 0; i < count && i < 5; ++i) {
+  for (int i = 0; i < count && i < fraction_count; ++i) {
     double start = std::max(0.0, std::min(duration * fractions[i], duration - len));
     bool duplicate = false;
     for (double existing : starts) {
-      if (std::fabs(existing - start) < 0.15) duplicate = true;
+      // A cut has to start a cut-length away, or a short file repeats the same frames.
+      if (std::fabs(existing - start) < std::max(0.15, len * 0.85)) duplicate = true;
     }
     if (duplicate) continue;
     starts.push_back(start);
   }
   for (double start : starts) segments.push_back(PreviewSegment{start, len});
   return segments;
+}
+
+std::vector<std::string> preview_queue_after_hover(std::vector<std::string> pending,
+                                                   const std::string& hovered) {
+  if (hovered.empty()) return pending;
+  pending.erase(std::remove(pending.begin(), pending.end(), hovered), pending.end());
+  pending.insert(pending.begin(), hovered);
+  return pending;
 }
 
 ArtPaths art_paths(const std::string& media_dir, const std::string& id) {
@@ -187,8 +199,148 @@ void correct_exposure(const std::string& file, double target) {
 void set_hwaccel_decoding(bool enabled) { g_hwaccel = enabled; }
 bool hwaccel_decoding() { return g_hwaccel; }
 
+namespace {
+
+std::mutex g_priority_mu;
+std::string g_priority_id;
+
+struct ArtSchedule {
+  std::mutex mu;
+  std::deque<std::size_t> pending;
+};
+
+std::string current_priority() {
+  std::lock_guard<std::mutex> lock(g_priority_mu);
+  return g_priority_id;
+}
+
+bool take_job(ArtSchedule& schedule, const std::vector<Item>& items, std::size_t* index) {
+  const std::string priority = current_priority();
+  std::lock_guard<std::mutex> lock(schedule.mu);
+  if (!priority.empty()) {
+    for (auto it = schedule.pending.begin(); it != schedule.pending.end(); ++it) {
+      if (items[*it].id == priority) {
+        *index = *it;
+        schedule.pending.erase(it);
+        return true;
+      }
+    }
+  }
+  if (schedule.pending.empty()) return false;
+  *index = schedule.pending.front();
+  schedule.pending.pop_front();
+  return true;
+}
+
+void requeue_job(ArtSchedule& schedule, std::size_t index) {
+  std::lock_guard<std::mutex> lock(schedule.mu);
+  schedule.pending.push_front(index);
+}
+
+// True only when some other film is still waiting. If the hovered film is already
+// being drawn, or it has finished, the worker must not spin yielding forever.
+bool priority_still_waiting(ArtSchedule& schedule, const std::vector<Item>& items,
+                            const std::string& self) {
+  const std::string priority = current_priority();
+  if (priority.empty() || priority == self) return false;
+  std::lock_guard<std::mutex> lock(schedule.mu);
+  for (std::size_t index : schedule.pending) {
+    if (items[index].id == priority) return true;
+  }
+  return false;
+}
+
+std::string concat_quote(std::string path) {
+  std::string out;
+  out.reserve(path.size() + 2);
+  for (char c : path) {
+    if (c == '\\') out.push_back('/');
+    else if (c == '\'') out += "'\\''";
+    else out.push_back(c);
+  }
+  return out;
+}
+
+// One cut is one ffmpeg, software decode, hardware encode left off. `-ss` is before
+// `-i` so ffmpeg index-seeks. No `-hwaccel`: a filter cannot read a qsv surface, and
+// that is the black-screen path. At most the caller's two workers run, and each cut
+// is serial, so a Celeron never sees six encodes.
+bool render_preview_montage(const std::string& video_path, double duration, const std::string& tmp_preview,
+                            const std::function<bool()>& yield_cut, bool* yielded) {
+  const auto segments = preview_segments(duration);
+  if (segments.empty()) return false;
+  const std::string tag = unique_tag();
+  std::vector<std::string> cuts;
+  auto cleanup = [&] {
+    for (const auto& cut : cuts) remove_file(cut);
+  };
+  for (std::size_t i = 0; i < segments.size(); ++i) {
+    if (yield_cut && yield_cut()) {
+      if (yielded) *yielded = true;
+      cleanup();
+      return false;
+    }
+    char start[32];
+    char len[32];
+    std::snprintf(start, sizeof start, "%.3f", segments[i].start);
+    std::snprintf(len, sizeof len, "%.3f", segments[i].length);
+    const std::string cut = tmp_preview + ".cut" + std::to_string(i) + tag + ".mp4";
+    // Software decode on purpose. ffmpeg_args() would add `-hwaccel` when the
+    // setting is on, and scale cannot read that surface.
+    const ProcResult cut_result = run_process(
+        {"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", start, "-t", len, "-i",
+         video_path, "-vf", "scale=-2:360:flags=fast_bilinear,fps=24", "-an", "-c:v", "libx264",
+         "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p", cut},
+        30000);
+    if (!cut_result.ok() || !has_content(cut)) {
+      LOG_WARN("preview cut %zu failed for %s: %s", i, basename(video_path).c_str(),
+               cut_result.error_line().c_str());
+      remove_file(cut);
+      continue;
+    }
+    cuts.push_back(cut);
+  }
+  if (cuts.empty()) {
+    cleanup();
+    return false;
+  }
+  bool ok = false;
+  if (cuts.size() == 1) {
+    ok = std::rename(cuts[0].c_str(), tmp_preview.c_str()) == 0;
+    if (ok) cuts.clear();
+  } else {
+    const std::string list = tmp_preview + tag + ".txt";
+    std::string body;
+    for (const auto& cut : cuts) body += "file '" + concat_quote(cut) + "'\n";
+    if (write_file_atomic(list, body)) {
+      const ProcResult joined = run_process(
+          {"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i",
+           list, "-c", "copy", tmp_preview},
+          20000);
+      ok = joined.ok() && has_content(tmp_preview);
+      if (!ok) {
+        LOG_WARN("preview concat failed for %s: %s", basename(video_path).c_str(),
+                 joined.error_line().c_str());
+      }
+    }
+    remove_file(list);
+  }
+  cleanup();
+  return ok;
+}
+
+}  // namespace
+
+void prioritize_artwork(const std::string& id) {
+  std::lock_guard<std::mutex> lock(g_priority_mu);
+  if (g_priority_id == id) return;
+  g_priority_id = id;
+  if (!id.empty()) LOG_INFO("artwork: %s is next in the preview queue", id.c_str());
+}
+
 ArtResult render_art(const std::string& video_path, double duration, const std::string& media_dir,
-                     const std::string& id, MissingArt needs) {
+                     const std::string& id, MissingArt needs,
+                     const std::function<bool()>& yield_cut) {
   ArtResult result;
   const ArtPaths final_paths = art_paths(media_dir, id);
   const std::string tag = unique_tag();
@@ -243,46 +395,29 @@ ArtResult render_art(const std::string& video_path, double duration, const std::
             tmp_backdrop);
     });
   }
+  // Stills first, then the montage. The montage yields between cuts, so it has to
+  // run on this thread rather than beside the stills. Two artwork workers means two
+  // ffmpegs, not six.
+  for (auto& job : jobs) job.join();
+
   if (needs.preview) {
-    const auto segments = preview_segments(duration);
-    if (!segments.empty()) {
-      // By value, deliberately: `segments` lives only inside this if-block, and the
-      // jobs are joined after it closes. Capturing it by reference let the preview
-      // thread read a destroyed vector, which reached ffmpeg as an absurd `-t` and
-      // failed the preview roughly half the time - a real bug this turn found, not a
-      // theoretical one.
-      jobs.emplace_back([&, segments] {
-        // One ffmpeg pass: seek to each snippet, normalise, concatenate.
-        std::vector<std::string> args = ffmpeg_args({"-y", "-loglevel", "error"});
-        for (const auto& seg : segments) {
-          char start[32];
-          char len[32];
-          std::snprintf(start, sizeof start, "%.3f", seg.start);
-          std::snprintf(len, sizeof len, "%.3f", seg.length);
-          args.insert(args.end(), {"-ss", start, "-t", len, "-i", video_path});
-        }
-        std::string filter_complex;
-        for (std::size_t i = 0; i < segments.size(); ++i) {
-          filter_complex += "[" + std::to_string(i) + ":v]scale=640:-2,setsar=1,fps=24[v" +
-                            std::to_string(i) + "];";
-        }
-        for (std::size_t i = 0; i < segments.size(); ++i) {
-          filter_complex += "[v" + std::to_string(i) + "]";
-        }
-        filter_complex += "concat=n=" + std::to_string(segments.size()) + ":v=1:a=0[out]";
-        args.insert(args.end(), {"-filter_complex", filter_complex, "-map", "[out]", "-an", "-c:v",
-                                 "libx264", "-preset", "veryfast", "-crf", "30", "-pix_fmt",
-                                 "yuv420p", "-movflags", "+faststart", tmp_preview});
-        track("preview", run_process(args, 180000), tmp_preview);
-      });
-    } else {
+    if (yield_cut && yield_cut()) {
+      result.yielded = true;
+    } else if (preview_segments(duration).empty()) {
       std::lock_guard<std::mutex> lock(failures_mutex);
       failed.push_back("preview");
       LOG_WARN("preview skipped for %s: duration unknown", basename(video_path).c_str());
+    } else {
+      bool yielded = false;
+      if (!render_preview_montage(video_path, duration, tmp_preview, yield_cut, &yielded)) {
+        if (yielded) result.yielded = true;
+        else {
+          std::lock_guard<std::mutex> lock(failures_mutex);
+          failed.push_back("preview");
+        }
+      }
     }
   }
-
-  for (auto& job : jobs) job.join();
 
   // Fix stills that came out too dark or too flat for white text to sit on.
   if (needs.poster && has_content(tmp_poster)) correct_exposure(tmp_poster, 64);
@@ -304,7 +439,9 @@ ArtResult render_art(const std::string& video_path, double duration, const std::
   };
   if (needs.poster) publish("poster", tmp_poster, final_paths.poster);
   if (needs.backdrop) publish("backdrop", tmp_backdrop, final_paths.backdrop);
-  if (needs.preview) publish("preview", tmp_preview, final_paths.preview);
+  // A yield is not a failed preview. Publishing it would record a failure and the
+  // next pass would give up after three of those.
+  if (needs.preview && !result.yielded) publish("preview", tmp_preview, final_paths.preview);
 
   for (const auto& tmp : {tmp_poster, tmp_backdrop, tmp_preview}) {
     if (has_content(tmp)) remove_file(tmp);
@@ -334,32 +471,50 @@ ArtRunResult render_missing_artwork(std::vector<Item>& items, const std::string&
   if (pending.empty()) return summary;
 
   ensure_dir(media_dir);
-  std::atomic<int> next{0};
+  ArtSchedule schedule;
+  for (std::size_t index : pending) schedule.pending.push_back(index);
   std::atomic<int> drawn{0};
   std::atomic<int> remaining{0};
   std::mutex publish_mutex;
   long long last_publish = now_ms();
 
+  auto apply_produced = [&](Item& item, const ArtResult& art, const MissingArt& needs) {
+    const ArtPaths final_paths = art_paths(media_dir, item.id);
+    for (const auto& key : art.produced) {
+      if (key == "poster") item.poster = basename(final_paths.poster);
+      if (key == "backdrop") item.backdrop = basename(final_paths.backdrop);
+      if (key == "preview") item.preview = basename(final_paths.preview);
+    }
+    // Only claim the new format once a clip exists, or a transient ffmpeg
+    // failure would mark it done and never retry.
+    if (!needs.preview || std::find(art.produced.begin(), art.produced.end(), "preview") !=
+                              art.produced.end()) {
+      item.preview_version = kPreviewVersion;
+    }
+  };
+
   auto worker = [&] {
     for (;;) {
-      const int index = next++;
-      if (index >= static_cast<int>(pending.size())) return;
+      std::size_t index = 0;
+      if (!take_job(schedule, items, &index)) return;
       if (cancel && cancel()) {
         remaining++;
         continue;
       }
-      Item& item = items[pending[static_cast<std::size_t>(index)]];
+      Item& item = items[index];
 
       // A catalog entry with no duration has never been probed (an interrupted
       // first run): probe just this file rather than rescanning the library.
       if (!(item.duration > 0)) {
         if (!file_exists(item.path)) {
+          std::lock_guard<std::mutex> lock(publish_mutex);
           item.art_attempts++;
           item.art_error = "the video file is missing";
           remaining++;
           continue;
         }
         const VideoInfo info = probe_video(item.path);
+        std::lock_guard<std::mutex> lock(publish_mutex);
         item.duration = info.duration;
         if (info.width) item.width = info.width;
         if (info.height) item.height = info.height;
@@ -369,43 +524,66 @@ ArtRunResult render_missing_artwork(std::vector<Item>& items, const std::string&
       }
 
       // Adopt anything already on disk first: a file that exists is finished work.
-      if (const int adopted = adopt_existing_art(item, media_dir); adopted > 0) {
-        LOG_DEBUG("adopted %d artwork field(s) for %s", adopted, item.filename.c_str());
+      {
+        std::lock_guard<std::mutex> lock(publish_mutex);
+        if (const int adopted = adopt_existing_art(item, media_dir); adopted > 0) {
+          LOG_DEBUG("adopted %d artwork field(s) for %s", adopted, item.filename.c_str());
+        }
       }
       const MissingArt needs = missing_art(item, media_dir);
-      if (item.duration > 0) {
-        const ArtResult art = render_art(item.path, item.duration, media_dir, item.id, needs);
-        const ArtPaths final_paths = art_paths(media_dir, item.id);
-        for (const auto& key : art.produced) {
-          if (key == "poster") item.poster = basename(final_paths.poster);
-          if (key == "backdrop") item.backdrop = basename(final_paths.backdrop);
-          if (key == "preview") item.preview = basename(final_paths.preview);
-        }
-        // Only claim the new format once a clip exists, or a transient ffmpeg
-        // failure would mark it done and never retry.
-        if (!needs.preview || std::find(art.produced.begin(), art.produced.end(), "preview") !=
-                                  art.produced.end()) {
-          item.preview_version = kPreviewVersion;
-        }
-        if (!needs_artwork(item, media_dir)) {
-          drawn++;
-          item.art_attempts = 0;
-          item.art_error.clear();
+      bool yielded = false;
+      if (!needs.any()) {
+        std::lock_guard<std::mutex> lock(publish_mutex);
+        drawn++;
+        item.art_attempts = 0;
+        item.art_error.clear();
+      } else if (item.duration > 0) {
+        const ArtResult art = render_art(item.path, item.duration, media_dir, item.id, needs, [&] {
+          // Cancel stops the next cut too. The one already running is not killed.
+          if (cancel && cancel()) return true;
+          return priority_still_waiting(schedule, items, item.id);
+        });
+        if (art.yielded) {
+          // The cut that was already running was allowed to finish. This film goes
+          // back; the next take is the one under the pointer.
+          LOG_INFO("artwork: pausing %s so the hovered film is next", item.filename.c_str());
+          {
+            std::lock_guard<std::mutex> lock(publish_mutex);
+            apply_produced(item, art, needs);
+          }
+          requeue_job(schedule, index);
+          yielded = true;
         } else {
-          remaining++;
-          item.art_attempts++;
-          item.art_error = art.failures.empty() ? "artwork incomplete"
-                                                : art.failures.front() + " could not be drawn";
-          LOG_WARN("artwork failed for %s: %s", item.filename.c_str(), item.art_error.c_str());
+          std::lock_guard<std::mutex> lock(publish_mutex);
+          apply_produced(item, art, needs);
+          if (!needs_artwork(item, media_dir)) {
+            drawn++;
+            item.art_attempts = 0;
+            item.art_error.clear();
+          } else {
+            remaining++;
+            item.art_attempts++;
+            item.art_error = art.failures.empty() ? "artwork incomplete"
+                                                  : art.failures.front() + " could not be drawn";
+            LOG_WARN("artwork failed for %s: %s", item.filename.c_str(), item.art_error.c_str());
+          }
         }
       } else {
+        std::lock_guard<std::mutex> lock(publish_mutex);
         remaining++;
         item.art_attempts++;
         item.art_error = "the video could not be read";
         LOG_WARN("artwork skipped for %s: %s", item.filename.c_str(), item.art_error.c_str());
       }
 
-      if (on_progress) on_progress(ArtProgress{drawn.load(), static_cast<int>(pending.size()), item.filename});
+      if (yielded) {
+        std::lock_guard<std::mutex> lock(publish_mutex);
+        if (on_catalog) on_catalog();
+        continue;
+      }
+      if (on_progress) {
+        on_progress(ArtProgress{drawn.load(), static_cast<int>(pending.size()), item.filename});
+      }
       // Publish at a sane rate; one write per frame would thrash the disk.
       {
         std::lock_guard<std::mutex> lock(publish_mutex);

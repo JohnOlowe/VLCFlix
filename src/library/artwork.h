@@ -7,7 +7,8 @@
 
 namespace vf {
 
-constexpr int kPreviewVersion = 2;
+// 3: 6 silent 3s cuts at 360p, input-seek, no hardware decode. Older clips re-render.
+constexpr int kPreviewVersion = 3;
 constexpr int kArtMaxAttempts = 3;
 
 struct PreviewSegment {
@@ -15,7 +16,19 @@ struct PreviewSegment {
   double length = 0;
 };
 
-std::vector<PreviewSegment> preview_segments(double duration, int count = 5, double length = 2.0);
+// Six cuts across the film, skipping the opening titles and the end credits.
+// A short file gets fewer, and never repeats the same moment.
+std::vector<PreviewSegment> preview_segments(double duration, int count = 6, double length = 3.0);
+
+// The hover rule, with no ffmpeg involved: the film under the pointer goes to the
+// front. If it was not queued, it is inserted there. Background work stays behind it.
+std::vector<std::string> preview_queue_after_hover(std::vector<std::string> pending,
+                                                   const std::string& hovered);
+
+// Remember which film the pointer is on. The artwork workers finish the cut they
+// have already started, then take this id next. They do not kill ffmpeg. Empty
+// clears it, so leaving a card returns the queue to background order.
+void prioritize_artwork(const std::string& id);
 
 struct ArtPaths {
   std::string poster;
@@ -60,10 +73,17 @@ double measure_luma(const std::string& file);
 struct ArtResult {
   std::vector<std::string> produced;
   std::vector<std::string> failures;
+  // The hovered film jumped the queue before this one finished. Not a failure:
+  // the caller puts it back and draws the hovered one next.
+  bool yielded = false;
 };
 
+// `yield_cut` is asked before each preview cut. True means a hovered film is
+// waiting: stop starting cuts (do not kill the one already running) and return
+// with yielded set. Poster and backdrop are not interrupted.
 ArtResult render_art(const std::string& video_path, double duration, const std::string& media_dir,
-                     const std::string& id, MissingArt needs);
+                     const std::string& id, MissingArt needs,
+                     const std::function<bool()>& yield_cut = {});
 
 struct ArtProgress {
   int done = 0;
@@ -77,6 +97,10 @@ struct ArtRunResult {
   int remaining = 0;
 };
 
+// Draws everything that is missing and nothing else, so a pass can be stopped at
+// any point and the next one picks up the remainder. Two workers, never more:
+// a Celeron N3350 swaps if six ffmpegs start at once. A hover moves that film
+// to the front; the worker finishes its current cut, then takes the hovered one.
 ArtRunResult render_missing_artwork(std::vector<Item>& items, const std::string& media_dir,
                                     bool retry_failed, const std::function<void(const ArtProgress&)>& on_progress,
                                     const std::function<void()>& on_catalog,

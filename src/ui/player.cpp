@@ -231,10 +231,12 @@ int App::cycle_subtitle_track(int delta) {
 /* --------------------------------- ticking -------------------------------- */
 
 bool App::tick(double now) {
+  const bool published = apply_scan_publish();
+  flush_hover_priority(now);
   if (!player_open_) {
     // The hover preview's engine runs on its own thread. This thread only copies a
     // finished frame, so a slow file open cannot freeze the window.
-    if (preview_index_ < 0) return false;
+    if (preview_index_ < 0) return published;
     bool changed = false;
     {
       std::lock_guard<std::mutex> lock(preview_mu_);
@@ -251,7 +253,7 @@ bool App::tick(double now) {
         changed = true;
       }
     }
-    return changed;
+    return changed || published;
   }
   bool changed = false;
 
@@ -345,7 +347,7 @@ bool App::tick(double now) {
     player_status_.error = player_error_;
   }
   if (previous_state != player_status_.state) changed = true;
-  return changed;
+  return changed || published;
 }
 
 /* --------------------------------- drawing -------------------------------- */

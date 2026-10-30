@@ -830,7 +830,7 @@ void App::preview_thread_main() {
       continue;
     }
     std::string error;
-    if (!preview_engine_.open(req.path, &error)) {
+    if (!preview_engine_.open(req.path, &error, true)) {
       LOG_WARN("preview: %s", error.c_str());
       std::lock_guard<std::mutex> lock(preview_mu_);
       preview_failed_generation_ = req.generation;
@@ -845,6 +845,8 @@ void App::preview_thread_main() {
     LOG_INFO("preview: playing %s", req.path.c_str());
     bool seek_done = req.seek_at < 0;
     bool warned = false;
+    double last_replay = 0;
+    double last_media_time = 0;
     const double started = clock_now();
     while (req.generation == preview_generation_.load() && !preview_stop_thread_) {
       if (!seek_done) {
@@ -871,17 +873,33 @@ void App::preview_thread_main() {
         preview_failed_generation_ = req.generation;
         break;
       }
-      if (status.state == PlayState::Ended) {
-        if (status.frames_decoded == 0) {
-          LOG_WARN("preview: %s ended without a single picture; showing the artwork instead",
-                   req.name.c_str());
-          std::lock_guard<std::mutex> lock(preview_mu_);
-          preview_failed_generation_ = req.generation;
-          break;
-        }
-        preview_engine_.seek(0);
-        preview_engine_.play();
+      // A preview is a finite clip. Loop it. Seeking an ended player does not
+      // restart it, so a near-end seek happens while it is still playing, and
+      // replay() is the backup if this libVLC build still reports Ended.
+      if (seek_done && last_media_time > 1.0 && status.time + 0.5 < last_media_time) {
+        seek_done = req.seek_at < 0;
       }
+      const bool near_end = seek_done && status.length > 0.5 &&
+                            status.time >= status.length - 0.25 &&
+                            status.state == PlayState::Playing;
+      const bool ended = status.state == PlayState::Ended && status.frames_decoded > 0;
+      if ((near_end || ended) && clock_now() - last_replay > 0.6) {
+        last_replay = clock_now();
+        if (ended) {
+          preview_engine_.replay();
+          seek_done = req.seek_at < 0;
+        } else {
+          preview_engine_.seek(req.seek_at < 0 ? 0 : req.seek_at);
+        }
+        LOG_INFO("preview: looping %s", req.name.c_str());
+      } else if (status.state == PlayState::Ended && status.frames_decoded == 0) {
+        LOG_WARN("preview: %s ended without a single picture; showing the artwork instead",
+                 req.name.c_str());
+        std::lock_guard<std::mutex> lock(preview_mu_);
+        preview_failed_generation_ = req.generation;
+        break;
+      }
+      last_media_time = status.time;
       if (!warned && clock_now() - started > 4.0) {
         Frame published;
         bool have = false;
@@ -2356,8 +2374,8 @@ void App::draw_settings(Canvas& canvas) {
   y += 36.0f;
   regular_.draw_wrapped(
       canvas,
-      "Built-in player plays the file in this window. FFmpeg plays it here through ffmpeg, which must be on "
-      "PATH. Real VLC opens the VLC application. The choice is saved.",
+      "Real VLC plays in this window with libVLC, VLC's own engine. It does not open the VLC application. "
+      "Built-in player also stays here. FFmpeg needs ffmpeg on PATH. The choice is saved.",
       Rect{left, y, inner, 48}, 12.5f, theme::faint(), 3);
   y += 52.0f;
 
@@ -2366,21 +2384,15 @@ void App::draw_settings(Canvas& canvas) {
     regular_.draw(canvas, regular_.ellipsize(text, 12.5f, inner - 20), left + 18, y, 12.5f, theme::text());
     y += 22.0f;
   };
-  const std::string vlc = vlc_binary();
-  if (vlc.empty()) status(rgb(0xe23b3b), "VLC was not found on this machine.");
-  else status(rgb(0x46d369), "VLC found (auto-detect): " + vlc);
+  status(rgb(0x46d369), "libVLC plays in this window. The VLC application is not opened.");
   if (settings_.play_mode == "ffmpeg") {
     status(catalog_.have_ffmpeg ? rgb(0x46d369) : rgb(0xe8a317),
            catalog_.have_ffmpeg ? "FFmpeg is selected. Play uses ffmpeg in this window."
                                 : "FFmpeg is selected. Play needs ffmpeg on PATH.");
   } else if (settings_.play_mode == "browser") {
     status(rgb(0x46d369), "Built-in player is selected. Play stays in this window.");
-  } else if (settings_.play_mode_chosen && !vlc.empty()) {
-    status(rgb(0x46d369), "Real VLC is selected. Play opens the VLC application.");
-  } else if (settings_.play_mode_chosen) {
-    status(rgb(0xe8a317), "Real VLC is selected, but VLC was not found.");
   } else {
-    status(rgb(0x46d369), "Play stays in this window until you choose another engine.");
+    status(rgb(0x46d369), "Real VLC is selected. Play uses libVLC in this window.");
   }
   if (catalog_.have_ffmpeg) status(rgb(0x46d369), "ffmpeg available — artwork and previews will be generated.");
   else status(rgb(0xe8a317), "ffmpeg not on PATH — cards fall back to generated gradients.");
@@ -2646,7 +2658,7 @@ bool App::handle(const InputEvent& event) {
             const char* label = mode == "ffmpeg" ? "FFmpeg"
                                 : mode == "browser" ? "Built-in player"
                                                     : "Real VLC";
-            notify(mode == "vlc" ? std::string("Playback engine: Real VLC — Play opens the VLC application")
+            notify(mode == "vlc" ? std::string("Playback engine: Real VLC — plays in this window")
                                  : std::string("Playback engine: ") + label);
             return true;
           }

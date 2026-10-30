@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 #include "core/json.h"
 #include "core/log.h"
@@ -55,6 +56,12 @@ Settings Store::load_settings() const {
   settings.play_mode = root.str("playMode", settings.play_mode);
   settings.vlc_fullscreen = root.flag("vlcFullscreen", settings.vlc_fullscreen);
   settings.hw_decode = root.flag("hwDecode", settings.hw_decode);
+  if (root.has("padScroll")) {
+    const double speed = root.num("padScroll", settings.pad_scroll);
+    if (speed >= kPadScrollMin - 1e-4 && speed <= kPadScrollMax + 1e-4) {
+      settings.pad_scroll = static_cast<float>(speed);
+    }
+  }
   return settings;
 }
 
@@ -101,6 +108,14 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
       return fail("playMode must be 'vlc', 'ffmpeg' or 'browser'");
     current.play_mode = mode;
   }
+  if (const Json* v = patch.find("padScroll"); v) {
+    if (!v->isNumber()) return fail("padScroll must be a number");
+    const double speed = v->asNumber(-1);
+    if (speed < kPadScrollMin - 1e-4 || speed > kPadScrollMax + 1e-4) {
+      return fail("padScroll must be between 0.1 and 1");
+    }
+    current.pad_scroll = static_cast<float>(speed);
+  }
   for (const char* key : {"vlcFullscreen", "hwDecode"}) {
     if (const Json* v = patch.find(key); v) {
       if (!v->isBool()) return fail(std::string(key) + " must be true or false");
@@ -119,6 +134,8 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
   out_json.set("playMode", current.play_mode);
   out_json.set("vlcFullscreen", current.vlc_fullscreen);
   out_json.set("hwDecode", current.hw_decode);
+  const int hundredths = static_cast<int>(std::lround(current.pad_scroll * 100.0));
+  out_json.set("padScroll", hundredths / 100.0);
 
   if (!write_file_atomic(file_for("settings"), out_json.dump(2))) {
     return fail("could not write " + file_for("settings"));

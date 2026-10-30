@@ -53,6 +53,19 @@ std::string counted(std::size_t n, const char* one, const char* many) {
 // One notch of the wheel, and one page of a keyboard scroll.
 constexpr float kWheelStep = 96.0f;
 constexpr float kRailStep = 140.0f;
+constexpr float kPadScrollStep = 0.05f;
+
+float snap_pad_scroll(float value) {
+  const float clamped = std::clamp(value, kPadScrollMin, kPadScrollMax);
+  const int steps = static_cast<int>(std::lround((clamped - kPadScrollMin) / kPadScrollStep));
+  return std::clamp(kPadScrollMin + steps * kPadScrollStep, kPadScrollMin, kPadScrollMax);
+}
+
+float pad_scroll_from_x(float x, const Rect& track) {
+  if (track.w <= 1.0f) return kPadScrollMax;
+  const float t = std::clamp((x - track.x) / track.w, 0.0f, 1.0f);
+  return snap_pad_scroll(kPadScrollMin + t * (kPadScrollMax - kPadScrollMin));
+}
 constexpr int kKeyF = 'f';
 
 constexpr float kGridWidth = 216.0f;  // minimum card width
@@ -1430,6 +1443,24 @@ Json folder_array(const std::vector<std::string>& folders) {
 }
 }  // namespace
 
+bool App::apply_pad_scroll(float value, bool persist) {
+  const float next = snap_pad_scroll(value);
+  const bool changed = std::fabs(next - settings_.pad_scroll) > 0.001f;
+  settings_.pad_scroll = next;
+  if (!persist) return changed;
+  Json patch = Json::object();
+  patch.set("padScroll", static_cast<double>(next));
+  std::string error;
+  Settings saved;
+  if (!store_.patch_settings(patch, &saved, &error)) {
+    notify(error.empty() ? "Could not save scroll speed" : error);
+    return true;
+  }
+  // Keep any setting that is still only in memory. The patch reloads the file.
+  settings_.pad_scroll = saved.pad_scroll;
+  return true;
+}
+
 bool App::add_library_folder(const std::string& folder, std::string* error) {
   std::string path = folder;
   // Trailing separators are noise and make two spellings of one folder.
@@ -1679,6 +1710,11 @@ void App::draw_settings(Canvas& canvas) {
   body += 22.0f;
   body += 36.0f;
   body += 56.0f;
+  body += 10.0f;
+  body += 22.0f;
+  body += 22.0f;
+  body += 40.0f;
+  body += 40.0f;
   body += 18.0f;
 
   const float max_panel = static_cast<float>(height_) - 72.0f;
@@ -1850,6 +1886,44 @@ void App::draw_settings(Canvas& canvas) {
       Rect{left, y, inner, 48}, 12.0f, theme::faint(), 3);
   y += 56.0f;
 
+  y += 10.0f;
+  section("TOUCHPAD");
+  const float speed = snap_pad_scroll(settings_.pad_scroll);
+  const int percent = static_cast<int>(std::lround(speed * 100.0f));
+  const std::string percent_label = std::to_string(percent) + "%";
+  const float percent_w = bold_.measure(percent_label, 13.0f).width;
+  regular_.draw(canvas, "Two-finger scroll", left, y, 13.0f, theme::text());
+  bold_.draw(canvas, percent_label, left + inner - percent_w, y, 13.0f, theme::accent());
+  y += 22.0f;
+
+  const float btn = 32.0f;
+  const Rect slower{left, y, btn, btn};
+  const Rect faster{left + inner - btn, y, btn, btn};
+  auto step_button = [&](const Rect& rect, const char* glyph, const char* value) {
+    canvas.fill_round_rect(rect, 6, rgb(0x0d0d12));
+    canvas.stroke_round_rect(rect, 6, 1.0f, rgba(0xffffff, 36));
+    bold_.draw_centered(canvas, glyph, rect, 18, theme::text());
+    add_hit(rect, Action{Action::Kind::NudgePadScroll, -1, value});
+  };
+  step_button(slower, "-", "-");
+  step_button(faster, "+", "+");
+  const float speed_x = slower.right() + 14.0f;
+  const Rect speed_track{speed_x, y + 12.0f, faster.x - 14.0f - speed_x, 8.0f};
+  pad_scroll_track_ = speed_track;
+  const float span = std::max(0.001f, kPadScrollMax - kPadScrollMin);
+  const float t = std::clamp((speed - kPadScrollMin) / span, 0.0f, 1.0f);
+  canvas.fill_round_rect(speed_track, 4, rgba(0xffffff, 40));
+  canvas.fill_round_rect(Rect{speed_track.x, speed_track.y, std::max(8.0f, speed_track.w * t), speed_track.h},
+                         4, theme::accent());
+  canvas.fill_circle(speed_track.x + speed_track.w * t, speed_track.y + 4.0f, 8, rgb(0xffffff));
+  add_hit(Rect{speed_track.x, y, speed_track.w, btn}, Action{Action::Kind::PadScroll, -1, ""});
+  y += 40.0f;
+  regular_.draw_wrapped(
+      canvas,
+      "Drag left to slow the two-finger scroll. The mouse wheel is not changed. Scroll this sheet, or Home, to try a speed.",
+      Rect{left, y, inner, 36}, 12.0f, theme::faint(), 2);
+  y += 40.0f;
+
   canvas.pop_clip();
   if (scroll_limit("settings") > 0.0f) {
     draw_scrollbar(canvas, Rect{panel.right() - 14, viewport.y + 4, 4, viewport.h - 8}, "settings");
@@ -1915,7 +1989,7 @@ PointerCursor App::pointer_cursor() const {
   // A drag in progress is a pointer doing something, so it stays a hand even when it
   // has wandered off the bar it grabbed.
   if (!pointer_known_) return PointerCursor::Arrow;
-  if (!drag_region_.empty()) return PointerCursor::Hand;
+  if (!drag_region_.empty() || pad_scroll_drag_) return PointerCursor::Hand;
   const Action action = hit_test(pointer_x_, pointer_y_);
   switch (action.kind) {
     case Action::Kind::None:
@@ -1943,6 +2017,10 @@ bool App::handle(const InputEvent& event) {
   ensure_layout();
   switch (event.type) {
     case InputEvent::Type::MouseMove: {
+      if (pad_scroll_drag_) {
+        apply_pad_scroll(pad_scroll_from_x(event.x, pad_scroll_track_), false);
+        return true;
+      }
       if (!drag_region_.empty()) {
         ScrollState& state = scrolls_[drag_region_];
         const bool horizontal = state.horizontal;
@@ -1970,6 +2048,12 @@ bool App::handle(const InputEvent& event) {
       const Action action = hit_test(event.x, event.y);
       // A scroll bar takes the pointer until it is released, so dragging works even
       // when the pointer leaves the bar.
+      if (action.kind == Action::Kind::PadScroll) {
+        pad_scroll_drag_ = true;
+        folder_input_focused_ = false;
+        apply_pad_scroll(pad_scroll_from_x(event.x, pad_scroll_track_), false);
+        return true;
+      }
       if (action.kind == Action::Kind::ScrollThumb || action.kind == Action::Kind::ScrollTo) {
         ScrollState& state = scrolls_[action.value];
         const bool horizontal = state.horizontal;
@@ -2047,6 +2131,13 @@ bool App::handle(const InputEvent& event) {
           notify(action.value == "hwDecode"
                      ? std::string("Hardware decoding ") + (settings_.hw_decode ? "on" : "off")
                      : std::string("Unknown setting"));
+          return true;
+        }
+        case Action::Kind::PadScroll:
+          return false;
+        case Action::Kind::NudgePadScroll: {
+          const float step = action.value == "-" ? -kPadScrollStep : kPadScrollStep;
+          apply_pad_scroll(settings_.pad_scroll + step, true);
           return true;
         }
         case Action::Kind::FocusSearch:
@@ -2152,8 +2243,11 @@ bool App::handle(const InputEvent& event) {
       // Everywhere the wheel is pointed at something that overflows, it scrolls that
       // thing: the open sheet, the rail under the pointer, or the page. The sheets used
       // to ignore the wheel completely, which is the "I cannot scroll where I want" bug.
-      const float vertical = event.wheel != 0 ? event.wheel : 0.0f;
-      const float horizontal = event.wheel_x;
+      // The slider slows only a two-finger drag. A mouse wheel keeps the full step.
+      const float scale = event.from_pad ? std::clamp(settings_.pad_scroll, kPadScrollMin, kPadScrollMax)
+                                         : 1.0f;
+      const float vertical = event.wheel * scale;
+      const float horizontal = event.wheel_x * scale;
       if (browser_open_ || open_item_ >= 0 || settings_open_) {
         const std::string region = browser_open_ ? "browser"
                                    : open_item_ >= 0 ? "detail"
@@ -2177,6 +2271,11 @@ bool App::handle(const InputEvent& event) {
       return scroll_by("page", -(vertical != 0 ? vertical : horizontal) * kWheelStep);
     }
     case InputEvent::Type::MouseUp: {
+      if (pad_scroll_drag_) {
+        pad_scroll_drag_ = false;
+        apply_pad_scroll(settings_.pad_scroll, true);
+        return true;
+      }
       if (drag_region_.empty()) return false;
       drag_region_.clear();
       return true;

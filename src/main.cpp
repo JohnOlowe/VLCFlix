@@ -642,6 +642,7 @@ int command_settings(const Args& args) {
     out.set("playMode", settings.play_mode);
     out.set("vlcFullscreen", settings.vlc_fullscreen);
     out.set("hwDecode", settings.hw_decode);
+    out.set("padScroll", settings.pad_scroll);
     std::printf("%s\n", out.dump(2).c_str());
     return 0;
   }

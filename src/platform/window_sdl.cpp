@@ -186,6 +186,7 @@ bool Window::emit_pad_scroll(ui::InputEvent* event) {
   event->wheel_x = flush_x;
   event->x = mx;
   event->y = my;
+  event->from_pad = true;
   last_mouse_x_ = mx;
   last_mouse_y_ = my;
   return true;

@@ -207,7 +207,7 @@ python3 "$ROOT/scripts/check-win-manifest.py" "$ROOT/packaging/app.manifest" \
 
 LIBS="-L$CACHE/sdk/lib -lvlc -L$SDL/lib -lmingw32 -lSDL2main -lSDL2 \
  -L$MSYS/lib -lpng16 -ljpeg -lz $FT_OUT/lib/libfreetype.a \
- -lole32 -luuid -lshell32 -lshlwapi -lversion -ldbghelp -lws2_32 -lwinmm -limm32 \
+ -lole32 -luuid -lshell32 -lshlwapi -lversion -ldbghelp -lws2_32 -liphlpapi -lwinmm -limm32 \
  -lgdi32 -lcomdlg32 -ladvapi32 -luser32"
 # shellcheck disable=SC2086
 "$CXX" -o "$PAYLOAD/VLCFlixStudio.exe" "${objs[@]}" "$OBJ/version.res.o" -mwindows $LIBS \

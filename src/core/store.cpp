@@ -54,6 +54,7 @@ Settings Store::load_settings() const {
   settings.vlc_http_port = static_cast<int>(root.integer("vlcHttpPort", settings.vlc_http_port));
   settings.vlc_password = root.str("vlcPassword", settings.vlc_password);
   settings.play_mode = root.str("playMode", settings.play_mode);
+  settings.play_mode_chosen = root.flag("playModeChosen", settings.play_mode_chosen);
   settings.vlc_fullscreen = root.flag("vlcFullscreen", settings.vlc_fullscreen);
   settings.hw_decode = root.flag("hwDecode", settings.hw_decode);
   if (root.has("padScroll")) {
@@ -108,6 +109,10 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
       return fail("playMode must be 'vlc', 'ffmpeg' or 'browser'");
     current.play_mode = mode;
   }
+  if (const Json* v = patch.find("playModeChosen"); v) {
+    if (!v->isBool()) return fail("playModeChosen must be true or false");
+    current.play_mode_chosen = v->asBool();
+  }
   if (const Json* v = patch.find("padScroll"); v) {
     if (!v->isNumber()) return fail("padScroll must be a number");
     const double speed = v->asNumber(-1);
@@ -132,6 +137,7 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
   out_json.set("vlcHttpPort", current.vlc_http_port);
   out_json.set("vlcPassword", current.vlc_password);
   out_json.set("playMode", current.play_mode);
+  out_json.set("playModeChosen", current.play_mode_chosen);
   out_json.set("vlcFullscreen", current.vlc_fullscreen);
   out_json.set("hwDecode", current.hw_decode);
   // Tenths of a percent, so 0.2% survives a save. Rounding to a whole percent
@@ -143,8 +149,8 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
     return fail("could not write " + file_for("settings"));
   }
   if (out) *out = current;
-  LOG_INFO("settings saved: %zu folder(s), hwDecode=%s", current.library_folders.size(),
-           current.hw_decode ? "on" : "off");
+  LOG_INFO("settings saved: %zu folder(s), playMode=%s, hwDecode=%s", current.library_folders.size(),
+           current.play_mode.c_str(), current.hw_decode ? "on" : "off");
   return true;
 }
 

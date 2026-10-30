@@ -19,6 +19,7 @@
 #include "core/store.h"
 #include "core/sync.h"
 #include "library/subtitles.h"
+#include "platform/proc.h"
 #include "playback/engine.h"
 #include "playback/presenter.h"
 #include "render/canvas.h"
@@ -315,6 +316,17 @@ class App {
   std::string format_duration(double seconds) const;
   std::string meta_line(const Item& item) const;
   int percent_for(const Item& item) const;
+  void show_detail(int index);
+  void hide_detail();
+  std::string vlc_binary() const;
+  bool save_play_mode(const std::string& mode);
+  bool save_hw_decode(bool enabled);
+  bool have_ffmpeg();
+  bool start_ffmpeg(const Item& item, double start_at, bool hardware);
+  void stop_ffmpeg();
+  void seek_playback(double seconds);
+  void apply_stream_clock(EngineStatus* status) const;
+  bool launch_external_vlc(const Item& item);
 
   std::string media_dir_;
   std::string data_dir_;
@@ -392,6 +404,16 @@ class App {
   std::function<double()> clock_;
   bool scrub_dragging_ = false;
   std::string player_error_;
+  // The ffmpeg engine is a child process plus a local stream. The clock origin is
+  // where that stream started in the file, because libVLC's own clock restarts at 0.
+  Child ffmpeg_child_;
+  bool ffmpeg_active_ = false;
+  bool ffmpeg_hardware_ = false;
+  bool ffmpeg_hw_gave_up_ = false;
+  bool ffmpeg_probed_ = false;
+  bool ffmpeg_present_ = false;
+  double ffmpeg_origin_ = 0;
+  double ffmpeg_length_ = 0;
   std::string folder_input_;
   bool folder_input_focused_ = false;
   bool scanning_ = false;

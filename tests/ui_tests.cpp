@@ -12,6 +12,7 @@
 
 #include "core/model.h"
 #include "core/paths.h"
+#include "core/store.h"
 #include "render/canvas.h"
 #include "tests/harness.h"
 #include "library/fs_browse.h"
@@ -185,10 +186,11 @@ bool small_hit_centre(const ui::App& app, ui::Action::Kind kind, float* x, float
 // action. The page underneath a sheet has its own buttons of the same kind, so picking
 // the first rect in draw order would aim at the one that is covered.
 bool find_clickable(const ui::App& app, ui::Action::Kind kind, float* x, float* y,
-                    int index = -1) {
+                    int index = -1, const std::string& value = {}) {
   for (const auto& hit : app.hit_rects()) {
     if (hit.second.kind != kind) continue;
     if (index >= 0 && hit.second.index != index) continue;
+    if (!value.empty() && hit.second.value != value) continue;
     const float cx = hit.first.x + hit.first.w / 2;
     const float cy = hit.first.y + hit.first.h / 2;
     if (top_action_at(app, cx, cy).kind != kind) continue;
@@ -682,12 +684,29 @@ void test_ui_sheets_are_clickable() {
   CHECK(app.settings_open());
 
   // The hardware-decoding toggle really toggles, through a real click on the switch.
+  // The playback chips are the same kind of control, so the click has to be the
+  // switch itself, not the first chip.
   const bool before = app.settings().hw_decode;
   float tx = 0, ty = 0;
-  CHECK(find_clickable(app, ui::Action::Kind::ToggleSetting, &tx, &ty));
+  CHECK(find_clickable(app, ui::Action::Kind::ToggleSetting, &tx, &ty, -1, "hwDecode"));
   CHECK(app.handle(click_at(tx, ty)));
   CHECK(app.settings().hw_decode != before);
   CHECK(app.settings_open());
+
+  // FFmpeg has to be a real choice: the chip highlights, and a new launch reads it back.
+  float fx = 0, fy = 0;
+  CHECK(find_clickable(app, ui::Action::Kind::ToggleSetting, &fx, &fy, -1, "playMode:ffmpeg"));
+  CHECK(app.handle(click_at(fx, fy)));
+  CHECK_EQ(app.settings().play_mode, std::string("ffmpeg"));
+  CHECK(app.settings().play_mode_chosen);
+  CHECK(app.settings().hw_decode != before);
+  {
+    Store store(dir);
+    const Settings saved = store.load_settings();
+    CHECK_EQ(saved.play_mode, std::string("ffmpeg"));
+    CHECK(saved.play_mode_chosen);
+    CHECK(saved.hw_decode != before);
+  }
 
   draw_once(app);
   float cx = 0, cy = 0;

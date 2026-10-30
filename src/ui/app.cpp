@@ -195,6 +195,32 @@ std::string upper(std::string text) {
   return text;
 }
 
+std::string search_path_for(const std::string& name) {
+  const char* env = std::getenv("PATH");
+  if (!env || name.empty()) return {};
+#ifdef _WIN32
+  const char sep = ';';
+  const std::string file = name.find('.') == std::string::npos ? name + ".exe" : name;
+#else
+  const char sep = ':';
+  const std::string file = name;
+#endif
+  const std::string path = env;
+  std::size_t start = 0;
+  while (start <= path.size()) {
+    const std::size_t end = path.find(sep, start);
+    const std::size_t stop = end == std::string::npos ? path.size() : end;
+    const std::string dir = path.substr(start, stop - start);
+    if (!dir.empty()) {
+      const std::string candidate = join(dir, file);
+      if (file_exists(candidate)) return candidate;
+    }
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return {};
+}
+
 }  // namespace
 
 App::App(std::string media_dir, std::string data_dir)
@@ -204,6 +230,7 @@ App::App(std::string media_dir, std::string data_dir)
 }
 
 App::~App() {
+  ffmpeg_child_.stop();
   join_scan_thread();
   {
     std::lock_guard<std::mutex> lock(preview_mu_);
@@ -223,8 +250,79 @@ void App::join_scan_thread() {
 void App::set_catalog(Catalog catalog) { catalog_ = std::move(catalog); }
 void App::set_progress(std::map<std::string, Progress> progress) { progress_ = std::move(progress); }
 void App::set_my_list(std::vector<std::string> my_list) { my_list_ = std::move(my_list); }
-void App::set_settings(Settings settings) { settings_ = std::move(settings); }
+void App::set_settings(Settings settings) {
+  settings_ = std::move(settings);
+  set_hwaccel_decoding(settings_.hw_decode);
+}
 void App::set_scan_state(const std::string& label) { scan_label_ = label; }
+
+void App::show_detail(int index) {
+  if (index < 0 || static_cast<std::size_t>(index) >= catalog_.items.size()) return;
+  open_item_ = index;
+  settings_open_ = false;
+  browser_open_ = false;
+  set_scroll("detail", 0);
+  // The hover card already has this film's preview running. Opening the sheet
+  // keeps it, so the hero moves instead of sitting on the still.
+  set_hover_preview(index);
+}
+
+void App::hide_detail() {
+  open_item_ = -1;
+  if (hover_item_ >= 0 && !settings_open_ && !browser_open_ && !player_open_) {
+    set_hover_preview(hover_item_);
+  } else {
+    set_hover_preview(-1);
+  }
+}
+
+std::string App::vlc_binary() const {
+  if (!settings_.vlc_path.empty() && file_exists(settings_.vlc_path)) return settings_.vlc_path;
+#ifdef _WIN32
+  const char* fixed[] = {
+      "C:\\Program Files\\VideoLAN\\VLC\\vlc.exe",
+      "C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe",
+  };
+#else
+  const char* fixed[] = {"/usr/bin/vlc", "/usr/local/bin/vlc", "/snap/bin/vlc"};
+#endif
+  for (const char* path : fixed) {
+    if (file_exists(path)) return path;
+  }
+  return search_path_for("vlc");
+}
+
+bool App::save_play_mode(const std::string& mode) {
+  Json patch = Json::object();
+  patch.set("playMode", mode);
+  patch.set("playModeChosen", true);
+  std::string error;
+  Settings saved;
+  if (!store_.patch_settings(patch, &saved, &error)) {
+    notify(error.empty() ? "Could not save the playback engine" : error);
+    return false;
+  }
+  // Only these two fields. Copying the whole saved object would wipe a slider
+  // drag that has not been written yet.
+  settings_.play_mode = saved.play_mode;
+  settings_.play_mode_chosen = saved.play_mode_chosen;
+  LOG_INFO("ui: play mode %s", settings_.play_mode.c_str());
+  return true;
+}
+
+bool App::save_hw_decode(bool enabled) {
+  Json patch = Json::object();
+  patch.set("hwDecode", enabled);
+  std::string error;
+  Settings saved;
+  if (!store_.patch_settings(patch, &saved, &error)) {
+    notify(error.empty() ? "Could not save hardware decoding" : error);
+    return false;
+  }
+  settings_.hw_decode = saved.hw_decode;
+  set_hwaccel_decoding(settings_.hw_decode);
+  return true;
+}
 
 void App::resize(int width, int height) {
   width_ = std::max(640, width);
@@ -1485,6 +1583,21 @@ void App::draw_detail(Canvas& canvas, const Item& item) {
   canvas.push_clip(viewport);
   const Rect art{panel.x, panel.y - scroll, panel.w, art_height};
   draw_backdrop_or_fallback(canvas, art, item, 8);
+  // The same muted preview the hover card plays. The still stays until the first
+  // frame, then the picture moves. The fade below still keeps the title readable.
+  if (preview_has_frame_ && preview_index_ == open_item_ && preview_frame_.width > 0 &&
+      !preview_frame_.pixels.empty()) {
+    canvas.push_clip(art);
+    canvas.blit_raw(preview_frame_.pixels.data(), preview_frame_.width, preview_frame_.height, art,
+                    true);
+    canvas.pop_clip();
+  } else if (preview_index_ == open_item_ && !preview_playing_path_.empty()) {
+    const std::string waiting = "preview starting...";
+    const float badge_width = regular_.measure(waiting, theme::kFontTiny).width + 18;
+    const Rect badge{art.x + 16, art.y + 16, badge_width, 22};
+    canvas.fill_round_rect(badge, 11, rgba(0x000000, 170));
+    regular_.draw_centered(canvas, waiting, badge, theme::kFontTiny, rgba(0xffffff, 220));
+  }
   // Square off the art's bottom corners so the body meets it, and fade into the panel.
   canvas.fill_rect(Rect{art.x, art.bottom() - 12, art.w, 12}, theme::panel());
   canvas.fill_gradient_v(Rect{art.x, art.y + art.h * 0.34f, art.w, art.h * 0.66f},
@@ -1850,13 +1963,14 @@ bool App::apply_scan_publish() {
     scan_label_.clear();
     changed = true;
   }
-  if (have_catalog) {
+    if (have_catalog) {
     catalog_ = std::move(next);
     store_.save_catalog(catalog_);
     changed = true;
-    // The montage may have just landed under the pointer. Start it without
-    // waiting for the mouse to move.
-    if (hover_item_ >= 0) set_hover_preview(hover_item_);
+    // The montage may have just landed. The open sheet uses it too, and it should
+    // not wait for the mouse to move.
+    if (open_item_ >= 0) set_hover_preview(open_item_);
+    else if (hover_item_ >= 0) set_hover_preview(hover_item_);
   }
   if (!notice.empty()) {
     notify(notice);
@@ -2162,30 +2276,35 @@ void App::draw_settings(Canvas& canvas) {
   y += 16.0f;
 
   section("PLAYBACK");
-  // Display only. The native app always plays in this window, so the other two engines
-  // are not buttons — a click must not pretend the engine changed.
   const Rect seg{left, y, std::min(inner, 420.0f), 32};
   canvas.fill_round_rect(seg, 6, rgb(0x0d0d12));
   canvas.stroke_round_rect(seg, 6, 1.0f, rgba(0xffffff, 30));
   const char* modes[] = {"Real VLC", "FFmpeg", "Built-in player"};
+  const char* values[] = {"vlc", "ffmpeg", "browser"};
+  const float widths[] = {96.0f, 84.0f, 130.0f};
+  const std::string selected =
+      settings_.play_mode == "ffmpeg" || settings_.play_mode == "browser" ? settings_.play_mode : "vlc";
   float mx = seg.x + 4;
   for (int i = 0; i < 3; ++i) {
-    const float mw = i == 0 ? 96.0f : (i == 1 ? 84.0f : 130.0f);
-    if (i == 0) {
+    const float mw = widths[i];
+    const Rect chip{mx, seg.y + 3, mw, 26};
+    const bool on = selected == values[i];
+    if (on) {
       // Selected engine is a yellow chip. The old wash was Netflix red at low
       // alpha, which read as a stain rather than a choice.
-      canvas.fill_round_rect(Rect{mx, seg.y + 3, mw, 26}, 4, theme::accent());
+      canvas.fill_round_rect(chip, 4, theme::accent());
       bold_.draw(canvas, modes[i], mx + 12, seg.y + 6, 13.0f, rgb(0x140800));
     } else {
       regular_.draw(canvas, modes[i], mx + 12, seg.y + 8, 13.0f, theme::dim());
     }
+    add_hit(chip, Action{Action::Kind::ToggleSetting, -1, std::string("playMode:") + values[i]});
     mx += mw;
   }
   y += 36.0f;
   regular_.draw_wrapped(
       canvas,
-      "“Real VLC” launches VLC and controls it over its HTTP interface. “Built-in player” plays inside this "
-      "window using the browser engine, which cannot decode every codec VLC can.",
+      "Built-in player plays the file in this window. FFmpeg plays it here through ffmpeg, which must be on "
+      "PATH. Real VLC opens the VLC application. The choice is saved.",
       Rect{left, y, inner, 48}, 12.5f, theme::faint(), 3);
   y += 52.0f;
 
@@ -2194,11 +2313,22 @@ void App::draw_settings(Canvas& canvas) {
     regular_.draw(canvas, regular_.ellipsize(text, 12.5f, inner - 20), left + 18, y, 12.5f, theme::text());
     y += 22.0f;
   };
-  std::string vlc = settings_.vlc_path;
-  if (vlc.empty() && file_exists("/usr/bin/vlc")) vlc = "/usr/bin/vlc";
+  const std::string vlc = vlc_binary();
   if (vlc.empty()) status(rgb(0xe23b3b), "VLC was not found on this machine.");
   else status(rgb(0x46d369), "VLC found (auto-detect): " + vlc);
-  status(rgb(0xe8a317), "VLC is not running yet — it starts on first play.");
+  if (settings_.play_mode == "ffmpeg") {
+    status(catalog_.have_ffmpeg ? rgb(0x46d369) : rgb(0xe8a317),
+           catalog_.have_ffmpeg ? "FFmpeg is selected. Play uses ffmpeg in this window."
+                                : "FFmpeg is selected. Play needs ffmpeg on PATH.");
+  } else if (settings_.play_mode == "browser") {
+    status(rgb(0x46d369), "Built-in player is selected. Play stays in this window.");
+  } else if (settings_.play_mode_chosen && !vlc.empty()) {
+    status(rgb(0x46d369), "Real VLC is selected. Play opens the VLC application.");
+  } else if (settings_.play_mode_chosen) {
+    status(rgb(0xe8a317), "Real VLC is selected, but VLC was not found.");
+  } else {
+    status(rgb(0x46d369), "Play stays in this window until you choose another engine.");
+  }
   if (catalog_.have_ffmpeg) status(rgb(0x46d369), "ffmpeg available — artwork and previews will be generated.");
   else status(rgb(0xe8a317), "ffmpeg not on PATH — cards fall back to generated gradients.");
   y += 20.0f;
@@ -2212,8 +2342,8 @@ void App::draw_settings(Canvas& canvas) {
   y += 36.0f;
   regular_.draw_wrapped(
       canvas,
-      "Off by default. When on, artwork that needs transcoding is tried on the GPU first, and falls back "
-      "to software if no frame arrives.",
+      "Off by default, and saved. When on, artwork and FFmpeg playback try the GPU first when a film must "
+      "be transcoded, then fall back to software.",
       Rect{left, y, inner, 48}, 12.0f, theme::faint(), 3);
   y += 56.0f;
 
@@ -2366,6 +2496,9 @@ bool App::handle(const InputEvent& event) {
       const Action action = hit_test(event.x, event.y);
       int hover = -1;
       if (action.kind == Action::Kind::OpenDetail) hover = action.index;
+      // The open sheet is playing its own preview. A move across the scrim must
+      // not stop it, and must not start a card that is hidden behind the sheet.
+      if (open_item_ >= 0 || settings_open_ || browser_open_) return false;
       if (hover != hover_item_) {
         hover_item_ = hover;
         set_hover_preview(hover);
@@ -2418,20 +2551,19 @@ bool App::handle(const InputEvent& event) {
           LOG_INFO("ui: navigate to %s", action.value.c_str());
           return true;
         case Action::Kind::OpenDetail:
-          open_item_ = action.index;
-          settings_open_ = false;
+          show_detail(action.index);
           LOG_INFO("ui: open detail for %s",
                    catalog_.items[static_cast<std::size_t>(action.index)].title.c_str());
           return true;
         case Action::Kind::CloseOverlay:
-          open_item_ = -1;
           settings_open_ = false;
           browser_open_ = false;
+          hide_detail();
           LOG_INFO("ui: overlay closed");
           return true;
         case Action::Kind::OpenSettings:
           settings_open_ = true;
-          open_item_ = -1;
+          hide_detail();
           LOG_INFO("ui: settings open");
           return true;
         case Action::Kind::Play: {
@@ -2455,11 +2587,22 @@ bool App::handle(const InputEvent& event) {
           return true;
         }
         case Action::Kind::ToggleSetting: {
-          if (action.value == "hwDecode") settings_.hw_decode = !settings_.hw_decode;
-
-          notify(action.value == "hwDecode"
-                     ? std::string("Hardware decoding ") + (settings_.hw_decode ? "on" : "off")
-                     : std::string("Unknown setting"));
+          if (action.value.rfind("playMode:", 0) == 0) {
+            const std::string mode = action.value.substr(std::string("playMode:").size());
+            if (!save_play_mode(mode)) return true;
+            const char* label = mode == "ffmpeg" ? "FFmpeg"
+                                : mode == "browser" ? "Built-in player"
+                                                    : "Real VLC";
+            notify(mode == "vlc" ? std::string("Playback engine: Real VLC — Play opens the VLC application")
+                                 : std::string("Playback engine: ") + label);
+            return true;
+          }
+          if (action.value == "hwDecode") {
+            if (!save_hw_decode(!settings_.hw_decode)) return true;
+            notify(std::string("Hardware decoding ") + (settings_.hw_decode ? "on" : "off"));
+            return true;
+          }
+          notify("Unknown setting");
           return true;
         }
         case Action::Kind::PadScroll:
@@ -2617,7 +2760,7 @@ bool App::handle(const InputEvent& event) {
           return true;
         }
         if (open_item_ >= 0) {
-          open_item_ = -1;
+          hide_detail();
           return true;
         }
         if (settings_open_) {
@@ -2701,8 +2844,7 @@ bool App::handle(const InputEvent& event) {
       }
       if (event.key == kKeyReturn) {
         if (focus_item_ >= 0 && static_cast<std::size_t>(focus_item_) < catalog_.items.size()) {
-          open_item_ = focus_item_;
-          settings_open_ = false;
+          show_detail(focus_item_);
           return true;
         }
         return false;
@@ -2721,7 +2863,7 @@ bool App::handle(const InputEvent& event) {
     }
     case InputEvent::Type::Back: {
       if (open_item_ >= 0) {
-        open_item_ = -1;
+        hide_detail();
         return true;
       }
       if (settings_open_) {

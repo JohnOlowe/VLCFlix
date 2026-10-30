@@ -56,9 +56,14 @@ struct Settings {
   std::string vlc_path;               // retained for compatible settings
   int vlc_http_port = 8080;           // stored compatibility setting
   std::string vlc_password = "vlcflix";
-  std::string play_mode = "vlc";      // informational only in the native app
+  // vlc, ffmpeg, or browser. Settings writes this. play_mode_chosen stays false
+  // for files saved before the chips worked: those say "vlc" only because that was
+  // the default, and Play stays in this window. Clicking a chip sets the flag.
+  // Real VLC then opens the VLC application.
+  std::string play_mode = "vlc";
+  bool play_mode_chosen = false;
   bool vlc_fullscreen = true;
-  bool hw_decode = false;             // now only feeds artwork/preview rendering
+  bool hw_decode = false;             // artwork, and FFmpeg playback when a film must be transcoded
   // Two-finger drag, as a fraction of the speed that first worked. 1 is that
   // speed. The mouse wheel does not use this.
   float pad_scroll = 1.0f;

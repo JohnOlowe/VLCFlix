@@ -212,9 +212,16 @@ void test_store() {
   bad_speed.set("padScroll", Json("fast"));
   CHECK(!store.patch_settings(bad_speed, &updated, &error));
   CHECK(error.find("padScroll") != std::string::npos);
+  Json too_slow = Json::object();
+  too_slow.set("padScroll", 0.001);
+  CHECK(!store.patch_settings(too_slow, &updated, &error));
   Json too_fast = Json::object();
   too_fast.set("padScroll", 2.0);
   CHECK(!store.patch_settings(too_fast, &updated, &error));
+  Json slowest = Json::object();
+  slowest.set("padScroll", 0.01);
+  CHECK(store.patch_settings(slowest, &updated, &error));
+  CHECK_NEAR(store.load_settings().pad_scroll, 0.01f, 0.001f);
   Json half = Json::object();
   half.set("padScroll", 0.5);
   CHECK(store.patch_settings(half, &updated, &error));

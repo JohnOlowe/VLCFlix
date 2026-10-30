@@ -390,8 +390,51 @@ bool consume_elan_scroll(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return true;
 }
 
+// Elantech checks the window under the cursor for WS_VSCROLL / WS_HSCROLL before it
+// will generate a two-finger drag at all. No style, no message: not a wheel, not
+// WM_VSCROLL, nothing. Chrome sets these styles for that reason and then hides the
+// native bar. A mouse wheel never looks at the style, which is why that already worked.
+void mark_scrollable(HWND hwnd) {
+  if (!hwnd) return;
+  LONG style = GetWindowLong(hwnd, GWL_STYLE);
+  if ((style & (WS_VSCROLL | WS_HSCROLL)) == (WS_VSCROLL | WS_HSCROLL)) return;
+  SetWindowLong(hwnd, GWL_STYLE, style | WS_VSCROLL | WS_HSCROLL);
+  SCROLLINFO info{};
+  info.cbSize = sizeof info;
+  info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+  info.nMin = 0;
+  info.nMax = 10000;
+  info.nPage = 100;
+  info.nPos = 5000;  // stay mid-range so the driver does not decide we are already at the end
+  SetScrollInfo(hwnd, SB_VERT, &info, FALSE);
+  SetScrollInfo(hwnd, SB_HORZ, &info, FALSE);
+  ShowScrollBar(hwnd, SB_BOTH, FALSE);
+  style = GetWindowLong(hwnd, GWL_STYLE);
+  SetWindowLong(hwnd, GWL_STYLE, style | WS_VSCROLL | WS_HSCROLL);
+}
+
+// The native bar must not steal client pixels. The style bits stay set.
+LRESULT keep_client_full(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  if (!wp) {
+    return g_pad.old_proc ? CallWindowProc(g_pad.old_proc, hwnd, msg, wp, lp)
+                          : DefWindowProc(hwnd, msg, wp, lp);
+  }
+  auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+  const RECT proposed = params->rgrc[0];
+  const LRESULT result = g_pad.old_proc ? CallWindowProc(g_pad.old_proc, hwnd, msg, wp, lp)
+                                        : DefWindowProc(hwnd, msg, wp, lp);
+  const int left_inset = params->rgrc[0].left - proposed.left;
+  const int right_inset = proposed.right - params->rgrc[0].right;
+  const int bottom_inset = proposed.bottom - params->rgrc[0].bottom;
+  if (right_inset > left_inset) params->rgrc[0].right = proposed.right - left_inset;
+  if (bottom_inset > left_inset) params->rgrc[0].bottom = proposed.bottom - left_inset;
+  return result;
+}
+
 LRESULT CALLBACK pad_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (msg == kTabletQueryGesture) return kGestureStatus;
+  if (msg == WM_NCCALCSIZE) return keep_client_full(hwnd, msg, wp, lp);
+  if (msg == WM_SIZE || msg == WM_WINDOWPOSCHANGED) mark_scrollable(hwnd);
   // Elantech "drag two fingers" is a scrollbar message, not a mouse wheel. Taking it
   // here is what makes the gesture scroll. A mouse wheel never arrives as this.
   if ((msg == kVScroll || msg == kHScroll) && consume_elan_scroll(hwnd, msg, wp, lp)) return 0;
@@ -413,16 +456,28 @@ LRESULT CALLBACK pad_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return DefWindowProc(hwnd, msg, wp, lp);
 }
 
+void SDLCALL on_sdl_message(void*, void* hwnd, unsigned message, Uint64 wparam, Sint64 lparam) {
+  // A gesture aimed at some other window in this thread (a driver quirk) never
+  // reaches our procedure. The pump still sees it.
+  if (!hwnd || hwnd == g_pad.hwnd) return;
+  if (message == kVScroll || message == kHScroll) {
+    consume_elan_scroll(static_cast<HWND>(hwnd), message, static_cast<WPARAM>(wparam),
+                        static_cast<LPARAM>(lparam));
+  }
+}
+
 }  // namespace
 
 void pad_ensure_hook() {
   if (!g_pad.hwnd) return;
   const auto current = reinterpret_cast<WNDPROC>(GetWindowLongPtr(g_pad.hwnd, GWLP_WNDPROC));
-  if (current == pad_proc) return;
-  // SDL installs its own procedure at creation and can put it back. If ours is no
-  // longer the one Windows calls, the ELAN messages never reach us.
-  g_pad.old_proc = current;
-  SetWindowLongPtr(g_pad.hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(pad_proc));
+  if (current != pad_proc) {
+    // SDL installs its own procedure at creation and can put it back. If ours is no
+    // longer the one Windows calls, the ELAN messages never reach us.
+    g_pad.old_proc = current;
+    SetWindowLongPtr(g_pad.hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(pad_proc));
+  }
+  mark_scrollable(g_pad.hwnd);
 }
 
 void pad_install(SDL_Window* window) {
@@ -435,11 +490,23 @@ void pad_install(SDL_Window* window) {
   read_scroll_direction();
   g_pad.old_proc = reinterpret_cast<WNDPROC>(
       SetWindowLongPtr(g_pad.hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(pad_proc)));
+  // SDL registered the window for raw touch, which tells the driver not to synthesize
+  // a wheel. Undo that. The scrollbar styles are what make an ELAN pad send the
+  // gesture in the first place.
+  if (HMODULE user = GetModuleHandleA("user32.dll")) {
+    using UnregisterFn = BOOL(WINAPI*)(HWND);
+    if (auto unregister = reinterpret_cast<UnregisterFn>(GetProcAddress(user, "UnregisterTouchWindow"))) {
+      unregister(g_pad.hwnd);
+    }
+  }
+  mark_scrollable(g_pad.hwnd);
+  SDL_SetWindowsMessageHook(on_sdl_message, nullptr);
   LOG_INFO("touchpad: two-finger drag hooked (scroll direction %s)",
            g_pad.down_scrolls_up ? "down-scrolls-up" : "down-scrolls-down");
 }
 
 void pad_uninstall(SDL_Window*) {
+  SDL_SetWindowsMessageHook(nullptr, nullptr);
   if (g_pad.hwnd && g_pad.old_proc) {
     SetWindowLongPtr(g_pad.hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_pad.old_proc));
   }

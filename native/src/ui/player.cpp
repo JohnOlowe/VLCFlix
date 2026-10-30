@@ -239,62 +239,24 @@ int App::cycle_subtitle_track(int delta) {
 
 bool App::tick(double now) {
   if (!player_open_) {
-    // The hover preview runs while browsing, on the same tick.
+    // The hover preview's engine runs on its own thread. This thread only copies a
+    // finished frame, so a slow file open cannot freeze the window.
     if (preview_index_ < 0) return false;
-    Frame preview;
     bool changed = false;
-    if (preview_engine_.take_frame(&preview)) {
-      preview_frame_ = std::move(preview);
-      preview_has_frame_ = true;
-      changed = true;
-    }
-    const EngineStatus preview_status = preview_engine_.status();
-    // Seeks queued before the length was known, applied the moment it is. (See
-    // set_hover_preview: seeking at open time is what made the preview stay blank.)
-    if (preview_seek_at_ >= 0 && preview_status.length > 0) {
-      preview_engine_.seek(preview_seek_at_);
-      LOG_INFO("preview: seeked to %.1f s of %.1f s", preview_seek_at_, preview_status.length);
-      preview_seek_at_ = -1;
-    }
-    // A preview that is "playing" and has produced nothing after four seconds is worth
-    // saying out loud: the card shows the artwork, and the log should explain why rather
-    // than leaving a user (or me) guessing whether the feature is broken or the file is.
-    if (preview_index_ >= 0 && !preview_has_frame_ && !preview_warned_ &&
-        now - preview_started_ > 4.0) {
-      const std::size_t index = static_cast<std::size_t>(preview_index_);
-      const std::string name = index < catalog_.items.size() ? catalog_.items[index].filename : "";
-      LOG_WARN("preview: no picture after 4 s of %s (state %d, decoded %lld); showing artwork",
-               name.c_str(), static_cast<int>(preview_status.state),
-               static_cast<long long>(preview_status.frames_decoded));
-      preview_warned_ = true;
-    }
-    if (preview_status.state == PlayState::Error) {
-      // opendir succeeded, playback did not: most often a folder beside the film that
-      // the scanner catalogued but libVLC cannot decode. Say so in the log and put the
-      // card back to its artwork instead of showing an empty box forever.
-      if (!preview_warned_) {
-        LOG_WARN("preview: engine error: %s",
-                 preview_status.error.empty() ? "unknown" : preview_status.error.c_str());
-        preview_warned_ = true;
-      }
-      preview_index_ = -1;
-      preview_has_frame_ = false;
-      return true;
-    }
-    // Loop the montage: the preview is a few seconds of snippets, not a film. A file
-    // that ends with nothing decoded is broken, so stop rather than spin on it.
-    if (preview_status.state == PlayState::Ended) {
-      if (preview_status.frames_decoded == 0 && !preview_warned_) {
-        LOG_WARN("preview: %s ended without a single picture; showing the artwork instead",
-                 catalog_.items[static_cast<std::size_t>(preview_index_)].filename.c_str());
-        preview_warned_ = true;
+    {
+      std::lock_guard<std::mutex> lock(preview_mu_);
+      if (preview_failed_generation_ != 0 && preview_failed_generation_ == preview_generation_.load()) {
         preview_index_ = -1;
         preview_has_frame_ = false;
+        preview_failed_generation_ = 0;
         return true;
       }
-      preview_engine_.seek(0);
-      preview_engine_.play();
-      return true;
+      if (preview_published_) {
+        preview_frame_ = std::move(preview_published_frame_);
+        preview_has_frame_ = true;
+        preview_published_ = false;
+        changed = true;
+      }
     }
     return changed;
   }

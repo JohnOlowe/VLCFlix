@@ -112,7 +112,7 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
     if (!v->isNumber()) return fail("padScroll must be a number");
     const double speed = v->asNumber(-1);
     if (speed < kPadScrollMin - 1e-4 || speed > kPadScrollMax + 1e-4) {
-      return fail("padScroll must be between 0.01 and 1");
+      return fail("padScroll must be between 0.002 and 1");
     }
     current.pad_scroll = static_cast<float>(speed);
   }
@@ -134,8 +134,10 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
   out_json.set("playMode", current.play_mode);
   out_json.set("vlcFullscreen", current.vlc_fullscreen);
   out_json.set("hwDecode", current.hw_decode);
-  const int hundredths = static_cast<int>(std::lround(current.pad_scroll * 100.0));
-  out_json.set("padScroll", hundredths / 100.0);
+  // Tenths of a percent, so 0.2% survives a save. Rounding to a whole percent
+  // turned the slowest setting into 0, and the next launch came back as 100%.
+  const int thousandths = static_cast<int>(std::lround(current.pad_scroll * 1000.0));
+  out_json.set("padScroll", thousandths / 1000.0);
 
   if (!write_file_atomic(file_for("settings"), out_json.dump(2))) {
     return fail("could not write " + file_for("settings"));

@@ -135,28 +135,35 @@ void Engine::configure(int width, int height) {
 
 void Engine::add_argument(const std::string& argument) { arguments_.push_back(argument); }
 
+bool Engine::warm() {
+  if (!impl_) return false;
+  if (impl_->instance) return true;
+  // No window and no video output: we present the frames ourselves, so libVLC must
+  // not try to open one (which would fail on a headless machine).
+  std::vector<std::string> args = {
+      "--no-video-title-show", "--no-osd", "--no-snapshot-preview", "--quiet",
+      "--intf=dummy", "--vout=dummy"};
+  for (const auto& extra : arguments_) args.push_back(extra);
+  std::vector<const char*> argv;
+  argv.reserve(args.size());
+  for (const auto& arg : args) argv.push_back(arg.c_str());
+  impl_->instance = libvlc_new(static_cast<int>(argv.size()), argv.data());
+  if (!impl_->instance) {
+    LOG_ERROR("engine: libvlc_new failed");
+    return false;
+  }
+  LOG_INFO("engine: libVLC %s", libvlc_get_version());
+  return true;
+}
+
 bool Engine::open(const std::string& path, std::string* error) {
   stop();
   path_ = path;
   media_open_ = false;
 
-  if (!impl_->instance) {
-    // No window and no video output: we present the frames ourselves, so libVLC must
-    // not try to open one (which would fail on a headless machine).
-    std::vector<std::string> args = {
-        "--no-video-title-show", "--no-osd", "--no-snapshot-preview", "--quiet",
-        "--intf=dummy", "--vout=dummy"};
-    for (const auto& extra : arguments_) args.push_back(extra);
-    std::vector<const char*> argv;
-    argv.reserve(args.size());
-    for (const auto& arg : args) argv.push_back(arg.c_str());
-    impl_->instance = libvlc_new(static_cast<int>(argv.size()), argv.data());
-    if (!impl_->instance) {
-      if (error) *error = "libvlc_new failed (is libvlc installed?)";
-      LOG_ERROR("engine: libvlc_new failed");
-      return false;
-    }
-    LOG_INFO("engine: libVLC %s", libvlc_get_version());
+  if (!warm()) {
+    if (error) *error = "libvlc_new failed (is libvlc installed?)";
+    return false;
   }
 
   impl_->media = libvlc_media_new_path(impl_->instance, path.c_str());

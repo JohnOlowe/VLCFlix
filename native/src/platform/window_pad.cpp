@@ -446,10 +446,25 @@ LRESULT CALLBACK pad_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // so the cursor follows one finger.
     if (msg == kPointerWheel || msg == kPointerHWheel) return 0;
   }
-  // The driver sometimes follows its own scroll message with a wheel. That wheel is
-  // the same gesture. A physical wheel has no scroll message in front of it.
-  if ((msg == kMouseWheel || msg == kMouseHWheel) && recent(g_pad.last_consumed_ms, SDL_GetTicks())) {
-    return 0;
+  // A physical mouse wheel is a whole notch and has no fingers down. Anything else
+  // is the pad. Take it here so the settings slider applies, and so SDL does not add
+  // a second, full-speed notch for the same drag.
+  if (msg == kMouseWheel || msg == kMouseHWheel) {
+    const DWORD now = SDL_GetTicks();
+    const int delta = GET_WHEEL_DELTA_WPARAM(wp);
+    const bool fractional = delta % 120 != 0;
+    const bool from_touch = (GetMessageExtraInfo() & 0xFFFFFF00) == 0xFF515700;
+    const bool fingers = g_pad.finger_count >= 2 || recent(g_pad.last_finger_ms, now);
+    const bool duplicate = recent(g_pad.last_consumed_ms, now);
+    if (duplicate) return 0;
+    if (fractional || from_touch || fingers) {
+      int cx = 0, cy = 0;
+      remember_cursor(hwnd, &cx, &cy);
+      const float notches = static_cast<float>(delta) / 120.0f;
+      if (msg == kMouseWheel) hold_scroll(0.0f, notches, cx, cy);
+      else hold_scroll(notches, 0.0f, cx, cy);
+      return 0;
+    }
   }
   if (msg == kGesture && handle_pan(lp)) return 0;
   if (g_pad.old_proc) return CallWindowProc(g_pad.old_proc, hwnd, msg, wp, lp);

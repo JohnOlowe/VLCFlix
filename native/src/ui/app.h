@@ -6,9 +6,13 @@
 // Canvas, which means every screen can be rendered to a PNG and inspected without a
 // display (see render_to_png).
 #pragma once
+#include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/model.h"
@@ -88,6 +92,7 @@ struct Action {
 class App {
  public:
   App(std::string media_dir, std::string data_dir);
+  ~App();
 
   void set_catalog(Catalog catalog);
   void set_progress(std::map<std::string, Progress> progress);
@@ -182,7 +187,8 @@ class App {
   // refused the format.
   bool start_playback(int index);
   void stop_playback();
-  // Starts/stops the muted hover preview for `index` (-1 stops it).
+  // Starts/stops the muted hover preview for `index` (-1 stops it). The engine
+  // starts on a background thread so the window keeps answering Windows.
   void set_hover_preview(int index);
   bool preview_playing() const { return preview_index_ >= 0; }
   bool preview_has_picture() const { return preview_has_frame_; }
@@ -321,6 +327,25 @@ class App {
   bool preview_has_frame_ = false;
   int preview_index_ = -1;
   double preview_started_ = 0;
+  // The preview engine is only touched by preview_thread_. The window thread
+  // queues a request and copies out a finished frame.
+  struct PreviewRequest {
+    int generation = 0;
+    int index = -1;
+    std::string path;
+    std::string name;
+    double seek_at = -1;
+  };
+  std::mutex preview_mu_;
+  std::condition_variable preview_cv_;
+  PreviewRequest preview_request_;
+  bool preview_request_ready_ = false;
+  bool preview_stop_thread_ = false;
+  bool preview_published_ = false;
+  Frame preview_published_frame_;
+  int preview_failed_generation_ = 0;
+  std::atomic<int> preview_generation_{0};
+  std::thread preview_thread_;
   // Playing a whole film as a preview must not seek before the demuxer knows the
   // length; a seek into nothing leaves the engine sitting there with no picture, which
   // is exactly what "the preview does not work" looked like on the Windows machine.
@@ -332,6 +357,8 @@ class App {
   bool focus_card_valid_ = false;
   bool preview_warned_ = false;
   void draw_hover_card(Canvas& canvas);
+  void ensure_preview_thread();
+  void preview_thread_main();
   Presenter presenter_;
   EngineStatus player_status_;
   bool player_open_ = false;       // a film is loaded in the player view

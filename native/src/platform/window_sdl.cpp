@@ -264,8 +264,14 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         // fractional deltas, SDL puts them in preciseX/preciseY and rounds the integer
         // fields to zero. Reading only wheel.y therefore made two-finger scrolling do
         // *nothing at all*, on every screen. platform/wheel.h takes the precise value
-        // when there is one and adds the fractions up.
+        // when there is one and adds the fractions up. A fraction is the pad, not a
+        // mouse notch, so it uses the touchpad speed slider.
+        bool from_pad = false;
 #if SDL_VERSION_ATLEAST(2, 26, 0)
+        auto fractional = [](float v) {
+          return v != 0.0f && (std::fabs(v) < 0.99f || std::fabs(v - std::round(v)) > 0.05f);
+        };
+        from_pad = fractional(sdl_event.wheel.preciseX) || fractional(sdl_event.wheel.preciseY);
         x = wheel_axis(sdl_event.wheel.preciseX, x);
         y = wheel_axis(sdl_event.wheel.preciseY, y);
 #endif
@@ -277,6 +283,7 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         event->type = ui::InputEvent::Type::Wheel;
         event->wheel = flush_y;
         event->wheel_x = flush_x;
+        event->from_pad = from_pad;
         // Which rail the pointer is over decides whether the wheel goes sideways, so
         // the event needs a position. SDL reports one from 2.26; older versions report
         // 0,0, and the last motion position is the right fallback.
@@ -305,6 +312,7 @@ bool Window::poll(ui::InputEvent* event, int timeout_ms) {
         event->type = ui::InputEvent::Type::Wheel;
         event->wheel = flush_y;
         event->wheel_x = flush_x;
+        event->from_pad = true;
         event->x = last_mouse_x_;
         event->y = last_mouse_y_;
         return true;

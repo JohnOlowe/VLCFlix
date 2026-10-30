@@ -64,9 +64,10 @@ struct Settings {
   float pad_scroll = 1.0f;
 };
 
-// The settings slider can only slow the gesture down from the speed that works,
-// in small steps, until it feels natural. It cannot stop the gesture.
-inline constexpr float kPadScrollMin = 0.10f;
+// The settings slider slows the gesture from the speed that works, down to 1%.
+// The track is logarithmic, so 1% to 10% is the whole left half. It cannot stop
+// the gesture. The mouse wheel does not use this.
+inline constexpr float kPadScrollMin = 0.01f;
 inline constexpr float kPadScrollMax = 1.0f;
 
 struct Catalog {

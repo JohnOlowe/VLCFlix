@@ -53,18 +53,26 @@ std::string counted(std::size_t n, const char* one, const char* many) {
 // One notch of the wheel, and one page of a keyboard scroll.
 constexpr float kWheelStep = 96.0f;
 constexpr float kRailStep = 140.0f;
-constexpr float kPadScrollStep = 0.05f;
+constexpr float kPadScrollStep = 0.01f;
 
 float snap_pad_scroll(float value) {
-  const float clamped = std::clamp(value, kPadScrollMin, kPadScrollMax);
-  const int steps = static_cast<int>(std::lround((clamped - kPadScrollMin) / kPadScrollStep));
-  return std::clamp(kPadScrollMin + steps * kPadScrollStep, kPadScrollMin, kPadScrollMax);
+  const int percent = static_cast<int>(std::lround(std::clamp(value, kPadScrollMin, kPadScrollMax) * 100.0f));
+  return std::clamp(percent, 1, 100) / 100.0f;
+}
+
+float pad_scroll_t(float value) {
+  const float v = std::clamp(value, kPadScrollMin, kPadScrollMax);
+  const float log_min = std::log(kPadScrollMin);
+  const float log_max = std::log(kPadScrollMax);
+  return (std::log(v) - log_min) / (log_max - log_min);
 }
 
 float pad_scroll_from_x(float x, const Rect& track) {
   if (track.w <= 1.0f) return kPadScrollMax;
   const float t = std::clamp((x - track.x) / track.w, 0.0f, 1.0f);
-  return snap_pad_scroll(kPadScrollMin + t * (kPadScrollMax - kPadScrollMin));
+  const float log_min = std::log(kPadScrollMin);
+  const float log_max = std::log(kPadScrollMax);
+  return snap_pad_scroll(std::exp(log_min + t * (log_max - log_min)));
 }
 constexpr int kKeyF = 'f';
 
@@ -1910,8 +1918,7 @@ void App::draw_settings(Canvas& canvas) {
   const float speed_x = slower.right() + 14.0f;
   const Rect speed_track{speed_x, y + 12.0f, faster.x - 14.0f - speed_x, 8.0f};
   pad_scroll_track_ = speed_track;
-  const float span = std::max(0.001f, kPadScrollMax - kPadScrollMin);
-  const float t = std::clamp((speed - kPadScrollMin) / span, 0.0f, 1.0f);
+  const float t = pad_scroll_t(speed);
   canvas.fill_round_rect(speed_track, 4, rgba(0xffffff, 40));
   canvas.fill_round_rect(Rect{speed_track.x, speed_track.y, std::max(8.0f, speed_track.w * t), speed_track.h},
                          4, theme::accent());
@@ -1920,7 +1927,7 @@ void App::draw_settings(Canvas& canvas) {
   y += 40.0f;
   regular_.draw_wrapped(
       canvas,
-      "Drag left to slow the two-finger scroll. The mouse wheel is not changed. Scroll this sheet, or Home, to try a speed.",
+      "Drag left of the middle to go slower than 10%, down to 1%. The mouse wheel is not changed.",
       Rect{left, y, inner, 36}, 12.0f, theme::faint(), 2);
   y += 40.0f;
 

@@ -1350,8 +1350,17 @@ void test_pad_scroll_sensitivity() {
   pad.from_pad = true;
   CHECK(app.handle(pad));
   CHECK_NEAR(app.scroll_offset(ui::App::page_region()) - before, 48.0f, 0.1f);
+  CHECK(app.handle(wheel_at(400, 400, 1)));
+  Settings slowest = app.settings();
+  slowest.pad_scroll = 0.01f;
+  app.set_settings(slowest);
+  const float at_top = app.scroll_offset(ui::App::page_region());
+  ui::InputEvent tiny = wheel_at(400, 400, -1);
+  tiny.from_pad = true;
+  CHECK(app.handle(tiny));
+  CHECK_NEAR(app.scroll_offset(ui::App::page_region()) - at_top, 0.96f, 0.05f);
 
-  // The control is at the bottom of Settings. One step down from the default writes 95%.
+  // The control is at the bottom of Settings. One step down from the default writes 99%.
   Settings full = app.settings();
   full.pad_scroll = 1.0f;
   app.set_settings(full);
@@ -1365,8 +1374,8 @@ void test_pad_scroll_sensitivity() {
     break;
   }
   CHECK(stepped);
-  CHECK_NEAR(app.settings().pad_scroll, 0.95f, 0.001f);
-  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.95f, 0.001f);
+  CHECK_NEAR(app.settings().pad_scroll, 0.99f, 0.001f);
+  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.99f, 0.001f);
   CHECK(app.settings_open());
 
   draw_once(app);
@@ -1383,8 +1392,8 @@ void test_pad_scroll_sensitivity() {
     break;
   }
   CHECK(dragged);
-  CHECK_NEAR(app.settings().pad_scroll, 0.10f, 0.001f);
-  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.10f, 0.001f);
+  CHECK_NEAR(app.settings().pad_scroll, 0.01f, 0.001f);
+  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.01f, 0.001f);
   CHECK(app.settings_open());
 }
 

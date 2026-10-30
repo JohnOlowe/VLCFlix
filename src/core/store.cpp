@@ -112,7 +112,7 @@ bool Store::patch_settings(const Json& patch, Settings* out, std::string* error)
     if (!v->isNumber()) return fail("padScroll must be a number");
     const double speed = v->asNumber(-1);
     if (speed < kPadScrollMin - 1e-4 || speed > kPadScrollMax + 1e-4) {
-      return fail("padScroll must be between 0.1 and 1");
+      return fail("padScroll must be between 0.01 and 1");
     }
     current.pad_scroll = static_cast<float>(speed);
   }

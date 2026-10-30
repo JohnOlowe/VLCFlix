@@ -272,7 +272,15 @@ bool App::tick(double now) {
 
   const EngineStatus status = engine_.status();
   const PlayState previous_state = player_status_.state;
+  const double previous_time = player_status_.time;
+  const std::string previous_cue = active_subtitle_text(previous_time);
   player_status_ = status;
+  // The clock and the subtitle line change between pictures. Redraw for those, and
+  // only those, so a held frame does not get scaled again every few milliseconds.
+  if (chrome_visible_ && static_cast<int>(status.time) != static_cast<int>(previous_time)) {
+    changed = true;
+  }
+  if (active_subtitle_text(status.time) != previous_cue) changed = true;
 
   // Resume, once the length is known: a seek before the demuxer reports a duration is
   // a seek into nothing.

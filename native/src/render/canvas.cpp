@@ -258,6 +258,7 @@ void Canvas::blit_raw(const uint8_t* pixels, int src_width, int src_height, cons
   const int y0 = std::max(0, static_cast<int>(std::floor(std::max(dst.y, clip_rect.y))));
   const int x1 = std::min(width_, static_cast<int>(std::ceil(std::min(dst.right(), clip_rect.right()))));
   const int y1 = std::min(height_, static_cast<int>(std::ceil(std::min(dst.bottom(), clip_rect.bottom()))));
+  if (x0 >= x1 || y0 >= y1) return;
   // Cover crops the source instead of stretching it, which is what a video needs when
   // the window aspect and the film aspect disagree.
   double sx0 = 0, sy0 = 0, sw = src_width, sh = src_height;
@@ -272,33 +273,44 @@ void Canvas::blit_raw(const uint8_t* pixels, int src_width, int src_height, cons
       sy0 = (src_height - sh) / 2;
     }
   }
+  // libVLC's "RV32" is native-endian RGB32. On this machine that is B,G,R,X in
+  // memory. The canvas is R,G,B,A. Reading the bytes in order paints red as blue,
+  // which is why skin came out blue. The fourth byte is padding, not alpha.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  constexpr int kR = 0, kG = 1, kB = 2;
+#else
+  constexpr int kR = 2, kG = 1, kB = 0;
+#endif
+  const double x_scale = dst.w > 0 ? sw / dst.w : 0;
+  const double y_scale = dst.h > 0 ? sh / dst.h : 0;
   for (int y = y0; y < y1; ++y) {
-    const double v = dst.h > 0 ? (y + 0.5 - dst.y) / dst.h : 0;
-    const double sy = sy0 + v * sh - 0.5;
+    const double sy = sy0 + (y + 0.5 - dst.y) * y_scale - 0.5;
     const int iy0 = static_cast<int>(std::floor(sy));
-    const double fy = sy - iy0;
-    for (int x = x0; x < x1; ++x) {
-      const double u = dst.w > 0 ? (x + 0.5 - dst.x) / dst.w : 0;
-      const double sx = sx0 + u * sw - 0.5;
+    const int fy = std::clamp(static_cast<int>((sy - iy0) * 256.0), 0, 256);
+    const int ay = std::clamp(iy0, 0, src_height - 1);
+    const int by = std::clamp(iy0 + 1, 0, src_height - 1);
+    uint8_t* row = &pixels_[(static_cast<std::size_t>(y) * width_ + x0) * 4];
+    for (int x = x0; x < x1; ++x, row += 4) {
+      const double sx = sx0 + (x + 0.5 - dst.x) * x_scale - 0.5;
       const int ix0 = static_cast<int>(std::floor(sx));
-      const double fx = sx - ix0;
+      const int fx = std::clamp(static_cast<int>((sx - ix0) * 256.0), 0, 256);
       const int ax = std::clamp(ix0, 0, src_width - 1);
       const int bx = std::clamp(ix0 + 1, 0, src_width - 1);
-      const int ay = std::clamp(iy0, 0, src_height - 1);
-      const int by = std::clamp(iy0 + 1, 0, src_height - 1);
       const uint8_t* p00 = pixels + (static_cast<std::size_t>(ay) * src_width + ax) * 4;
       const uint8_t* p10 = pixels + (static_cast<std::size_t>(ay) * src_width + bx) * 4;
       const uint8_t* p01 = pixels + (static_cast<std::size_t>(by) * src_width + ax) * 4;
       const uint8_t* p11 = pixels + (static_cast<std::size_t>(by) * src_width + bx) * 4;
-      Color sample;
-      for (int channel = 0; channel < 4; ++channel) {
-        const double top = p00[channel] + (p10[channel] - p00[channel]) * fx;
-        const double bottom = p01[channel] + (p11[channel] - p01[channel]) * fx;
-        reinterpret_cast<uint8_t*>(&sample)[channel] = clamp_byte(top + (bottom - top) * fy);
-      }
-      // The fourth byte of RV32 is padding, not alpha: force it opaque.
-      sample.a = 255;
-      blend_pixel(x, y, sample);
+      auto mix = [&](int channel) {
+        const int top = (p00[channel] * (256 - fx) + p10[channel] * fx) >> 8;
+        const int bottom = (p01[channel] * (256 - fx) + p11[channel] * fx) >> 8;
+        return static_cast<uint8_t>((top * (256 - fy) + bottom * fy) >> 8);
+      };
+      // Opaque write. blend_pixel's per-pixel clip test was most of the cost of a
+      // frame, and a film has no alpha to blend.
+      row[0] = mix(kR);
+      row[1] = mix(kG);
+      row[2] = mix(kB);
+      row[3] = 255;
     }
   }
 }

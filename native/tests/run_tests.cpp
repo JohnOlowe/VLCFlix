@@ -544,6 +544,24 @@ void test_png_roundtrip() {
 
 /* --------------------------------- misc --------------------------------- */
 
+void test_video_colours() {
+  TEST("video: RV32 blue-first bytes are shown as normal colour");
+  Canvas canvas(2, 2);
+  canvas.clear(rgb(0x000000));
+  // One pure-red pixel as libVLC stores RV32 on a little-endian machine: B,G,R,X.
+  uint8_t pixels[16] = {};
+  pixels[0] = 0;
+  pixels[1] = 0;
+  pixels[2] = 255;
+  pixels[3] = 0;
+  canvas.blit_raw(pixels, 2, 2, Rect{0, 0, 2, 2}, false);
+  const uint8_t* out = canvas.pixels().data();
+  CHECK_EQ(static_cast<int>(out[0]), 255);
+  CHECK_EQ(static_cast<int>(out[1]), 0);
+  CHECK_EQ(static_cast<int>(out[2]), 0);
+  CHECK_EQ(static_cast<int>(out[3]), 255);
+}
+
 void test_misc() {
   TEST("misc: ids, mime types, video extensions");
   CHECK_STR_EQ(sha1_hex("abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
@@ -573,6 +591,7 @@ int main() {
   test_artwork_rules();
   test_concurrent_children();
   test_png_roundtrip();
+  test_video_colours();
   test_misc();
   // UI tests draw real screens into a temporary directory: no display, no window.
   const std::string ui_out = join(temp_dir(), "vlcflix-studio-shots");

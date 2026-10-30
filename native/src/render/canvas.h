@@ -64,8 +64,9 @@ class Canvas {
   // Draws `image` into `dst`. `cover` crops the source to fill dst without
   // distorting it, which is what posters and backdrops need.
   void blit(const Image& image, const Rect& dst, bool cover);
-  // Same as blit() but for a raw RV32 buffer, which is what libVLC hands us. Keeping
-  // it here means the player never copies a frame just to satisfy a type.
+  // Same as blit() but for a raw RV32 buffer, which is what libVLC hands us. RV32 is
+  // native-endian, so the red and blue bytes are swapped on the way into this RGBA
+  // canvas. Keeping it here means the player never copies a frame just to satisfy a type.
   void blit_raw(const uint8_t* pixels, int src_width, int src_height, const Rect& dst,
                 bool cover);
   void blit_src(const Image& image, const Rect& src, const Rect& dst);

@@ -449,7 +449,11 @@ int command_ui(const Args& args) {
       dirty = true;
     }
     ui::InputEvent event;
-    if (!window.poll(&event, dirty ? 0 : 16)) break;  // false = the window closed
+    // While a film is open, wake often enough to pick up the next picture, but do not
+    // redraw unless it changed. Redrawing every spin saturated the CPU and the decoder
+    // could not keep a steady frame time, which is what "not smooth" looked like.
+    const int wait_ms = dirty ? 0 : (app->playing() ? 4 : 16);
+    if (!window.poll(&event, wait_ms)) break;  // false = the window closed
     // Some platforms resize the window without a SIZE_CHANGED event (and the window may
     // have been shrunk before the first frame). The canvas follows the window, always:
     // hit testing is in window coordinates.
@@ -485,7 +489,6 @@ int command_ui(const Args& args) {
                app->pointer_y());
     }
     window.set_cursor(cursor);
-    if (app->playing()) dirty = true;  // a player needs a frame even when nothing changed
   }
 
   // My List is the only thing the UI mutates without saving at the time; settings

@@ -61,6 +61,7 @@ struct Pad {
   WNDPROC old_proc = nullptr;
   SDL_Window* window = nullptr;
   bool down_scrolls_up = true;
+  bool scroll_marked = false;
   struct Finger {
     SDL_FingerID id = 0;
     bool down = false;
@@ -396,9 +397,15 @@ bool consume_elan_scroll(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 // native bar. A mouse wheel never looks at the style, which is why that already worked.
 void mark_scrollable(HWND hwnd) {
   if (!hwnd) return;
+  // The caption buttons have to stay. ShowScrollBar(FALSE) on this window hides
+  // minimize, maximize and close, and they do not come back. The style bits are
+  // enough for the ELAN driver. Do not call ShowScrollBar.
+  const LONG caption = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
   LONG style = GetWindowLong(hwnd, GWL_STYLE);
-  if ((style & (WS_VSCROLL | WS_HSCROLL)) == (WS_VSCROLL | WS_HSCROLL)) return;
-  SetWindowLong(hwnd, GWL_STYLE, style | WS_VSCROLL | WS_HSCROLL);
+  const LONG next = style | WS_VSCROLL | WS_HSCROLL | caption;
+  if (style != next) SetWindowLong(hwnd, GWL_STYLE, next);
+  if (g_pad.scroll_marked) return;
+  g_pad.scroll_marked = true;
   SCROLLINFO info{};
   info.cbSize = sizeof info;
   info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
@@ -408,12 +415,13 @@ void mark_scrollable(HWND hwnd) {
   info.nPos = 5000;  // stay mid-range so the driver does not decide we are already at the end
   SetScrollInfo(hwnd, SB_VERT, &info, FALSE);
   SetScrollInfo(hwnd, SB_HORZ, &info, FALSE);
-  ShowScrollBar(hwnd, SB_BOTH, FALSE);
-  style = GetWindowLong(hwnd, GWL_STYLE);
-  SetWindowLong(hwnd, GWL_STYLE, style | WS_VSCROLL | WS_HSCROLL);
+  // One frame update, from outside a size message, so the caption is drawn again.
+  SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
-// The native bar must not steal client pixels. The style bits stay set.
+// Give back only the scrollbar thickness. Never touch the top: that is the caption,
+// and covering it is how the minimize button disappears.
 LRESULT keep_client_full(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (!wp) {
     return g_pad.old_proc ? CallWindowProc(g_pad.old_proc, hwnd, msg, wp, lp)
@@ -421,20 +429,21 @@ LRESULT keep_client_full(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
   const RECT proposed = params->rgrc[0];
-  const LRESULT result = g_pad.old_proc ? CallWindowProc(g_pad.old_proc, hwnd, msg, wp, lp)
-                                        : DefWindowProc(hwnd, msg, wp, lp);
+  if (g_pad.old_proc) CallWindowProc(g_pad.old_proc, hwnd, msg, wp, lp);
+  else DefWindowProc(hwnd, msg, wp, lp);
+  const int vscroll = GetSystemMetrics(SM_CXVSCROLL);
+  const int hscroll = GetSystemMetrics(SM_CYHSCROLL);
   const int left_inset = params->rgrc[0].left - proposed.left;
   const int right_inset = proposed.right - params->rgrc[0].right;
   const int bottom_inset = proposed.bottom - params->rgrc[0].bottom;
-  if (right_inset > left_inset) params->rgrc[0].right = proposed.right - left_inset;
-  if (bottom_inset > left_inset) params->rgrc[0].bottom = proposed.bottom - left_inset;
-  return result;
+  if (vscroll > 0 && right_inset >= left_inset + vscroll - 2) params->rgrc[0].right += vscroll;
+  if (hscroll > 0 && bottom_inset >= left_inset + hscroll - 2) params->rgrc[0].bottom += hscroll;
+  return 0;
 }
 
 LRESULT CALLBACK pad_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (msg == kTabletQueryGesture) return kGestureStatus;
   if (msg == WM_NCCALCSIZE) return keep_client_full(hwnd, msg, wp, lp);
-  if (msg == WM_SIZE || msg == WM_WINDOWPOSCHANGED) mark_scrollable(hwnd);
   // Elantech "drag two fingers" is a scrollbar message, not a mouse wheel. Taking it
   // here is what makes the gesture scroll. A mouse wheel never arrives as this.
   if ((msg == kVScroll || msg == kHScroll) && consume_elan_scroll(hwnd, msg, wp, lp)) return 0;

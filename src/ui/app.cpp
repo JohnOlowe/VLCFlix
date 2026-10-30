@@ -53,11 +53,24 @@ std::string counted(std::size_t n, const char* one, const char* many) {
 // One notch of the wheel, and one page of a keyboard scroll.
 constexpr float kWheelStep = 96.0f;
 constexpr float kRailStep = 140.0f;
-constexpr float kPadScrollStep = 0.01f;
 
 float snap_pad_scroll(float value) {
-  const int percent = static_cast<int>(std::lround(std::clamp(value, kPadScrollMin, kPadScrollMax) * 100.0f));
-  return std::clamp(percent, 1, 100) / 100.0f;
+  // 0.1% steps, from 0.2% to 100%. Tenths of a percent avoid binary drift.
+  const int tenths = static_cast<int>(std::lround(std::clamp(value, kPadScrollMin, kPadScrollMax) * 1000.0f));
+  return std::clamp(tenths, 2, 1000) / 1000.0f;
+}
+
+float pad_scroll_step(float current) {
+  return current <= 0.02f ? 0.001f : 0.01f;
+}
+
+std::string pad_scroll_label(float speed) {
+  if (speed < 0.099f) {
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%.1f%%", speed * 100.0f);
+    return buf;
+  }
+  return std::to_string(static_cast<int>(std::lround(speed * 100.0f))) + "%";
 }
 
 float pad_scroll_t(float value) {
@@ -187,6 +200,15 @@ App::App(std::string media_dir, std::string data_dir)
     : media_dir_(std::move(media_dir)), data_dir_(data_dir), store_(data_dir) {
   if (!regular_.load_default(false)) LOG_ERROR("UI: no font, text will be missing");
   if (!bold_.load_default(true)) LOG_WARN("UI: no bold font, using regular");
+}
+
+App::~App() {
+  {
+    std::lock_guard<std::mutex> lock(preview_mu_);
+    preview_stop_thread_ = true;
+  }
+  preview_cv_.notify_all();
+  if (preview_thread_.joinable()) preview_thread_.join();
 }
 
 void App::set_catalog(Catalog catalog) { catalog_ = std::move(catalog); }
@@ -657,36 +679,145 @@ void App::draw_poster_card(Canvas& canvas, const Rect& rect, const Item& item, b
   }
 }
 
+void App::ensure_preview_thread() {
+  if (preview_thread_.joinable()) return;
+  preview_thread_ = std::thread([this] { preview_thread_main(); });
+}
+
+void App::preview_thread_main() {
+  // Plugin load is the multi-second stall. It happens here, never on the window
+  // thread, so Windows does not paint "Not Responding" over the first hover.
+  preview_engine_.add_argument("--aout=dummy");
+  preview_engine_.configure(640, 360);
+  preview_engine_.set_clock([this] { return clock_now(); });
+  preview_engine_.warm();
+  for (;;) {
+    PreviewRequest req;
+    {
+      std::unique_lock<std::mutex> lock(preview_mu_);
+      preview_cv_.wait(lock, [&] { return preview_stop_thread_ || preview_request_ready_; });
+      if (preview_stop_thread_) {
+        preview_engine_.stop();
+        return;
+      }
+      req = preview_request_;
+      preview_request_ready_ = false;
+    }
+    if (req.index < 0 || req.path.empty() || req.generation != preview_generation_.load()) {
+      preview_engine_.stop();
+      continue;
+    }
+    std::string error;
+    if (!preview_engine_.open(req.path, &error)) {
+      LOG_WARN("preview: %s", error.c_str());
+      std::lock_guard<std::mutex> lock(preview_mu_);
+      preview_failed_generation_ = req.generation;
+      continue;
+    }
+    if (req.generation != preview_generation_.load()) {
+      preview_engine_.stop();
+      continue;
+    }
+    preview_engine_.set_muted(true);
+    preview_engine_.play();
+    LOG_INFO("preview: playing %s", req.path.c_str());
+    bool seek_done = req.seek_at < 0;
+    bool warned = false;
+    const double started = clock_now();
+    while (req.generation == preview_generation_.load() && !preview_stop_thread_) {
+      if (!seek_done) {
+        const EngineStatus status = preview_engine_.status();
+        if (status.length > 0) {
+          preview_engine_.seek(req.seek_at);
+          LOG_INFO("preview: seeked to %.1f s of %.1f s", req.seek_at, status.length);
+          seek_done = true;
+        }
+      }
+      Frame frame;
+      if (preview_engine_.take_frame(&frame)) {
+        std::lock_guard<std::mutex> lock(preview_mu_);
+        if (req.generation == preview_generation_.load()) {
+          preview_published_frame_ = std::move(frame);
+          preview_published_ = true;
+        }
+      }
+      const EngineStatus status = preview_engine_.status();
+      if (status.state == PlayState::Error) {
+        LOG_WARN("preview: engine error: %s",
+                 status.error.empty() ? "unknown" : status.error.c_str());
+        std::lock_guard<std::mutex> lock(preview_mu_);
+        preview_failed_generation_ = req.generation;
+        break;
+      }
+      if (status.state == PlayState::Ended) {
+        if (status.frames_decoded == 0) {
+          LOG_WARN("preview: %s ended without a single picture; showing the artwork instead",
+                   req.name.c_str());
+          std::lock_guard<std::mutex> lock(preview_mu_);
+          preview_failed_generation_ = req.generation;
+          break;
+        }
+        preview_engine_.seek(0);
+        preview_engine_.play();
+      }
+      if (!warned && clock_now() - started > 4.0) {
+        Frame published;
+        bool have = false;
+        {
+          std::lock_guard<std::mutex> lock(preview_mu_);
+          have = preview_published_ || preview_has_frame_;
+        }
+        if (!have) {
+          LOG_WARN("preview: no picture after 4 s of %s (state %d, decoded %lld); showing artwork",
+                   req.name.c_str(), static_cast<int>(status.state),
+                   static_cast<long long>(status.frames_decoded));
+          warned = true;
+        }
+      }
+      std::unique_lock<std::mutex> lock(preview_mu_);
+      preview_cv_.wait_for(lock, std::chrono::milliseconds(16), [&] {
+        return preview_stop_thread_ || preview_request_ready_ ||
+               preview_generation_.load() != req.generation;
+      });
+    }
+    preview_engine_.stop();
+  }
+}
+
 void App::set_hover_preview(int index) {
   if (index == preview_index_) return;
   preview_index_ = index;
-  preview_has_frame_ = false;
-  preview_engine_.stop();
-  if (index < 0 || static_cast<std::size_t>(index) >= catalog_.items.size()) return;
-  const Item& item = catalog_.items[static_cast<std::size_t>(index)];
-  std::string path = !item.preview.empty() ? join(media_dir_, item.preview) : item.path;
-  if (!file_exists(path)) path = item.path;
-  if (!file_exists(path)) return;
-  preview_engine_.add_argument("--aout=dummy");  // hover previews are silent by design
-  preview_engine_.configure(640, 360);
-  preview_engine_.set_clock([this] { return clock_now(); });
-  std::string error;
-  if (!preview_engine_.open(path, &error)) {
-    LOG_WARN("preview: %s", error.c_str());
-    preview_index_ = -1;
-    return;
-  }
-  preview_engine_.set_muted(true);
-  preview_engine_.play();
-  // Do not seek here. libVLC answers "no length yet" for the first moments after a file
-  // is opened, and a seek into that goes nowhere: on the Windows machine the preview
-  // opened, reported "playing", and never produced a picture, so the card fell back to
-  // the artwork and looked like the preview was simply broken. The seek is queued and
-  // performed by tick() as soon as the demuxer reports the length.
-  preview_seek_at_ = item.duration > 10 ? item.duration * 0.2 : -1;
   preview_warned_ = false;
   preview_started_ = clock_now();
-  LOG_INFO("preview: playing %s", path.c_str());
+  PreviewRequest req;
+  req.generation = preview_generation_.fetch_add(1) + 1;
+  req.index = index;
+  bool has_file = false;
+  if (index >= 0 && static_cast<std::size_t>(index) < catalog_.items.size()) {
+    const Item& item = catalog_.items[static_cast<std::size_t>(index)];
+    std::string path = !item.preview.empty() ? join(media_dir_, item.preview) : item.path;
+    if (!file_exists(path)) path = item.path;
+    if (file_exists(path)) {
+      req.path = std::move(path);
+      req.name = item.filename;
+      req.seek_at = item.duration > 10 ? item.duration * 0.2 : -1;
+      has_file = true;
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(preview_mu_);
+    preview_request_ = std::move(req);
+    preview_request_ready_ = true;
+    preview_failed_generation_ = 0;
+    preview_has_frame_ = false;
+  }
+  if (index >= 0 && !has_file) {
+    if (preview_thread_.joinable()) preview_cv_.notify_all();
+    return;
+  }
+  if (index < 0 && !preview_thread_.joinable()) return;
+  ensure_preview_thread();
+  preview_cv_.notify_all();
 }
 
 void App::draw_hover_card(Canvas& canvas) {
@@ -1897,8 +2028,7 @@ void App::draw_settings(Canvas& canvas) {
   y += 10.0f;
   section("TOUCHPAD");
   const float speed = snap_pad_scroll(settings_.pad_scroll);
-  const int percent = static_cast<int>(std::lround(speed * 100.0f));
-  const std::string percent_label = std::to_string(percent) + "%";
+  const std::string percent_label = pad_scroll_label(speed);
   const float percent_w = bold_.measure(percent_label, 13.0f).width;
   regular_.draw(canvas, "Two-finger scroll", left, y, 13.0f, theme::text());
   bold_.draw(canvas, percent_label, left + inner - percent_w, y, 13.0f, theme::accent());
@@ -1927,7 +2057,7 @@ void App::draw_settings(Canvas& canvas) {
   y += 40.0f;
   regular_.draw_wrapped(
       canvas,
-      "Drag left of the middle to go slower than 10%, down to 1%. The mouse wheel is not changed.",
+      "Drag left to go slower, down to 0.2%. The mouse wheel is not changed.",
       Rect{left, y, inner, 36}, 12.0f, theme::faint(), 2);
   y += 40.0f;
 
@@ -2143,7 +2273,8 @@ bool App::handle(const InputEvent& event) {
         case Action::Kind::PadScroll:
           return false;
         case Action::Kind::NudgePadScroll: {
-          const float step = action.value == "-" ? -kPadScrollStep : kPadScrollStep;
+          const float step = action.value == "-" ? -pad_scroll_step(settings_.pad_scroll)
+                                               : pad_scroll_step(settings_.pad_scroll);
           apply_pad_scroll(settings_.pad_scroll + step, true);
           return true;
         }

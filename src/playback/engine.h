@@ -48,6 +48,10 @@ class Engine {
   void configure(int width, int height);
   // Extra libVLC arguments, used by tests to keep the machine quiet (--aout=dummy).
   void add_argument(const std::string& argument);
+  // Creates the libVLC instance without opening a file. The first creation loads
+  // every plugin and can take seconds; doing it off the window thread is what keeps
+  // the first hover from being reported as Not Responding.
+  bool warm();
 
   bool open(const std::string& path, std::string* error);
   void play();

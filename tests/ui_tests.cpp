@@ -1392,8 +1392,8 @@ void test_pad_scroll_sensitivity() {
     break;
   }
   CHECK(dragged);
-  CHECK_NEAR(app.settings().pad_scroll, 0.01f, 0.001f);
-  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.01f, 0.001f);
+  CHECK_NEAR(app.settings().pad_scroll, 0.002f, 0.0001f);
+  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.002f, 0.0001f);
   CHECK(app.settings_open());
 }
 

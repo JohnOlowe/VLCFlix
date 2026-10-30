@@ -42,6 +42,7 @@ add_library(vlcflix_core STATIC
   src/ui/theme.cpp
   src/ui/app.cpp
   src/platform/window_sdl.cpp
+  src/platform/window_pad.cpp
   src/playback/engine.cpp
   src/playback/ffmpeg_args.cpp
   src/playback/presenter.cpp

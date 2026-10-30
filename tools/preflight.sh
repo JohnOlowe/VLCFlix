@@ -83,9 +83,9 @@ else
   grep -qF "constexpr const wchar_t* kExeName = L\"VLCFlixStudio.exe\";" $SETUP \
     && ok "installer executable is VLCFlixStudio.exe" \
     || bad "installer executable name is not the product's"
-  grep -qF "Programs\" / kProtectedDirName" $SETUP \
-    && ok "install directory is %LOCALAPPDATA%\\Programs\\VLCFlixStudio (its own folder)" \
-    || bad "install directory does not use the product's own folder"
+  grep -qF 'return home_dir() + L"\\Programs\\VLCFlixStudio";' "$SETUP" \
+    && ok "install directory is %LOCALAPPDATA%\\Programs\\VLCFlixStudio" \
+    || bad "the default install directory is not VLCFlixStudio"
   grep -qF 'Uninstall\\VLCFlixStudio"' $SETUP \
     && ok "uninstall key is the application's own (…\\Uninstall\\VLCFlixStudio)" \
     || bad "uninstall key is not the application's"
@@ -150,7 +150,7 @@ big=$(git ls-files -z | xargs -0 -r du -k 2>/dev/null | awk '$1 > 5120 {print $2
 leak=$(git grep -nE '(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{25,}|AKIA[0-9A-Z]{16})' -- \
         '*.cpp' '*.h' '*.sh' '*.md' '*.json' '*.nsi' '*.txt' 2>/dev/null || true)
 [ -z "$leak" ] && ok "no token-shaped strings in the tracked tree" \
-               || bad "a token-shaped string is tracked: $(echo "$leak" | head -1)"
+               || bad "a token-shaped string is tracked (value suppressed)"
 
 # ------------------------------------------------------------ documentation
 # docs/TESTING.md promises specific commands; a promise that names a target which does

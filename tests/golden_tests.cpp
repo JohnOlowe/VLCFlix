@@ -114,14 +114,19 @@ void check_screen(const std::string& baseline_dir, const std::string& name, ui::
     vftest::Registry::instance().fail(__FILE__, __LINE__, "could not write " + got_path);
     return;
   }
-  if (updating() || !file_exists(want_path)) {
+  if (updating()) {
+    const bool existed = file_exists(want_path);
     if (!write_png(want_path, canvas)) {
       vftest::Registry::instance().fail(__FILE__, __LINE__, "could not write " + want_path);
       return;
     }
-    std::printf("    (baseline %s %s)\n", file_exists(want_path) ? "rewritten:" : "created:",
+    std::printf("    (baseline %s %s)\n", existed ? "rewritten:" : "created:",
                 want_path.c_str());
     vftest::Registry::instance().pass();
+    return;
+  }
+  if (!file_exists(want_path)) {
+    vftest::Registry::instance().fail(__FILE__, __LINE__, "missing golden baseline: " + want_path);
     return;
   }
 

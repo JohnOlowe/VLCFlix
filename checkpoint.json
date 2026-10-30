@@ -1,0 +1,16 @@
+{
+  "project": "VLCFlix Studio",
+  "branch": "dev",
+  "layout": "C++ source, tests, packaging, and build files at repository root",
+  "last_verification": {
+    "date": "2026-10-30",
+    "make_verify": "passed: 33 static checks, 707 C++ checks, 15 journey steps",
+    "cmake_ctest": "passed: 2 tests",
+    "address_sanitizer": "passed: 707 checks",
+    "missing_baseline_negative_control": "passed",
+    "windows_installer_syntax": "passed with a Windows cross-compiler; no installer built"
+  },
+  "windows_user_confirmation": "pending for the latest build",
+  "release_directory": "releases/ (gitignored; keep only the latest handout)",
+  "credential_policy": "ignored, never committed, never placed in a URL"
+}

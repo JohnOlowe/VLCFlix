@@ -326,7 +326,6 @@ class App {
   void stop_ffmpeg();
   void seek_playback(double seconds);
   void apply_stream_clock(EngineStatus* status) const;
-  bool launch_external_vlc(const Item& item);
 
   std::string media_dir_;
   std::string data_dir_;

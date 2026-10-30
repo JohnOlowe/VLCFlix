@@ -56,10 +56,9 @@ struct Settings {
   std::string vlc_path;               // retained for compatible settings
   int vlc_http_port = 8080;           // stored compatibility setting
   std::string vlc_password = "vlcflix";
-  // vlc, ffmpeg, or browser. Settings writes this. play_mode_chosen stays false
-  // for files saved before the chips worked: those say "vlc" only because that was
-  // the default, and Play stays in this window. Clicking a chip sets the flag.
-  // Real VLC then opens the VLC application.
+  // vlc, ffmpeg, or browser. Real VLC and Built-in both play in this window
+  // with libVLC. Neither opens the VLC application. play_mode_chosen is kept so
+  // older files still load; it no longer changes where Play appears.
   std::string play_mode = "vlc";
   bool play_mode_chosen = false;
   bool vlc_fullscreen = true;

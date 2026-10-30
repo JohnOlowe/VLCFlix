@@ -240,25 +240,6 @@ bool App::start_ffmpeg(const Item& item, double start_at, bool hardware) {
   return true;
 }
 
-bool App::launch_external_vlc(const Item& item) {
-  const std::string binary = vlc_binary();
-  if (binary.empty()) {
-    notify("VLC was not found — playing in this window");
-    return false;
-  }
-  std::vector<std::string> args = {binary};
-  if (settings_.vlc_fullscreen) args.push_back("--fullscreen");
-  args.push_back(item.path);
-  std::string error;
-  if (!spawn_detached(args, &error)) {
-    notify(error.empty() ? "VLC did not start — playing in this window" : error);
-    return false;
-  }
-  notify("Opened “" + item.title + "” in VLC");
-  LOG_INFO("player: launched %s for %s", binary.c_str(), item.path.c_str());
-  return true;
-}
-
 void App::seek_playback(double target) {
   if (target < 0) target = 0;
   if (!ffmpeg_active_) {
@@ -328,16 +309,8 @@ bool App::start_playback(int index) {
     if (fraction > 0.02 && fraction < 0.92) resume_at_ = saved->second.position;
   }
 
-  // Real VLC only leaves this window after the chip has actually been chosen.
-  // Older settings files say "vlc" because that was the default, and those keep
-  // playing here — that is the player this app has always used.
-  if (settings_.play_mode == "vlc" && settings_.play_mode_chosen) {
-    if (launch_external_vlc(item)) {
-      set_hover_preview(-1);
-      return true;
-    }
-  }
-
+  // Real VLC is libVLC in this window. It does not launch the VLC application.
+  engine_.set_hw_decode(settings_.hw_decode);
   if (settings_.play_mode == "ffmpeg") {
     const double start_at = resume_at_ >= 0 ? resume_at_ : 0;
     resume_at_ = -1;

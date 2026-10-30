@@ -53,9 +53,14 @@ class Engine {
   // the first hover from being reported as Not Responding.
   bool warm();
 
-  bool open(const std::string& path, std::string* error);
+  bool open(const std::string& path, std::string* error, bool loop = false);
   // A URL, used for the local ffmpeg stream. File playback stays on open().
   bool open_location(const std::string& url, std::string* error);
+  // Experimental GPU decode for this engine's next open. Previews leave it off.
+  void set_hw_decode(bool enabled) { hw_decode_ = enabled; }
+  // Start the current media again from the beginning. Seeking a player that has
+  // already ended does not restart it; this does.
+  void replay();
   void play();
   void pause();
   void toggle_pause();
@@ -99,7 +104,8 @@ class Engine {
   bool media_open_ = false;
   std::vector<std::string> arguments_;
 
-  bool open_target(const std::string& target, bool location, std::string* error);
+  bool open_target(const std::string& target, bool location, bool loop, std::string* error);
+  bool hw_decode_ = false;
 };
 
 }  // namespace vf

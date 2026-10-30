@@ -156,15 +156,15 @@ bool Engine::warm() {
   return true;
 }
 
-bool Engine::open(const std::string& path, std::string* error) {
-  return open_target(path, false, error);
+bool Engine::open(const std::string& path, std::string* error, bool loop) {
+  return open_target(path, false, loop, error);
 }
 
 bool Engine::open_location(const std::string& url, std::string* error) {
-  return open_target(url, true, error);
+  return open_target(url, true, false, error);
 }
 
-bool Engine::open_target(const std::string& target, bool location, std::string* error) {
+bool Engine::open_target(const std::string& target, bool location, bool loop, std::string* error) {
   stop();
   path_ = target;
   media_open_ = false;
@@ -184,6 +184,14 @@ bool Engine::open_target(const std::string& target, bool location, std::string* 
   // Files stay local: no metadata scraping, nothing that can hang the window on a
   // slow disk. A location is the ffmpeg stream on 127.0.0.1, not a remote scrape.
   libvlc_media_add_option(impl_->media, ":no-sub-autodetect-file");
+  // none is explicit: a build that defaults to the GPU must be able to stay off
+  // when the experimental switch is off. any lets libVLC try, then fall back.
+  libvlc_media_add_option(impl_->media, hw_decode_ ? ":avcodec-hw=any" : ":avcodec-hw=none");
+  if (loop) {
+    // libVLC has no true infinite repeat. 65535 is the stand-in the previews use,
+    // and the preview thread still restarts if a build ignores the option.
+    libvlc_media_add_option(impl_->media, ":input-repeat=65535");
+  }
   if (location) {
     libvlc_media_add_option(impl_->media, ":network-caching=300");
     libvlc_media_add_option(impl_->media, ":live-caching=300");
@@ -224,6 +232,22 @@ bool Engine::open_target(const std::string& target, bool location, std::string* 
   media_open_ = true;
   LOG_INFO("engine: opened %s at %dx%d", path_.c_str(), impl_->width, impl_->height);
   return true;
+}
+
+void Engine::replay() {
+  if (!impl_ || !impl_->player || !media_open_) return;
+  impl_->ended.store(false);
+  impl_->had_error.store(false);
+  impl_->state.store(PlayState::Opening);
+  // Stop, then play the same media. set_time on an ended player does not restart
+  // it, and set_media on the media the player already holds can free that media.
+  libvlc_media_player_stop(impl_->player);
+  libvlc_video_set_callbacks(impl_->player, lock_cb, unlock_cb, display_cb, impl_);
+  libvlc_video_set_format(impl_->player, "RV32", static_cast<unsigned>(impl_->width),
+                          static_cast<unsigned>(impl_->height),
+                          static_cast<unsigned>(impl_->pitch));
+  play();
+  LOG_INFO("engine: replay %s", path_.c_str());
 }
 
 void Engine::play() {

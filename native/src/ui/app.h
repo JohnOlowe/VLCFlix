@@ -41,6 +41,7 @@ struct InputEvent {
   int key = 0;         // SDLK_* values, kept as int so this header stays toolkit-free
   std::string text;    // for Type::Text
   bool ctrl = false;
+  bool from_pad = false;  // a two-finger drag, not a mouse wheel
 };
 
 // What a click was for. Recorded while drawing, consumed by handle().
@@ -54,6 +55,8 @@ struct Action {
     ToggleMyList,   // index
     OpenSettings,
     ToggleSetting,  // value = setting key
+    PadScroll,      // click or drag the touchpad speed track
+    NudgePadScroll, // value = "+" or "-"
     FocusSearch,
     ClearSearch,
     ScanLibrary,
@@ -228,6 +231,8 @@ class App {
   // the change was rejected (a folder that does not exist, for instance).
   bool add_library_folder(const std::string& folder, std::string* error);
   bool remove_library_folder(const std::string& folder, std::string* error);
+  // Live while dragging; written when the drag ends or a step button is clicked.
+  bool apply_pad_scroll(float value, bool persist);
   const std::string& folder_input() const { return folder_input_; }
   bool folder_input_focused() const { return folder_input_focused_; }
   const std::string& scan_label() const { return scan_label_; }
@@ -371,6 +376,8 @@ class App {
   bool settings_open_ = false;
   std::map<std::string, ScrollState> scrolls_;
   std::string drag_region_;      // the scroll bar being dragged, if any
+  bool pad_scroll_drag_ = false;
+  Rect pad_scroll_track_{};
   // The folder picker: what it is showing, what is in it, and why it may be empty.
   bool browser_open_ = false;
   std::string browser_path_;

@@ -1337,6 +1337,67 @@ void test_ui_home_scroll_reaches_the_last_rail() {
   CHECK(lowest_top < 900.0f);
 }
 
+void test_pad_scroll_sensitivity() {
+  TEST("ui: touchpad scroll can be slowed without changing the mouse wheel");
+  const std::string dir = join(temp_dir(), "vlcflix-studio-ui-pad-speed");
+  ensure_dir(dir);
+  ui::App app(dir, dir);
+  app.resize(1600, 900);
+  app.set_catalog(make_catalog());
+  Settings slowed = app.settings();
+  slowed.pad_scroll = 0.5f;
+  app.set_settings(slowed);
+  draw_once(app);
+
+  const float before = app.scroll_offset(ui::App::page_region());
+  CHECK(app.handle(wheel_at(400, 400, -1)));
+  const float mouse_delta = app.scroll_offset(ui::App::page_region()) - before;
+  CHECK_NEAR(mouse_delta, 96.0f, 0.1f);
+  CHECK(app.handle(wheel_at(400, 400, 1)));
+  CHECK_NEAR(app.scroll_offset(ui::App::page_region()), before, 0.1f);
+
+  ui::InputEvent pad = wheel_at(400, 400, -1);
+  pad.from_pad = true;
+  CHECK(app.handle(pad));
+  CHECK_NEAR(app.scroll_offset(ui::App::page_region()) - before, 48.0f, 0.1f);
+
+  // The control is at the bottom of Settings. One step down from the default writes 95%.
+  Settings full = app.settings();
+  full.pad_scroll = 1.0f;
+  app.set_settings(full);
+  CHECK(app.show_screen("settings", ""));
+  draw_once(app);
+  bool stepped = false;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::NudgePadScroll || hit.second.value != "-") continue;
+    CHECK(app.handle(click_at(hit.first.x + hit.first.w / 2, hit.first.y + hit.first.h / 2)));
+    stepped = true;
+    break;
+  }
+  CHECK(stepped);
+  CHECK_NEAR(app.settings().pad_scroll, 0.95f, 0.001f);
+  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.95f, 0.001f);
+  CHECK(app.settings_open());
+
+  draw_once(app);
+  bool dragged = false;
+  for (const auto& hit : app.hit_rects()) {
+    if (hit.second.kind != ui::Action::Kind::PadScroll) continue;
+    CHECK(app.handle(click_at(hit.first.x + 2, hit.first.y + hit.first.h / 2)));
+    ui::InputEvent up;
+    up.type = ui::InputEvent::Type::MouseUp;
+    up.x = hit.first.x + 2;
+    up.y = hit.first.y + hit.first.h / 2;
+    CHECK(app.handle(up));
+    dragged = true;
+    break;
+  }
+  CHECK(dragged);
+  CHECK_NEAR(app.settings().pad_scroll, 0.10f, 0.001f);
+  CHECK_NEAR(Store(dir).load_settings().pad_scroll, 0.10f, 0.001f);
+  CHECK(app.settings_open());
+}
+
 void run_ui_tests(const std::string& out_dir) {
   ensure_dir(out_dir);
   test_ui_screens(out_dir);
@@ -1357,6 +1418,7 @@ void run_ui_tests(const std::string& out_dir) {
   test_ui_hover_grows_in_place();
   test_touchpad_wheel_input();
   test_home_page_bar();
+  test_pad_scroll_sensitivity();
 }
 
 }  // namespace vf

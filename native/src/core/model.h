@@ -59,7 +59,15 @@ struct Settings {
   std::string play_mode = "vlc";      // informational only in the native app
   bool vlc_fullscreen = true;
   bool hw_decode = false;             // now only feeds artwork/preview rendering
+  // Two-finger drag, as a fraction of the speed that first worked. 1 is that
+  // speed. The mouse wheel does not use this.
+  float pad_scroll = 1.0f;
 };
+
+// The settings slider can only slow the gesture down from the speed that works,
+// in small steps, until it feels natural. It cannot stop the gesture.
+inline constexpr float kPadScrollMin = 0.10f;
+inline constexpr float kPadScrollMax = 1.0f;
 
 struct Catalog {
   long long scanned_at = 0;

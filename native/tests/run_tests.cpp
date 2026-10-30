@@ -208,6 +208,20 @@ void test_store() {
   CHECK_EQ(updated.library_folders.size(), std::size_t(1));
   CHECK(store.load_settings().hw_decode);
 
+  Json bad_speed = Json::object();
+  bad_speed.set("padScroll", Json("fast"));
+  CHECK(!store.patch_settings(bad_speed, &updated, &error));
+  CHECK(error.find("padScroll") != std::string::npos);
+  Json too_fast = Json::object();
+  too_fast.set("padScroll", 2.0);
+  CHECK(!store.patch_settings(too_fast, &updated, &error));
+  Json half = Json::object();
+  half.set("padScroll", 0.5);
+  CHECK(store.patch_settings(half, &updated, &error));
+  CHECK_NEAR(updated.pad_scroll, 0.5f, 0.001f);
+  CHECK_NEAR(store.load_settings().pad_scroll, 0.5f, 0.001f);
+  CHECK(store.load_settings().hw_decode);
+
   // The catalog round-trips through disk with its artwork fields intact.
   Catalog catalog;
   catalog.scanned_at = 1234;

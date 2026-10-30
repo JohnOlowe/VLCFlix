@@ -157,8 +157,16 @@ bool Engine::warm() {
 }
 
 bool Engine::open(const std::string& path, std::string* error) {
+  return open_target(path, false, error);
+}
+
+bool Engine::open_location(const std::string& url, std::string* error) {
+  return open_target(url, true, error);
+}
+
+bool Engine::open_target(const std::string& target, bool location, std::string* error) {
   stop();
-  path_ = path;
+  path_ = target;
   media_open_ = false;
 
   if (!warm()) {
@@ -166,15 +174,20 @@ bool Engine::open(const std::string& path, std::string* error) {
     return false;
   }
 
-  impl_->media = libvlc_media_new_path(impl_->instance, path.c_str());
+  impl_->media = location ? libvlc_media_new_location(impl_->instance, target.c_str())
+                          : libvlc_media_new_path(impl_->instance, target.c_str());
   if (!impl_->media) {
-    if (error) *error = "libVLC could not open " + path;
-    LOG_ERROR("engine: libvlc_media_new_path failed for %s", path.c_str());
+    if (error) *error = "libVLC could not open " + target;
+    LOG_ERROR("engine: open failed for %s", target.c_str());
     return false;
   }
-  // Local files only: no network access, no metadata scraping, nothing that can hang
-  // the window on a slow disk behind a remote path.
+  // Files stay local: no metadata scraping, nothing that can hang the window on a
+  // slow disk. A location is the ffmpeg stream on 127.0.0.1, not a remote scrape.
   libvlc_media_add_option(impl_->media, ":no-sub-autodetect-file");
+  if (location) {
+    libvlc_media_add_option(impl_->media, ":network-caching=300");
+    libvlc_media_add_option(impl_->media, ":live-caching=300");
+  }
 
   impl_->player = libvlc_media_player_new_from_media(impl_->media);
   if (!impl_->player) {
@@ -209,7 +222,7 @@ bool Engine::open(const std::string& path, std::string* error) {
     impl_->has_pending = false;
   }
   media_open_ = true;
-  LOG_INFO("engine: opened %s at %dx%d", path.c_str(), impl_->width, impl_->height);
+  LOG_INFO("engine: opened %s at %dx%d", path_.c_str(), impl_->width, impl_->height);
   return true;
 }
 

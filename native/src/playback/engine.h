@@ -62,6 +62,8 @@ class Engine {
   bool warm();
 
   bool open(const std::string& path, std::string* error);
+  // A URL, used for the local ffmpeg stream. File playback stays on open().
+  bool open_location(const std::string& url, std::string* error);
   void play();
   void pause();
   void toggle_pause();
@@ -104,6 +106,8 @@ class Engine {
   bool muted_ = false;
   bool media_open_ = false;
   std::vector<std::string> arguments_;
+
+  bool open_target(const std::string& target, bool location, std::string* error);
 };
 
 }  // namespace vf

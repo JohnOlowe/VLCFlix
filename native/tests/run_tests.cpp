@@ -4,8 +4,10 @@
 // Every bug in docs/AUDIT.md gets a regression test here, and the buggy behaviour
 // gets a *negative control*: a copy of the old algorithm is run against the same
 // input and asserted to fail, so the test proves it is testing something.
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <initializer_list>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -14,6 +16,7 @@
 #include <vector>
 
 #include "core/catalog.h"
+#include "playback/ffmpeg_args.h"
 #include "core/json.h"
 #include "core/model.h"
 #include "core/naming.h"
@@ -228,6 +231,25 @@ void test_store() {
   CHECK_NEAR(updated.pad_scroll, 0.5f, 0.001f);
   CHECK_NEAR(store.load_settings().pad_scroll, 0.5f, 0.001f);
   CHECK(store.load_settings().hw_decode);
+
+  // A playback-engine patch must stick, and must not wipe the hardware choice.
+  Json mode = Json::object();
+  mode.set("playMode", "ffmpeg");
+  mode.set("playModeChosen", true);
+  CHECK(store.patch_settings(mode, &updated, &error));
+  CHECK_EQ(updated.play_mode, std::string("ffmpeg"));
+  CHECK(updated.play_mode_chosen);
+  CHECK(updated.hw_decode);
+  CHECK_EQ(store.load_settings().play_mode, std::string("ffmpeg"));
+  CHECK(store.load_settings().play_mode_chosen);
+  CHECK(store.load_settings().hw_decode);
+  Json bad_mode = Json::object();
+  bad_mode.set("playMode", "mpv");
+  CHECK(!store.patch_settings(bad_mode, &updated, &error));
+  CHECK_EQ(store.load_settings().play_mode, std::string("ffmpeg"));
+  Json not_chosen = Json::object();
+  not_chosen.set("playModeChosen", Json("yes"));
+  CHECK(!store.patch_settings(not_chosen, &updated, &error));
 
   // The catalog round-trips through disk with its artwork fields intact.
   Catalog catalog;
@@ -544,6 +566,56 @@ void test_png_roundtrip() {
 
 /* --------------------------------- misc --------------------------------- */
 
+bool args_have(const std::vector<std::string>& args, std::initializer_list<const char*> seq) {
+  const std::vector<std::string> want(seq.begin(), seq.end());
+  if (want.empty() || args.size() < want.size()) return false;
+  for (std::size_t i = 0; i + want.size() <= args.size(); ++i) {
+    bool match = true;
+    for (std::size_t j = 0; j < want.size(); ++j) {
+      if (args[i + j] != want[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return true;
+  }
+  return false;
+}
+
+void test_ffmpeg_play_args() {
+  TEST("ffmpeg playback command copies h264 and does not attach hardware decode");
+  FfmpegPlayRequest copy;
+  copy.path = "C:/Movies/Film.mkv";
+  copy.vcodec = "h264";
+  copy.acodec = "aac";
+  copy.hardware = true;
+  copy.port = 47321;
+  copy.platform = "win32";
+  const auto copied = ffmpeg_play_args(copy);
+  CHECK(args_have(copied, {"-c:v", "copy"}));
+  CHECK(args_have(copied, {"-c:a", "copy"}));
+  CHECK(!args_have(copied, {"-hwaccel", "d3d11va"}));
+  CHECK(args_have(copied, {"-listen", "1"}));
+  CHECK(std::find(copied.begin(), copied.end(), "http://127.0.0.1:47321") != copied.end());
+
+  FfmpegPlayRequest transcode = copy;
+  transcode.vcodec = "hevc";
+  transcode.acodec = "ac3";
+  transcode.start = 90;
+  transcode.hardware = true;
+  const auto hw = ffmpeg_play_args(transcode);
+  CHECK(args_have(hw, {"-ss", "90"}));
+  CHECK(args_have(hw, {"-hwaccel", "d3d11va"}));
+  CHECK(args_have(hw, {"-vf", "hwdownload,format=nv12"}));
+  CHECK(args_have(hw, {"-c:v", "libx264"}));
+  CHECK(args_have(hw, {"-c:a", "aac"}));
+
+  transcode.hardware = false;
+  const auto software = ffmpeg_play_args(transcode);
+  CHECK(!args_have(software, {"-hwaccel", "d3d11va"}));
+  CHECK(args_have(software, {"-c:v", "libx264"}));
+}
+
 void test_video_colours() {
   TEST("video: RV32 blue-first bytes are shown as normal colour");
   Canvas canvas(2, 2);
@@ -591,6 +663,7 @@ int main() {
   test_artwork_rules();
   test_concurrent_children();
   test_png_roundtrip();
+  test_ffmpeg_play_args();
   test_video_colours();
   test_misc();
   // UI tests draw real screens into a temporary directory: no display, no window.

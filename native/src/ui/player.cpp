@@ -8,11 +8,26 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <thread>
 
 #include "core/log.h"
 #include "core/paths.h"
 #include "core/sync.h"
+#include "playback/ffmpeg_args.h"
+#include "platform/proc.h"
 #include "ui/app.h"
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 namespace vf {
 namespace ui {
@@ -30,6 +45,95 @@ constexpr int kKeyLeftBracket = '[';
 constexpr int kKeyRightBracket = ']';
 constexpr double kProgressSaveInterval = 5.0;
 constexpr double kChromeHideAfter = 3.0;
+
+int pick_loopback_port() {
+#ifdef _WIN32
+  static bool ready = false;
+  if (!ready) {
+    WSADATA data;
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return 0;
+    ready = true;
+  }
+  const SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (sock == INVALID_SOCKET) return 0;
+#else
+  const int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock < 0) return 0;
+#endif
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
+#ifdef _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+    return 0;
+  }
+#ifdef _WIN32
+  int len = sizeof addr;
+  if (getsockname(sock, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
+    closesocket(sock);
+    return 0;
+  }
+  const int port = ntohs(addr.sin_port);
+  closesocket(sock);
+#else
+  socklen_t len = sizeof addr;
+  if (getsockname(sock, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
+    close(sock);
+    return 0;
+  }
+  const int port = ntohs(addr.sin_port);
+  close(sock);
+#endif
+  return port;
+}
+
+bool port_is_listening(int port) {
+#ifdef _WIN32
+  DWORD size = 0;
+  if (GetTcpTable(nullptr, &size, FALSE) != ERROR_INSUFFICIENT_BUFFER || size == 0) return false;
+  std::vector<unsigned char> buffer(size);
+  auto* table = reinterpret_cast<MIB_TCPTABLE*>(buffer.data());
+  if (GetTcpTable(table, &size, FALSE) != NO_ERROR) return false;
+  for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+    const auto& row = table->table[i];
+    if (row.dwState != MIB_TCP_STATE_LISTEN) continue;
+    if (ntohs(static_cast<u_short>(row.dwLocalPort)) != port) continue;
+    if (row.dwLocalAddr == htonl(INADDR_LOOPBACK) || row.dwLocalAddr == htonl(INADDR_ANY)) return true;
+  }
+  return false;
+#else
+  std::ifstream in("/proc/net/tcp");
+  if (!in) return false;
+  char wanted_loop[16];
+  char wanted_any[16];
+  std::snprintf(wanted_loop, sizeof wanted_loop, "0100007F:%04X", port);
+  std::snprintf(wanted_any, sizeof wanted_any, "00000000:%04X", port);
+  std::string line;
+  std::getline(in, line);
+  while (std::getline(in, line)) {
+    if (line.find(wanted_loop) == std::string::npos && line.find(wanted_any) == std::string::npos) continue;
+    // The state column is "0A" for LISTEN. Matching the address is enough to know
+    // ffmpeg bound the port; a TIME_WAIT row would not be 0A, and we only need a hint.
+    if (line.find(" 0A ") != std::string::npos) return true;
+  }
+  return false;
+#endif
+}
+
+bool wait_for_listen(Child& child, int port, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (!child.running()) return false;
+    if (port_is_listening(port)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  }
+  return child.running();
+}
 
 std::string clock_text(double seconds) {
   if (!std::isfinite(seconds) || seconds < 0) seconds = 0;
@@ -52,6 +156,132 @@ double App::clock_now() const {
 }
 
 /* ------------------------------ starting it ------------------------------ */
+
+bool App::have_ffmpeg() {
+  if (ffmpeg_probed_) return ffmpeg_present_;
+  ffmpeg_probed_ = true;
+  if (catalog_.have_ffmpeg) {
+    ffmpeg_present_ = true;
+    return true;
+  }
+  const ProcResult probe = run_process({"ffmpeg", "-version"}, 2500);
+  ffmpeg_present_ = probe.started && !probe.timed_out && probe.exit_code == 0;
+  return ffmpeg_present_;
+}
+
+void App::stop_ffmpeg() {
+  ffmpeg_child_.stop();
+  ffmpeg_active_ = false;
+  ffmpeg_hardware_ = false;
+  ffmpeg_origin_ = 0;
+  ffmpeg_length_ = 0;
+}
+
+void App::apply_stream_clock(EngineStatus* status) const {
+  if (!status || !ffmpeg_active_) return;
+  status->time += ffmpeg_origin_;
+  if (ffmpeg_length_ > 0) status->length = ffmpeg_length_;
+}
+
+bool App::start_ffmpeg(const Item& item, double start_at, bool hardware) {
+  stop_ffmpeg();
+  if (!have_ffmpeg()) {
+    player_error_ = "ffmpeg is not on PATH. Install it, or switch to Built-in player.";
+    notify(player_error_);
+    return false;
+  }
+  const int port = pick_loopback_port();
+  if (port <= 0) {
+    player_error_ = "Could not open a local port for ffmpeg.";
+    notify(player_error_);
+    return false;
+  }
+  FfmpegPlayRequest request;
+  request.path = item.path;
+  request.vcodec = item.vcodec;
+  request.acodec = item.acodec;
+  request.start = start_at;
+  request.hardware = hardware;
+  request.port = port;
+  std::string error;
+  if (!ffmpeg_child_.start(ffmpeg_play_args(request), &error)) {
+    player_error_ = error.empty() ? "Could not start ffmpeg" : error;
+    notify(player_error_);
+    return false;
+  }
+  // Do not connect to the port to test it: ffmpeg -listen 1 accepts one client,
+  // and that client has to be libVLC. Waiting until the port is in LISTEN, or
+  // until ffmpeg has died, is the check that does not steal the connection.
+  if (!wait_for_listen(ffmpeg_child_, port, 1200) || !ffmpeg_child_.running()) {
+    const std::string why = ffmpeg_child_.recent_error();
+    ffmpeg_child_.stop();
+    player_error_ = why.empty() ? "ffmpeg exited before the picture started" : why;
+    notify(player_error_);
+    LOG_ERROR("player: ffmpeg died early: %s", player_error_.c_str());
+    return false;
+  }
+  const int decode_width = std::min(1280, std::max(320, width_));
+  engine_.configure(decode_width, decode_width * 9 / 16);
+  engine_.set_clock([this] { return clock_now(); });
+  const std::string url = ffmpeg_play_url(port);
+  if (!engine_.open_location(url, &error)) {
+    const std::string why = ffmpeg_child_.recent_error();
+    ffmpeg_child_.stop();
+    player_error_ = why.empty() ? error : error + " — " + why;
+    notify(player_error_);
+    return false;
+  }
+  ffmpeg_active_ = true;
+  ffmpeg_hardware_ = hardware && item.vcodec != "h264";
+  ffmpeg_origin_ = start_at > 0 ? start_at : 0;
+  ffmpeg_length_ = item.duration;
+  LOG_INFO("player: ffmpeg %s at %.0f s via %s", item.vcodec == "h264" ? "copy" : (hardware ? "hardware" : "software"),
+           ffmpeg_origin_, url.c_str());
+  return true;
+}
+
+bool App::launch_external_vlc(const Item& item) {
+  const std::string binary = vlc_binary();
+  if (binary.empty()) {
+    notify("VLC was not found — playing in this window");
+    return false;
+  }
+  std::vector<std::string> args = {binary};
+  if (settings_.vlc_fullscreen) args.push_back("--fullscreen");
+  args.push_back(item.path);
+  std::string error;
+  if (!spawn_detached(args, &error)) {
+    notify(error.empty() ? "VLC did not start — playing in this window" : error);
+    return false;
+  }
+  notify("Opened “" + item.title + "” in VLC");
+  LOG_INFO("player: launched %s for %s", binary.c_str(), item.path.c_str());
+  return true;
+}
+
+void App::seek_playback(double target) {
+  if (target < 0) target = 0;
+  if (!ffmpeg_active_) {
+    engine_.seek(target);
+    player_status_ = engine_.status();
+    return;
+  }
+  if (ffmpeg_length_ > 1) target = std::min(target, std::max(0.0, ffmpeg_length_ - 0.25));
+  if (playing_index_ < 0 || static_cast<std::size_t>(playing_index_) >= catalog_.items.size()) return;
+  const Item item = catalog_.items[static_cast<std::size_t>(playing_index_)];
+  const bool hardware = settings_.hw_decode && !ffmpeg_hw_gave_up_;
+  presenter_.clear();
+  if (!start_ffmpeg(item, target, hardware)) {
+    player_failed_ = true;
+    player_open_ = true;
+    return;
+  }
+  engine_.play();
+  playback_started_at_ = clock_now();
+  apply_sync();
+  player_status_ = engine_.status();
+  apply_stream_clock(&player_status_);
+}
 
 bool App::start_playback(int index) {
   if (index < 0 || static_cast<std::size_t>(index) >= catalog_.items.size()) {
@@ -89,21 +319,6 @@ bool App::start_playback(int index) {
     return false;
   }
 
-  // Decode at the size the picture will actually be shown at, capped: bigger frames
-  // cost memory for detail nobody can see, and the presenter has to hold them.
-  const int decode_width = std::min(1280, std::max(320, width_));
-  engine_.configure(decode_width, decode_width * 9 / 16);
-  engine_.set_clock([this] { return clock_now(); });
-  std::string error;
-  if (!engine_.open(absolute, &error)) {
-    player_error_ = error;
-    notify(error);
-    return false;
-  }
-
-  subtitle_tracks_ = item.subtitles;
-  presenter_.clear();
-
   // Resume where the film was left, but never in the last few seconds: resuming at
   // 91 % only to hit the end is not a courtesy.
   auto saved = progress_.find(item.id);
@@ -113,6 +328,39 @@ bool App::start_playback(int index) {
     if (fraction > 0.02 && fraction < 0.92) resume_at_ = saved->second.position;
   }
 
+  // Real VLC only leaves this window after the chip has actually been chosen.
+  // Older settings files say "vlc" because that was the default, and those keep
+  // playing here — that is the player this app has always used.
+  if (settings_.play_mode == "vlc" && settings_.play_mode_chosen) {
+    if (launch_external_vlc(item)) {
+      set_hover_preview(-1);
+      return true;
+    }
+  }
+
+  if (settings_.play_mode == "ffmpeg") {
+    const double start_at = resume_at_ >= 0 ? resume_at_ : 0;
+    resume_at_ = -1;
+    ffmpeg_hw_gave_up_ = false;
+    if (!start_ffmpeg(item, start_at, settings_.hw_decode)) return false;
+  } else {
+    // Decode at the size the picture will actually be shown at, capped: bigger frames
+    // cost memory for detail nobody can see, and the presenter has to hold them.
+    const int decode_width = std::min(1280, std::max(320, width_));
+    engine_.configure(decode_width, decode_width * 9 / 16);
+    engine_.set_clock([this] { return clock_now(); });
+    std::string error;
+    if (!engine_.open(absolute, &error)) {
+      player_error_ = error;
+      notify(error);
+      return false;
+    }
+  }
+
+  subtitle_tracks_ = item.subtitles;
+  presenter_.clear();
+  set_hover_preview(-1);
+
   engine_.play();
   playback_started_at_ = clock_now();
   player_open_ = true;
@@ -121,6 +369,7 @@ bool App::start_playback(int index) {
   last_input_at_ = clock_now();
   last_progress_save_ = last_input_at_;
   player_status_ = engine_.status();
+  apply_stream_clock(&player_status_);
   apply_sync();  // set the initial plan before the first frame is presented
   LOG_INFO("player: playing %s (resume %s)", item.title.c_str(),
            resume_at_ >= 0 ? std::to_string(static_cast<int>(resume_at_)).c_str() : "no");
@@ -129,8 +378,12 @@ bool App::start_playback(int index) {
 }
 
 void App::stop_playback() {
-  if (!player_open_ && !engine_.has_media()) return;
-  const EngineStatus status = engine_.status();
+  if (!player_open_ && !engine_.has_media() && !ffmpeg_active_) {
+    ffmpeg_child_.stop();
+    return;
+  }
+  EngineStatus status = engine_.status();
+  apply_stream_clock(&status);
   const int index = playing_index_;
   if (index >= 0 && static_cast<std::size_t>(index) < catalog_.items.size() && status.length > 0) {
     // Leaving mid-film is exactly what Continue Watching is for, and the store applies
@@ -139,6 +392,7 @@ void App::stop_playback() {
                         status.length);
     progress_ = store_.load_progress();
   }
+  stop_ffmpeg();
   engine_.stop();
   presenter_.clear();
   player_open_ = false;
@@ -270,7 +524,8 @@ bool App::tick(double now) {
   }
   if (presenter_.advance(now)) changed = true;
 
-  const EngineStatus status = engine_.status();
+  EngineStatus status = engine_.status();
+  apply_stream_clock(&status);
   const PlayState previous_state = player_status_.state;
   const double previous_time = player_status_.time;
   const std::string previous_cue = active_subtitle_text(previous_time);
@@ -304,6 +559,15 @@ bool App::tick(double now) {
       player_failed_ = true;
       notify(player_error_);
       LOG_ERROR("player: ended with no frames, treating as failure: %s", player_error_.c_str());
+    } else if (ffmpeg_active_ && ffmpeg_length_ > 20 && status.time + 5 < ffmpeg_length_ * 0.9) {
+      // A live stream that ends halfway is a dead encoder, not a finished film.
+      // Marking it watched would drop it from Continue Watching.
+      player_error_ = "ffmpeg stopped before the end of the film";
+      const std::string why = ffmpeg_child_.recent_error();
+      if (!why.empty()) player_error_ += " — " + why;
+      player_failed_ = true;
+      notify(player_error_);
+      LOG_ERROR("player: %s", player_error_.c_str());
     } else {
       finish_film();
     }
@@ -317,18 +581,45 @@ bool App::tick(double now) {
     changed = true;
   }
 
+  // Hardware decode is a trial. No picture in 2.5 s means the GPU pipe failed the
+  // way the browser build's black screen did, so the same film is started again
+  // in software. The flag stays set so this does not loop.
+  const bool ffmpeg_waiting = ffmpeg_active_ && (status.state == PlayState::Playing || status.state == PlayState::Opening);
+  if (ffmpeg_waiting && ffmpeg_hardware_ && !ffmpeg_hw_gave_up_ && status.frames_decoded == 0 &&
+      player_error_.empty() && playback_started_at_ > 0 && now - playback_started_at_ > 2.5 &&
+      playing_index_ >= 0 && static_cast<std::size_t>(playing_index_) < catalog_.items.size()) {
+    ffmpeg_hw_gave_up_ = true;
+    notify("Hardware decode produced no picture — retrying in software");
+    LOG_WARN("player: hardware ffmpeg produced no frame, retrying in software");
+    const Item item = catalog_.items[static_cast<std::size_t>(playing_index_)];
+    const double at = ffmpeg_origin_;
+    if (!start_ffmpeg(item, at, false)) {
+      player_failed_ = true;
+    } else {
+      engine_.play();
+      playback_started_at_ = now;
+      apply_sync();
+    }
+    return true;
+  }
+
   // A file libVLC accepts but cannot decode never reports an error on its own: it
   // sits in "playing" with no pictures. Six seconds of that is a failure, and saying
-  // so is the difference between a bug report and a mystery.
-  if (status.state == PlayState::Playing && status.frames_decoded == 0 && player_error_.empty() &&
-      playback_started_at_ > 0 && now - playback_started_at_ > 6.0) {
-    player_error_ = "The engine produced no picture for 6 seconds: " +
-                      (playing_index_ >= 0 &&
-                               static_cast<std::size_t>(playing_index_) < catalog_.items.size()
-                           ? catalog_.items[static_cast<std::size_t>(playing_index_)].filename
-                           : std::string("this file"));
+  // so is the difference between a bug report and a mystery. The ffmpeg stream is
+  // given longer, because the encoder has to start before the first picture.
+  const double no_picture_after = ffmpeg_active_ ? 12.0 : 6.0;
+  const bool no_picture = status.frames_decoded == 0 && player_error_.empty() && playback_started_at_ > 0 &&
+                          now - playback_started_at_ > no_picture_after;
+  if (no_picture && (status.state == PlayState::Playing || ffmpeg_waiting)) {
+    player_error_ = "The engine produced no picture for " + std::to_string(static_cast<int>(no_picture_after)) +
+                    " seconds: " +
+                    (playing_index_ >= 0 && static_cast<std::size_t>(playing_index_) < catalog_.items.size()
+                         ? catalog_.items[static_cast<std::size_t>(playing_index_)].filename
+                         : std::string("this file"));
+    const std::string why = ffmpeg_child_.recent_error();
+    if (!why.empty()) player_error_ += " — " + why;
     notify(player_error_);
-    LOG_ERROR("player: no picture after 6 s on %s", player_error_.c_str());
+    LOG_ERROR("player: no picture after %.0f s on %s", no_picture_after, player_error_.c_str());
     player_failed_ = true;
     engine_.pause();
     changed = true;
@@ -629,11 +920,11 @@ bool App::handle_player(const InputEvent& event) {
               std::clamp(static_cast<double>((event.x - player_seek_track_.x) / player_seek_track_.w), 0.0,
                          1.0) *
               length;
-          engine_.seek(target);
+          seek_playback(target);
           return true;
         }
         case Action::Kind::SeekRelative:
-          engine_.seek_relative(std::atof(action.value.c_str()));
+          seek_playback(player_status_.time + std::atof(action.value.c_str()));
           return true;
         case Action::Kind::TogglePause:
           engine_.toggle_pause();
@@ -668,10 +959,12 @@ bool App::handle_player(const InputEvent& event) {
           }
           return true;
         }
-        case Action::Kind::OpenDetail:
+        case Action::Kind::OpenDetail: {
+          const int index = playing_index_;
           stop_playback();
-          open_item_ = playing_index_;
+          if (index >= 0) show_detail(index);
           return true;
+        }
         default:
           return false;
       }
@@ -686,10 +979,10 @@ bool App::handle_player(const InputEvent& event) {
           player_status_ = engine_.status();
           return true;
         case kKeyLeft:
-          engine_.seek_relative(-10);
+          seek_playback(player_status_.time - 10);
           return true;
         case kKeyRight:
-          engine_.seek_relative(10);
+          seek_playback(player_status_.time + 10);
           return true;
         case kKeyUp:
           engine_.set_volume(engine_.volume() + 5);

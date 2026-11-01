@@ -72,3 +72,26 @@
 - **Unverified, awaiting the user's phone**: whether Edge Canary (or Kiwi)
   runs the side-loaded extension, Pro activation there, and the Termux
   merge/transcode glue. Nothing on-device is claimed yet.
+
+## 2026-11-01 — Workspace trimmed below the 128 MB snapshot cap
+
+- User instruction: end turns under 128 MB; delete what is easily restored,
+  keep scripts for the fiddly parts.
+- Measured before: workspace **266 MB** — `BuildTools` clone ≈ 237 MB
+  (126 MB working tree + 111 MB `.git`), VLCFlix 21 MB, side-load zip 3.9 MB.
+- Wrote `~/scripts/restore-vdh-workspace.sh` (idempotent): sparse-clones
+  BuildTools with `--filter=blob:none --no-cone` fetching **only**
+  `10.6.1.2_0.7z`, verifies sha256, extracts with py7zr, rebuilds the
+  side-load zip, and re-clones VLCFlix single-branch if absent.
+- Tested the script in a throwaway `/tmp/vdh-restore-test` root (AGENTS.md
+  §5), twice: first run exposed a real bug — cone-mode sparse checkout
+  materializes root-level files, pulling the 117 MB of tools; fixed with
+  `--no-cone`. Second run: restore in 2.6 s, BuildTools dir 19 MB, sha256
+  `OK`, rebuilt zip byte-identical in content (all 79 entry CRCs equal to
+  the original). Test root deleted afterwards.
+- Deleted `~/BuildTools` (clone + extraction). Measured after: workspace
+  **30 MB** total (`.cache` 5.5 MB is snapshot-excluded anyway).
+- Updated `CONTEXT.md` (assets now on-demand, size-discipline section,
+  RECOVERY points at the script).
+- **Not verified on device still**: Edge Canary/Kiwi running the extension,
+  Termux glue — unchanged from the previous entry.

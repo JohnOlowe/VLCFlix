@@ -20,12 +20,15 @@ in `docs/ANDROID_PORT_PLAN.md`.
 
 ## Assets (verified 2026-11-01 by extraction, not from memory)
 
-- `JohnOlowe/BuildTools` cloned to `/home/user/BuildTools`. Contents:
-  `10.6.1.2_0.7z` (2,440,677 bytes, sha256
+- Source of truth: `JohnOlowe/BuildTools` on GitHub. Local clone is fetched
+  on demand (sparse, 7z only — see "Workspace size discipline" below) and
+  was **deleted** at end of turn after the extraction and zip were built.
+  Contents: `10.6.1.2_0.7z` (2,440,677 bytes, sha256
   `21cf3b2bbb07cf9a27510506a83921953ed29ef9506dd681754163ebfae37921`),
   `apktool_3.0.3.jar`, `android-35.jar` (Android API 35 `android.jar`),
   `jadx-1.5.6.zip`.
-- 7z extracted (py7zr) to `/home/user/BuildTools/extracted/10.6.1.2_0`, 14 MB.
+- 7z extracted (py7zr) to `~/BuildTools/extracted/10.6.1.2_0` (14 MB, also
+  deleted; rebuilt by the restore script).
   Measured structure: `manifest.json` = manifest_version **3**, name
   "Video DownloadHelper Pro", version 10.6.1.2; background = **service
   worker** `service/main.js` (557 KB, minified esbuild bundle) +
@@ -111,13 +114,30 @@ in `docs/ANDROID_PORT_PLAN.md`.
    VDH Gecko build on Firefox for Android (different archive, vendor-built) →
    revisit route B.
 
+## Workspace size discipline (user instruction, 2026-11-01)
+
+The snapshot cap is **128 MB**; the workspace must end every turn below it.
+Re-obtainable bulk (the `BuildTools` clone — ~237 MB full, and its
+extraction) is **deleted after use** and rebuilt on demand by
+**`/home/user/scripts/restore-vdh-workspace.sh`** (kept in the workspace, not
+in this MD-only repo). The script sparse-clones **only** `10.6.1.2_0.7z`
+(≈2.4 MB, `--no-cone` — cone mode would drag in the 117 MB of root-level
+tools), verifies the sha256, extracts, and rebuilds
+`vdh-pro-10.6.1.2-sideload.zip`; verified end-to-end in a throwaway
+`/tmp` root (restore 2.6 s, 19 MB, zip CRCs identical). Other BuildTools
+files when needed:
+`git -C ~/BuildTools sparse-checkout add apktool_3.0.3.jar android-35.jar jadx-1.5.6.zip && git -C ~/BuildTools checkout`.
+Measured after cleanup: workspace 30 MB total.
+
 ## RECOVERY
 
 1. Read `AGENTS.md` (rules), then this file, then `TURN_LOG.md`.
 2. `cd /home/user/VLCFlix`; if `git remote -v` is empty, re-add `origin` from
    the URL above; `git checkout vdh-android` if needed.
-3. If `/home/user/BuildTools` is gone, re-clone it and re-extract the 7z
-   (`pip install py7zr`, then extract; verify the sha256 above).
-4. Nothing is pushed until a PAT exists. Say so at the end of every turn
-   until the remote SHA is verified.
-5. Resume at the newest entry in `TURN_LOG.md`.
+3. If `/home/user/BuildTools` or the side-load zip is missing, run
+   `bash /home/user/scripts/restore-vdh-workspace.sh` — do not re-clone
+   BuildTools in full.
+4. Keep the end-of-turn workspace under 128 MB: delete the BuildTools clone
+   and extraction again when a task no longer needs them.
+5. Nothing is pushed without the PAT; verify the remote SHA after every push.
+6. Resume at the newest entry in `TURN_LOG.md`.

@@ -1,4 +1,4 @@
-# android-port — Video DownloadHelper, ported to Android
+# vdh-android — Video DownloadHelper, ported to Android
 
 Working branch for porting the browser extension packaged as
 `10.6.1.2_0.7z` in [`JohnOlowe/BuildTools`](https://github.com/JohnOlowe/BuildTools)
@@ -33,5 +33,10 @@ belongs in `BuildTools` or in a later, explicitly approved change.
 
 ## Status
 
-Analysis complete and committed; route not yet chosen. See the open questions
-in `CONTEXT.md`. Not pushed yet at the time of writing — see `TURN_LOG.md`.
+Route chosen **2026-11-01**: **A + D** — side-load the extension unmodified
+into an extension-capable Chromium browser on the phone (Edge Canary first
+choice; Kiwi is archived; **Firefox cannot load this archive** — it is the
+Chrome build and uses Chromium-only APIs), and use the user's Termux ffmpeg
+(MediaCodec hardware encode/decode) for merging and converting. Personal use
+of the user's own Pro copy; no redistribution. See
+`docs/ANDROID_PORT_PLAN.md` §3A/§3D and the verification plan in §7.

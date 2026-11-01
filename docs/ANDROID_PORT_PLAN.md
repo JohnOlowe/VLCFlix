@@ -150,13 +150,26 @@ sources — would be redistribution of MiConvert's code and is out of scope for
 this repository. If the goal is a distributable app, the honest path is Route
 C (independent implementation) or a conversation with the vendor.
 
-## 6. Open decisions (blocking; asked 2026-11-01)
+## 6. Decisions (answered by the user, 2026-11-01)
 
-1. Route: **A**, **B**, **C**, **D**, or A+D (recommended).
-2. GitHub PAT to push this branch (fine-grained, VLCFlix only,
-   Contents: read/write).
-3. Branch name `android-port` — keep or rename?
-4. Use scope: personal, or distribution intent (changes §5 advice)?
+1. **Route: A + D** — side-load unmodified + Termux/MediaCodec pipeline.
+2. PAT supplied via the question UI; stored untracked at
+   `.secrets/github-token`; rotate when the work is done (it passed through
+   chat).
+3. Branch renamed to **`vdh-android`** before the first push.
+4. **Personal use** of the user's own Pro copy — §5 redistribution limit
+   stands.
+
+One clarification the user's answer raised, answered here: this archive
+**cannot** be loaded in Firefox for Android — `sidePanel`, `offscreen` and
+the MV3 service-worker background are Chromium-only, and Gecko would refuse
+or mis-run them. The VDH that runs on Firefox is the vendor's separate Gecko
+build on AMO. For *this* 7z the hosts are Chromium-based: **Edge Canary**
+(maintained, inherited Kiwi's extension loader), **Kiwi** (works, archived
+since Jan 2025 — reported, unverified on device), or similar Chromium forks
+(Mises, Lemur). The desktop "companion app" the user remembered is not
+needed here: merging happens in-extension via the wasm muxer, and route D
+replaces that step with Termux ffmpeg anyway.
 
 ## 7. Verification plan for whichever route is picked (`AGENTS.md` §4/§5)
 

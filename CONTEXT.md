@@ -1,11 +1,22 @@
-# Project context — android-port
+# Project context — vdh-android
 
 ## Goal
 
 Port **Video DownloadHelper Pro 10.6.1.2** (the Chrome MV3 extension packaged
-as `10.6.1.2_0.7z` in `JohnOlowe/BuildTools`) to Android. The user asked, on
-2026-11-01, *how* it can be ported; the analysis lives in
-`docs/ANDROID_PORT_PLAN.md`. The route has **not** been chosen yet.
+as `10.6.1.2_0.7z` in `JohnOlowe/BuildTools`) to Android. The analysis lives
+in `docs/ANDROID_PORT_PLAN.md`.
+
+## Decisions (user, 2026-11-01 — asked, not assumed)
+
+- **Route A + D**: side-load the extension unmodified into an
+  extension-capable Chromium browser on the phone (Edge Canary first choice;
+  Kiwi archived but usable; **Firefox is not a target for this archive** —
+  Chromium-only APIs; the Firefox-compatible VDH is the vendor's own Gecko
+  build on AMO), and use Termux ffmpeg + MediaCodec for merging/converting.
+- **Branch name**: `vdh-android` (renamed from the initial `android-port`
+  before any push; the old name never existed on the remote).
+- **Use scope**: personal use of the user's own Pro copy. No redistribution;
+  `docs/ANDROID_PORT_PLAN.md` §5 stands.
 
 ## Assets (verified 2026-11-01 by extraction, not from memory)
 
@@ -69,23 +80,42 @@ as `10.6.1.2_0.7z` in `JohnOlowe/BuildTools`) to Android. The user asked, on
   phone, and must be labelled "verified on device" only after the user
   reports the result.
 
-## Open questions (asked via UI on 2026-11-01)
+## Credential (2026-11-01)
 
-1. **Route** — A (run the extension unmodified in an extension-capable
-   Android browser), B (own GeckoView-based APK), C (native WebView
-   reimplementation), D (browser + Termux/MediaCodec ffmpeg pipeline).
-   See `docs/ANDROID_PORT_PLAN.md` for the tradeoffs; A(+D) recommended.
-2. **PAT** to push this branch.
-3. **Branch name** — currently `android-port`; rename before push if wanted.
-4. **Use scope** — personal use of the user's own Pro copy, or distribution.
-   The archive is the paid Pro build; redistribution of repackaged commercial
-   code is out of scope for this repo and changes the advice.
+- The user supplied a fine-grained PAT via the question UI. It is stored at
+  `.secrets/github-token` (mode 600, **untracked**). It has not been printed
+  into any file, commit, or remote URL. It **passed through chat**, so the
+  user has been advised to rotate it when this work is done.
+- Scope is verified by probing (status codes in `TURN_LOG.md`), not assumed.
+- `.git-credentials` and `.git/config` are stripped by snapshots. To rebuild
+  auth after a restore (no script on this MD-only branch):
+  1. `git remote add origin https://github.com/JohnOlowe/VLCFlix.git` (if empty)
+  2. `printf 'https://JohnOlowe:%s@github.com\n' "$(cat .secrets/github-token)" > .git-credentials && chmod 600 .git-credentials`
+  3. `git config credential.helper "store --file $PWD/.git-credentials"`
+
+## Next steps (route A+D)
+
+1. Hand the user a side-load zip (extension files at the zip root, manifest
+   at top level) for Edge Canary / Kiwi. Built as
+   `/home/user/vdh-pro-10.6.1.2-sideload.zip` (workspace file, **not**
+   committed — this branch is MD-only).
+2. User installs Edge Canary on the phone, loads the zip
+   (Extensions → Developer → Load from zip), and reports: does the icon
+   appear, does it detect a DASH stream (e.g. YouTube) and an HLS stream.
+   Result → `TURN_LOG.md`, labelled "verified on device" only with the
+   user's report.
+3. Termux side: verify the merge command (`ffmpeg -i video -i audio -c copy
+   out.mp4`) and a MediaCodec transcode on a downloaded pair; then decide the
+   glue (manual / Termux:API / RUN_COMMAND intents).
+4. If Edge Canary cannot run the extension, fall back order: Kiwi → official
+   VDH Gecko build on Firefox for Android (different archive, vendor-built) →
+   revisit route B.
 
 ## RECOVERY
 
 1. Read `AGENTS.md` (rules), then this file, then `TURN_LOG.md`.
 2. `cd /home/user/VLCFlix`; if `git remote -v` is empty, re-add `origin` from
-   the URL above; `git checkout android-port` if needed.
+   the URL above; `git checkout vdh-android` if needed.
 3. If `/home/user/BuildTools` is gone, re-clone it and re-extract the 7z
    (`pip install py7zr`, then extract; verify the sha256 above).
 4. Nothing is pushed until a PAT exists. Say so at the end of every turn

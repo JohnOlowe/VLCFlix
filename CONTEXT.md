@@ -112,6 +112,14 @@ in `docs/ANDROID_PORT_PLAN.md`.
    - Re-pack recipe: `npm i crx3` then
      `crx3 -p ~/vdh-crx-key.pem -o ~/vdh-pro-10.6.1.2.crx <extracted-dir>`
      (extracted dir via `scripts/restore-vdh-workspace.sh`).
+   - **Android UI patch (2026-11-02)**: `scripts/patch-vdh-mobile-ui.py`
+     must run on the extracted dir **before** packing. It rewrites
+     sidebar mode to open `content/sidebar.html` in a full tab (Edge Canary
+     Android has the `chrome.sidePanel` API but no side-panel UI) and adds a
+     phone-viewport CSS override to `popup.html`/`sidebar.html`. Strict
+     (every target must match exactly once) and idempotent. Artefacts above
+     are the **patched** builds; the patch markers are `vdhMobileSidebar`
+     (service worker) and `vdh-android-ui` (HTML).
 2. User loads the CRX in Edge Canary and reports: does it install, does the
    icon appear, does it detect a DASH stream (e.g. YouTube) and an HLS
    stream, does Pro sign-in work. Result → `TURN_LOG.md`, labelled

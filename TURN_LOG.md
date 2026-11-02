@@ -134,3 +134,35 @@
   Canary's** "Extension install by crx" enforces it for self-signed CRX3 is
   still **unverified** — first thing the phone test will answer. Fallback if
   it refuses: Kiwi (takes the plain zip) or the vendor's Firefox build.
+
+## 2026-11-02 — Device-verified install + detection; Android UI patch v1
+
+- **User verified on the phone (Edge Canary)**: the CRX installs and videos
+  are detected — first device-verified result for this project. Two UI
+  defects reported: (1) switching to side-panel mode closes the UI with no
+  way to bring it back; (2) the default popup renders as a small box at the
+  top-left instead of filling the screen.
+- Root causes found by reading the bundle (not guessed): the Chrome build
+  (`qe=ht=="mozilla"` → false) routes sidebar mode through
+  `chrome.sidePanel.open()` — Edge Canary Android exposes the API but has no
+  side-panel UI, so nothing renders; and popup mode uses fixed desktop sizes
+  (480x320/460/600 px), wider than a phone viewport. "Window" mode is dead
+  in this build (no `windows.create` anywhere).
+- Wrote `scripts/patch-vdh-mobile-ui.py` (persisted; strict match-once,
+  idempotent, aborts before writing on any mismatch — it did abort once when
+  a target had been reconstructed from truncated grep output; the exact
+  strings were then extracted from the file itself).
+- Patches: sidebar mode → `chrome.tabs.create(content/sidebar.html)` on
+  action click and on mode selection (listener cleaned up when switching
+  back to popup); phone-viewport CSS override in `popup.html` and
+  `sidebar.html`. Only the Chrome code path touched; the Mozilla branch is
+  dead code in this build and was left alone.
+- Verified after packing: `node --check` on the patched worker parses;
+  markers `vdhMobileSidebar` x5 in the packaged `service/main.js` and
+  `vdh-android-ui` in the packaged HTML; CRX payload CRCs == rebuilt
+  sideload zip == wrapper zip (79 entries). Same signing key → same
+  extension ID `gmppgmnjccgklfklpibfkejdjijlnlnd`, installs over the old one.
+- **Unverified (phone)**: that the tab-based sidebar renders the full UI
+  correctly, that the popup override actually enlarges Edge Canary's popup
+  dialog (the dialog container may impose its own cap — if so, the tab mode
+  is the fallback), and that mode-switching round-trips cleanly.

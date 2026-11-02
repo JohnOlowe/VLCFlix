@@ -199,3 +199,27 @@
   4,062,912 B; same key, ID `gmppgmnjccgklfklpibfkejdjijlnlnd`.
 - Unverified on phone: that Edge Canary renders the tab full height and that
   the icon re-click focuses rather than duplicates.
+
+## 2026-11-02 — Branch now carries the VDH source (layout change)
+
+- User clarified the "MD files only" rule: it governed what to COPY from the
+  other branches, not what this branch may contain. Corrected layout: the
+  branch holds VDH extension source + scripts; VLCFlix app source stays on
+  `main`; the crx/zips stay out (rebuilt every change, force-push disabled,
+  so history could never be pruned).
+- Added `extension/` (pristine VDH tree, 79 files, 14 MB, wasm included),
+  `scripts/` (patch, render check, packer, restore), `.gitignore`
+  (`build/`, `dist/`, `.secrets/`); moved the two UI screenshots to
+  `docs/screenshots/`.
+- Scripts rewritten to be repo-relative: `patch-vdh-mobile-ui.py` stages
+  `extension/` -> `build/extension` (vendor tree never mutated),
+  `pack-vdh-artifacts.sh` writes `dist/` and self-checks (payload CRC table
+  vs sideload zip, markers inside the packaged payload, extension ID from the
+  signing key), `render-check-vdh-ui.py` asserts layout and exits non-zero on
+  failure.
+- Verified end-to-end from the repo: patch (4 worker replacements) -> render
+  check PASS at 412x915 and 412x800 -> pack. Extension ID still
+  `gmppgmnjccgklfklpibfkejdjijlnlnd`; build outputs ignored by git.
+- Fixed while verifying: the packer's ID derivation hashed the PKCS8 private
+  key instead of the public SPKI (reported a wrong ID); now mirrors node's
+  `createPublicKey` and prints the expected ID.

@@ -5,6 +5,34 @@ Working branch for porting the browser extension packaged as
 — **Video DownloadHelper Pro 10.6.1.2**, a Manifest V3 Chrome extension — to
 Android.
 
+
+## What is on this branch
+
+This branch is the VDH (Video DownloadHelper Pro 10.6.1.2) Android port. It
+holds source only:
+
+| path | what |
+| --- | --- |
+| `extension/` | pristine unpacked VDH Pro 10.6.1.2 tree (vendor drop, unmodified, diffable against upstream) |
+| `scripts/patch-vdh-mobile-ui.py` | copies `extension/` to `build/extension` and applies the Android UI patch |
+| `scripts/render-check-vdh-ui.py` | renders the patched panel in headless Chromium at phone size and asserts the layout |
+| `scripts/pack-vdh-artifacts.sh` | packs `build/extension` into `dist/` (crx + two zips) with integrity checks |
+| `docs/` | port plan, screenshots of the on-device UI |
+
+`build/`, `dist/` and `.secrets/` are ignored: the crx/zip are rebuilt on
+every change and would otherwise sit in git history forever (force-push is
+unavailable here). The signing key is never committed.
+
+```bash
+python3 scripts/patch-vdh-mobile-ui.py   # vendor tree -> build/extension
+python3 scripts/render-check-vdh-ui.py   # layout assertion (needs playwright)
+bash    scripts/pack-vdh-artifacts.sh    # -> dist/*.crx, dist/*.zip
+```
+
+The signing key keeps the extension ID stable
+(`gmppgmnjccgklfklpibfkejdjijlnlnd`), so installing a new build replaces the
+old one in place.
+
 ## Branch policy (user instruction, 2026-11-01)
 
 This branch is an **orphan**: it shares no history and no files with `main`,

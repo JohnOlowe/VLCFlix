@@ -176,3 +176,21 @@ Measured after cleanup: workspace 30 MB total.
    and extraction again when a task no longer needs them.
 5. Nothing is pushed without the PAT; verify the remote SHA after every push.
 6. Resume at the newest entry in `TURN_LOG.md`.
+
+## Branch layout decision (2026-11-02)
+
+- The branch carries **VDH source, not VLCFlix app source**: this branch is
+  the extension port; VLCFlix's `public/`, `server/`, `src/` stay on `main`.
+- `extension/` is the pristine vendor tree and stays unmodified; the patch
+  script copies it to `build/extension` and patches the copy, so `git diff`
+  against upstream stays meaningful.
+- Binaries that are part of the extension (the 4.9 MB libav wasm, bitmaps,
+  `_locales`) are committed: they are inputs, they never change. The *build
+  outputs* (`build/`, `dist/`: crx + two zips, ~4 MB each, rewritten on every
+  rebuild) are ignored via `.gitignore` because force-push is unavailable and
+  history could never be cleaned.
+- The signing key never goes in the repo:
+  `.secrets/vdh-crx-key.pem` (ignored) or `$VDH_CRX_KEY`. Without it the
+  extension ID changes and the phone install becomes a separate extension.
+- Scripts are path-independent: they locate the repo from their own path, so
+  the same files work from a fresh clone on the phone.

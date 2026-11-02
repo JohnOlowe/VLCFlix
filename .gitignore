@@ -1,0 +1,5 @@
+# Build outputs: rebuilt on every change, never tracked (see docs/ANDROID_PORT_PLAN.md)
+build/
+dist/
+# local only
+.secrets/

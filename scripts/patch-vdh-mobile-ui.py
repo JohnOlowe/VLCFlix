@@ -30,6 +30,7 @@ generations are upgraded in place.
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -50,6 +51,32 @@ HELPER = ('var vdhMobileSidebar=function(){'
 OPEN_TAB = ('chrome.action.onClicked.removeListener(vdhMobileSidebar),'
             'chrome.action.onClicked.addListener(vdhMobileSidebar),'
             'chrome.action.setPopup({popup:""})')
+
+
+def find_ws(haystack: str, needle: str):
+    """Find `needle` in `haystack` ignoring ALL whitespace.
+
+    Returns (start, end, count) with real offsets into `haystack`, or
+    (None, None, count). Works for the minified vendor file and for the
+    formatted one, whose line breaks land between almost every token.
+    """
+    keep = [i for i, ch in enumerate(haystack) if not ch.isspace()]
+    flat = "".join(haystack[i] for i in keep)
+    target = "".join(needle.split())
+    count = flat.count(target)
+    pos = flat.find(target)
+    if pos < 0:
+        return None, None, 0
+    return keep[pos], keep[pos + len(target) - 1] + 1, count
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    start, end, count = find_ws(text, old)
+    if count == 0:
+        sys.exit(f"ABORT: {label}: target not found:\n{old[:140]}")
+    if count > 1:
+        sys.exit(f"ABORT: {label}: target matched {count}x (need 1):\n{old[:140]}")
+    return text[:start] + new + text[end:]
 
 
 def stage(target: pathlib.Path) -> pathlib.Path:
@@ -90,12 +117,14 @@ def patch_worker(root: pathlib.Path) -> None:
          'if(e=="popup"){}else e=="sidebar"'),
     ]
     for old, new in pairs:
-        n = s.count(old)
-        if n != 1:
-            sys.exit(f"ABORT: service/main.js: target matched {n}x (need 1):\n{old[:140]}")
-        s = s.replace(old, new)
-    sw.write_text(HELPER + s, encoding="utf-8")
-    print(f"patched: service/main.js ({len(pairs)} replacements + helper)")
+        s = replace_once(s, old, new, "service/main.js")
+    s = HELPER + "\n" + s
+    sw.write_text(s, encoding="utf-8")
+    check = subprocess.run(["node", "--check", str(sw)], capture_output=True, text=True)
+    if check.returncode != 0:
+        sys.exit("ABORT: patched service/main.js does not parse: "
+                 + (check.stderr or check.stdout).strip().splitlines()[-1][:160])
+    print(f"patched: service/main.js ({len(pairs)} replacements + helper, parses)")
 
 
 CSS = """<style>/*vdh-android-ui-v3*/

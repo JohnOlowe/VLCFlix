@@ -223,3 +223,27 @@
 - Fixed while verifying: the packer's ID derivation hashed the PKCS8 private
   key instead of the public SPKI (reported a wrong ID); now mirrors node's
   `createPublicKey` and prints the expected ID.
+
+## 2026-11-02 — Readability pass + secret-scanning false positive
+
+- User: GitHub flags a secret in `extension/injected/youtube.js`, and the
+  source is unreadable. Investigated the key instead of assuming: it is
+  `AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8`, the public InnerTube web-client
+  key that ships in youtube.com's own page source; the same value appears in
+  yt-dlp's `INNERTUBE_CLIENTS`, NewPipeExtractor issue threads and every
+  "innertube" client (3 occurrences here, all inside the WEB /
+  WEB_EMBEDDED / WEB_CREATOR client descriptors). Not a credential of ours,
+  nothing to rotate; flagged as a false positive in CONTEXT.md.
+- `scripts/format-vdh-source.py`: reformats all 31 JS + 6 HTML files in
+  place. First attempt used a hand-rolled string/regex-aware stripper for
+  verification and rejected a correct beautify (regex literals were read as
+  strings); replaced with an acorn token-stream comparison. HTML uses tag
+  sequence + void/balance checks.
+- `patch-vdh-mobile-ui.py` reworked for formatted input: whitespace-
+  insensitive target matching that still enforces a single unique match,
+  plus `node --check` on the patched worker before it is accepted.
+- Verified after the pass: `--check` is a no-op (idempotent), patch applies
+  (4 replacements), render check PASS at 412x915 and 412x800, packer reports
+  payload CRC table == sideload zip and ID
+  `gmppgmnjccgklfklpibfkejdjijlnlnd` (unchanged). Artefacts grew ~150 KB
+  (crx 4,238,826 B) purely from indentation.

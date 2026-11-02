@@ -194,3 +194,27 @@ Measured after cleanup: workspace 30 MB total.
   extension ID changes and the phone install becomes a separate extension.
 - Scripts are path-independent: they locate the repo from their own path, so
   the same files work from a fresh clone on the phone.
+
+## Readability pass (2026-11-02)
+
+- `extension/` is a minified vendor drop: `service/main.js` was one 557 KB
+  line. `scripts/format-vdh-source.py` reformats every `.js`/`.html` in place
+  (js-beautify for JS, a style-block expander for HTML) and is the only
+  writer of `extension/` besides the vendor drop itself.
+- It is verified, not assumed: acorn token streams must be identical before
+  and after (JS), tag sequences must be identical (HTML); the JS file is also
+  checked with `node --check` afterwards, and any mismatch restores the
+  original and exits non-zero. `--check` reports without writing.
+- Cost: JS 6.9 MB -> 8.9 MB (indentation, one statement per line). `dist/`
+  grows ~150 KB. Worth it: the four expressions the patch rewrites, and the
+  CSS the UI patch touches, are now reviewable.
+- Consequence for the patch: minified matching no longer works.
+  `patch-vdh-mobile-ui.py` now matches targets whitespace-insensitively
+  (`find_ws`: flatten both sides, map offsets back) and still requires exactly
+  one match; it also runs `node --check` on the patched worker before writing.
+- The API key in `injected/youtube.js` (`AIzaSyAO_FJ2SlqU8...`, 3x) is
+  YouTube's public InnerTube web-client key: it ships inside youtube.com's own
+  page source and appears in the same form in yt-dlp, NewPipeExtractor and
+  every "innertube" client. It is not our credential and needs no rotation.
+  GitHub secret scanning may still flag it; that is a false positive for this
+  repository.

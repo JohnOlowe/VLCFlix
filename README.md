@@ -14,6 +14,7 @@ holds source only:
 | path | what |
 | --- | --- |
 | `extension/` | pristine unpacked VDH Pro 10.6.1.2 tree (vendor drop, unmodified, diffable against upstream) |
+| `scripts/format-vdh-source.py` | reformats every `.js`/`.html` in `extension/`; verified behaviour-neutral (identical token stream / tag sequence) |
 | `scripts/patch-vdh-mobile-ui.py` | copies `extension/` to `build/extension` and applies the Android UI patch |
 | `scripts/render-check-vdh-ui.py` | renders the patched panel in headless Chromium at phone size and asserts the layout |
 | `scripts/pack-vdh-artifacts.sh` | packs `build/extension` into `dist/` (crx + two zips) with integrity checks |
@@ -24,6 +25,7 @@ every change and would otherwise sit in git history forever (force-push is
 unavailable here). The signing key is never committed.
 
 ```bash
+python3 scripts/format-vdh-source.py     # optional; in-place, verified, --check to dry run
 python3 scripts/patch-vdh-mobile-ui.py   # vendor tree -> build/extension
 python3 scripts/render-check-vdh-ui.py   # layout assertion (needs playwright)
 bash    scripts/pack-vdh-artifacts.sh    # -> dist/*.crx, dist/*.zip

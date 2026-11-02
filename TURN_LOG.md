@@ -351,3 +351,19 @@
 - Also hit my own trap twice: the inserted CSS comment originally contained a
   literal `<style>` string, which the document verifier counted as a real open
   tag and aborted the build. Text inside CSS comments must not look like tags.
+
+## 2026-11-02 — download storage explained; ENOSPC handoff fix
+
+- User's download completed, then the handoff to Edge's downloader failed with
+  "No space left on the device", and the whole file had to be re-downloaded.
+- Traced the pipeline: worker -> OPFS (`<download_id>.<ext>`) -> blob URL ->
+  `chrome.downloads.download` -> browser writes to shared storage.
+- Found the real defect: service/main.js deletes the OPFS entry and revokes the
+  blob URL *before* checking whether `downloads.download` succeeded, so a
+  failed handoff destroys a finished download.
+- `scripts/patch-vdh-keep-on-failure.py`: keep the OPFS file + blob URL when
+  the handoff fails (still clean up on user-cancel), and add storage
+  usage/quota/free to the error message. Strict single-match, node --check,
+  idempotent.
+- Verified the extension still mounts with the patch (real Chromium run, 0 page
+  errors); packed with the ID unchanged.

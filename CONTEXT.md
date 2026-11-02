@@ -337,3 +337,36 @@ must be judged on the phone.
   the screen edge. `flex-wrap: wrap` + `justify-content: center` fixed it; the
   bar is now two rows. `scripts/check-real-extension.py` reports
   `toolbarOverflow` (scrollWidth - clientWidth) and it must be 0.
+
+## Where downloaded bytes live, and the ENOSPC handoff bug (2026-11-02)
+
+Pipeline, traced in code:
+
+1. `download_worker/main.js` streams media into **OPFS** (Origin Private File
+   System) via `navigator.storage.getDirectory()` under names
+   `<download_id>.<ext>`, plus `<download_id>_audio` / `_video` for split
+   streams, then muxes with the bundled libav wasm. OPFS is *not* a normal
+   folder: it lives in the browser profile under
+   `/data/data/com.microsoft.emmx.canary/app_chrome/Default/File System/`,
+   growing inside the profile's quota. On the phone profile and browser
+   downloads share one filesystem, so a full device breaks both.
+2. The worker returns `internal_bloburl` = `URL.createObjectURL()` of an OPFS
+   `File` (still OPFS-backed, no extra copy) to `service/main.js`.
+3. The service worker calls `chrome.downloads.download({url: bloburl})`; the
+   browser then copies the blob into shared storage (`/sdcard/Download`).
+
+Bug fixed: stock code ran
+`if (await removeEntry(r), wr(revoke blob url), d.isErr())` -- it deleted the
+OPFS file and revoked the blob URL **before** looking at the result. When the
+handoff failed (ENOSPC while the browser copied the blob), the finished
+download was already gone and had to be re-fetched. Retry in the UI is
+`retry_download` -> re-fetch, so there was no local-resume path either way.
+
+`scripts/patch-vdh-keep-on-failure.py` keeps the OPFS copy and the blob URL on
+failure, and reports storage usage/quota/free in the error. Same objects, same
+error type, `node --check` + real-extension mount verified.
+
+Not done, deliberately: resuming an *interrupted network fetch* would need the
+worker's segment/cache state, which is not persisted deliberately (partial
+files are cleaned). That is a rewrite of the download worker, not a patch, and
+untestable here.

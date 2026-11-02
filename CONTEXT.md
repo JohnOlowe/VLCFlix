@@ -298,3 +298,26 @@ must be judged on the phone.
 - Consequence: vendor links reachable from the UI (support, premium, terms,
   store) stay in the code. Cosmetic link removal is not worth a broken
   detection pipeline; remove them only if a link is proven dead code.
+
+## CSS patch must close its <style> block (2026-11-02, root cause of the blank panel)
+
+- Symptom: from v4 on, the panel showed only stray text ("OK",
+  "get_premium_description", "Version: Local build", "Report") and no media.
+- Cause: `patch-vdh-mobile-ui.py`'s CSS string ended without `</style>`. An
+  unclosed `<style>` makes the HTML parser treat everything after it as CSS
+  text, so `<body>` is never created and `com-main`/`com-settings`/
+  `com-toolbar` do not exist. `content/panel.js` then throws `DOM not valid`
+  at startup and nothing renders.
+- This is why every JS-side theory (vendor URL rewrite, deleted content
+  scripts, shadow-DOM font size) failed to explain it: the HTML was broken.
+- Guard added: after injecting CSS, `verify_document()` re-parses the patched
+  file and requires (a) exactly one added `<style>`, (b) the same tag sequence
+  as the pristine vendor file, (c) the same leftover unclosed-tag stack (the
+  vendor markup is genuinely loose, so absolute balance is not the test), and
+  (d) `com-main`/`com-settings`/`com-toolbar` present. The build aborts
+  otherwise.
+- Verification that would have caught it: `scripts/check-real-extension.py`
+  loads the unpacked tree into Chromium (`--load-extension`), opens
+  `content/popup.html` and asserts the components exist, no page errors, and
+  the computed font size. Current build: all true, 0 errors, 21px root and
+  toolbar. Use it, not the mock harness, whenever the panel "renders nothing".

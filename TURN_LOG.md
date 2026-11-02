@@ -312,3 +312,25 @@
   render check PASS (21px everywhere); pack OK, ID unchanged.
 - Lesson recorded in CONTEXT: cosmetic link removal is not worth breaking the
   download path; do not rewrite hosts in JS again.
+
+## 2026-11-02 — ROOT CAUSE: unclosed <style> in my CSS patch (blank panel)
+
+- User pushed back on the link theory with the correct timeline: it broke right
+  after the size change. Bisected properly this time by loading the real
+  extension into Chromium (`--load-extension`, three variants): pristine
+  mounts, every patched variant throws `DOM not valid`.
+- `DOM not valid` comes from `content/panel.js` when `com-main`,
+  `com-settings` or `com-toolbar` are missing at script time. Dumping the
+  parsed DOM showed the patched page had `body > vbox#box_main` instead of
+  `com-settings/com-main/com-toolbar`: my injected `<style>` block had no
+  closing tag, so the parser swallowed `<body>` and the components as CSS
+  text. Stray text (OK / get_premium_description / Version / Review) was
+  exactly what leaked out.
+- Fixed: closed the block, and added `verify_document()` to the patch script
+  (one added style, same tag sequence as the pristine file, same unclosed
+  stack, components present) -- it aborts the build otherwise.
+- Committed as a proper regression test: `scripts/check-real-extension.py`
+  loads the built tree into Chromium and asserts components + zero page
+  errors + 21px font. Current build passes.
+- The earlier vendor-link revert stays (it was a second, independent mistake,
+  but it was NOT the cause of this symptom).

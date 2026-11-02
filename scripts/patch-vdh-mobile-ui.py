@@ -30,6 +30,7 @@ generations are upgraded in place.
 """
 import pathlib
 import re
+from html.parser import HTMLParser
 import shutil
 import subprocess
 import sys
@@ -197,7 +198,69 @@ com-media, com-debug, com-banner, #nomedia {
 com-toolbar, #toolbar { padding: var(--spacing-medium) !important; min-height: 3.2rem !important; }
 button, input, select, [role="button"] { min-height: 2.2rem !important; }
 button { padding: 0 var(--spacing-medium) !important; }
-"""
+</style>"""
+
+
+class TagCounter(HTMLParser):
+    """Tag balance for the patched document. An unclosed <style> makes the
+    parser treat the rest of the file as CSS text, so <body> and its components
+    disappear -- the app then throws "DOM not valid" and the panel is blank."""
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tags, self.stack = [], []
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append((tag, dict(attrs).get("id")))
+        if tag not in self.VOID:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if self.stack and self.stack[-1] == tag:
+            self.stack.pop()
+
+
+def parsed_shape(text: str):
+    tc = TagCounter()
+    tc.feed(text)
+    tc.close()
+    return tc
+
+
+def verify_document(name: str, text: str) -> None:
+    """Compare the patched document's parsed shape with the pristine one.
+
+    The vendor markup is genuinely loose (unclosed <template>/<vbox> at EOF), so
+    absolute balance is not the test. What must hold is that the patch changed
+    nothing structural: same tag sequence, same leftover stack, and the three
+    components still present. An unclosed <style> breaks all three -- the rest
+    of the file becomes CSS text and this check fails the build.
+    """
+    before = parsed_shape((SRC / "content" / name).read_text(encoding="utf-8"))
+    after = parsed_shape(text)
+    # the patch adds exactly one <style> block of its own
+    extra_styles = [t for t in after.tags if t[0] == "style"].__len__() - \
+                   [t for t in before.tags if t[0] == "style"].__len__()
+    stripped = [t for i, t in enumerate(after.tags)
+                if not (t[0] == "style" and i == after.tags.index(t))]
+    problems = []
+    if stripped != before.tags:
+        problems.append("tag sequence differs from the pristine document")
+    if extra_styles != 1:
+        problems.append(f"expected 1 added <style>, found {extra_styles}")
+    if after.stack != before.stack:
+        problems.append(f"unclosed stack changed: {after.stack}")
+    if text.count("<style") != text.count("</style>"):
+        problems.append(f"<style> {text.count('<style')} vs </style> {text.count('</style>')}")
+    for required in ("com-main", "com-settings", "com-toolbar"):
+        if required not in [t for t, _ in after.tags]:
+            problems.append(f"{required} missing from parsed DOM")
+    if problems:
+        sys.exit(f"ABORT: {name}: patched document is broken: {'; '.join(problems)}")
+    print(f"  verified: {name} parses with com-main/com-settings/com-toolbar intact")
 
 
 def patch_html(root: pathlib.Path) -> None:
@@ -215,12 +278,15 @@ def patch_html(root: pathlib.Path) -> None:
                 upgraded = True
                 break
         if upgraded:
+            verify_document(name, s)
             p.write_text(s, encoding="utf-8")
             print(f"upgraded: {name} (older CSS -> v5)")
             continue
         if s.count("</head>") != 1:
             sys.exit(f"ABORT: {name}: expected exactly one </head>")
-        p.write_text(s.replace("</head>", CSS + "\n</head>"), encoding="utf-8")
+        out = s.replace("</head>", CSS + "\n</head>")
+        verify_document(name, out)
+        p.write_text(out, encoding="utf-8")
         print(f"patched: {name} (phone scale CSS v5)")
 
 

@@ -95,3 +95,27 @@
   RECOVERY points at the script).
 - **Not verified on device still**: Edge Canary/Kiwi running the extension,
   Termux glue — unchanged from the previous entry.
+
+## 2026-11-02 — Edge Canary takes CRX only; extension re-packed as CRX3
+
+- User reported on their phone: Edge Canary offers **no zip/unpacked
+  option**, only CRX. Web check confirmed: the supported path is Settings →
+  About Microsoft Edge → tap build number 5× → Developer Options →
+  "Extension install by crx" (community-documented since 2024).
+- Restored the extension with `scripts/restore-vdh-workspace.sh` (sha256
+  `OK`), then packed a **CRX3** with the `crx3` npm package (v3 format,
+  Chrome 64+): first attempt used a guessed JS API and failed (`Received an
+  instance of Object`) — read the package README and used its CLI instead.
+- Key handling: generated a persistent RSA key at `~/vdh-crx-key.pem` (mode
+  600, workspace file, not a service credential) so re-packs keep extension
+  ID `gmppgmnjccgklfklpibfkejdjijlnlnd`.
+- Verified the CRX by parsing it: magic `Cr24`, version 3, 581-byte signed
+  header (sha256-with-RSA proof present); ZIP payload = 79 entries,
+  `manifest.json` at root, **every CRC equal** to the side-load zip.
+  4,083,698 bytes.
+- Size discipline held: BuildTools clone deleted again after packing;
+  workspace 35 MB.
+- **Not verified (needs the phone)**: that Edge Canary accepts a
+  self-signed CRX3 (community reports say the crx path works for
+  side-loaded packs, but nobody has run *this* file), that the MV3 service
+  worker + sidePanel survive its Chromium build, and Pro sign-in.

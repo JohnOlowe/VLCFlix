@@ -98,15 +98,24 @@ in `docs/ANDROID_PORT_PLAN.md`.
 
 ## Next steps (route A+D)
 
-1. Hand the user a side-load zip (extension files at the zip root, manifest
-   at top level) for Edge Canary / Kiwi. Built as
-   `/home/user/vdh-pro-10.6.1.2-sideload.zip` (workspace file, **not**
-   committed — this branch is MD-only).
-2. User installs Edge Canary on the phone, loads the zip
-   (Extensions → Developer → Load from zip), and reports: does the icon
-   appear, does it detect a DASH stream (e.g. YouTube) and an HLS stream.
-   Result → `TURN_LOG.md`, labelled "verified on device" only with the
-   user's report.
+1. **Edge Canary on Android installs CRX only** — there is no zip/unpacked
+   path (confirmed by the user on-device 2026-11-02 and by community docs:
+   Settings → About Microsoft Edge → tap build number 5× → Developer Options
+   → "Extension install by crx"). Artefacts (workspace files, **not**
+   committed — MD-only branch):
+   - `/home/user/vdh-pro-10.6.1.2.crx` — CRX3, magic `Cr24` v3, signed with
+     `/home/user/vdh-crx-key.pem` (kept; re-packs keep the same ID), payload
+     CRC-identical to the zip. Extension ID:
+     `gmppgmnjccgklfklpibfkejdjijlnlnd`.
+   - `/home/user/vdh-pro-10.6.1.2-sideload.zip` — still valid for Kiwi-style
+     browsers that take zips.
+   - Re-pack recipe: `npm i crx3` then
+     `crx3 -p ~/vdh-crx-key.pem -o ~/vdh-pro-10.6.1.2.crx <extracted-dir>`
+     (extracted dir via `scripts/restore-vdh-workspace.sh`).
+2. User loads the CRX in Edge Canary and reports: does it install, does the
+   icon appear, does it detect a DASH stream (e.g. YouTube) and an HLS
+   stream, does Pro sign-in work. Result → `TURN_LOG.md`, labelled
+   "verified on device" only with the user's report.
 3. Termux side: verify the merge command (`ffmpeg -i video -i audio -c copy
    out.mp4`) and a MediaCodec transcode on a downloaded pair; then decide the
    glue (manual / Termux:API / RUN_COMMAND intents).

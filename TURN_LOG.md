@@ -268,3 +268,28 @@
   screenshot checked by eye (text and buttons now scale, nothing clipped).
 - Repacked: crx 4,240,006 B; ID unchanged. Row-level layout with real media is
   unverified and must be confirmed on the phone.
+
+## 2026-11-02 — v5: real font scaling, premium UI removed, vendor links stripped
+
+- User: still too small, a premium/free-account banner appeared that was not
+  there before, and asked to remove everything that links back to the vendor.
+- Why v4 failed: shadow DOM. Components carry `:root, :host { font-size:
+  0.8rem }` in a <=400px media query; a page rule on `:root` cannot cross the
+  shadow boundary. v5 also sets font-size on every component host (21px base)
+  and reports the deepest rendered text node per component in the harness: all
+  21px now.
+- The banner was the stock `com-banner` markup, already present in
+  `popup.html`; it only needed the ad behaviour from the worker to become
+  visible. Hidden via its own rule (`M(this, !1)`).
+- Vendor links: `scripts/strip-vendor-links.py`. Enumerated first — 15 base
+  URLs, 13 `files.`, 9 help articles, 3 tos, 3 store listings, 2 vendor
+  content-script matches. Then: inert host for all vendor hosts, `about:blank`
+  for help, store/review literals blanked, `homepage_url` removed, activate.js
+  and premium.js deleted with their manifest entries, manifest name +
+  description + 33 locales neutralised, upsell strings replaced.
+- Polarity audit caught two of my own first-pass mistakes before shipping:
+  `D()` is hide (so the review edit would have kept it visible) and
+  `I()` is show (so the premium buttons needed flipping to `D()`). The script
+  now hard-fails if any of the three UI edits misses.
+- Verified: patch (2 replacements) -> strip (asserts) -> render check PASS ->
+  pack, 77 entries, ID unchanged, vendor references: none.

@@ -17,6 +17,7 @@ holds source only:
 | `scripts/format-vdh-source.py` | reformats every `.js`/`.html` in `extension/`; verified behaviour-neutral (identical token stream / tag sequence) |
 | `scripts/patch-vdh-mobile-ui.py` | copies `extension/` to `build/extension` and applies the Android UI patch |
 | `scripts/render-check-vdh-ui.py` | renders the patched panel in headless Chromium at phone size and asserts the layout |
+| `scripts/strip-vendor-links.py` | makes the build self-contained: vendor links → inert host, premium/account/review UI hidden, store links and vendor content scripts removed, extension renamed |
 | `scripts/pack-vdh-artifacts.sh` | packs `build/extension` into `dist/` (crx + two zips) with integrity checks |
 | `docs/` | port plan, screenshots of the on-device UI |
 
@@ -27,6 +28,7 @@ unavailable here). The signing key is never committed.
 ```bash
 python3 scripts/format-vdh-source.py     # optional; in-place, verified, --check to dry run
 python3 scripts/patch-vdh-mobile-ui.py   # vendor tree -> build/extension
+python3 scripts/strip-vendor-links.py    # no vendor links, no upsell UI
 python3 scripts/render-check-vdh-ui.py   # layout assertion (needs playwright)
 bash    scripts/pack-vdh-artifacts.sh    # -> dist/*.crx, dist/*.zip
 ```

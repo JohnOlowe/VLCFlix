@@ -39,8 +39,9 @@ SRC = REPO / "extension"
 BUILD = REPO / "build" / "extension"
 
 MARKER = "vdhMobileSidebar"      # service worker helper
-CSS_MARK = "vdh-android-ui-v4"   # page override
-OLD_CSS_MARKS = ("vdh-android-ui-v3", "vdh-android-ui-v2", "vdh-android-ui")
+CSS_MARK = "vdh-android-ui-v5"   # page override
+OLD_CSS_MARKS = ("vdh-android-ui-v4", "vdh-android-ui-v3",
+                 "vdh-android-ui-v2", "vdh-android-ui")
 
 HELPER = ('var vdhMobileSidebar=function(){'
           'function o(){chrome.tabs.create('
@@ -121,43 +122,55 @@ def patch_worker(root: pathlib.Path) -> None:
     print(f"patched: service/main.js ({len(pairs)} replacements + helper, parses)")
 
 
-CSS = """<style>/*vdh-android-ui-v4*/
-/* Phone UI. Two problems on Android, both fixed here:
+CSS = """<style>/*vdh-android-ui-v5*/
+/* Phone UI. The app is a set of web components, each with its own shadow
+   root; the stock CSS pins :root at 12px and, below 400px wide, shrinks the
+   components again via `:root, :host { font-size: 0.8rem }` (9.6px). v4 raised
+   :root but never the shadow HOSTS, so the components kept shrinking.
 
-   1. everything is drawn at desktop density -- :root is 12px and the whole
-      app is rem-based, worse, at <=400px wide the stock sheet applies a
-      "the sidebar is real small, let's make everything small" rule
-      (:root font-size 0.8rem => 9.6px, spacing halved). A phone popup sheet
-      sits right at that threshold, which is why the UI looked tiny.
-   2. the sheet was sized for a 480x600 desktop popup, so it either clipped
-      or left a big empty area on a 412px-wide phone.
-
-   So: one scale-up rule that beats the <=400px shrink, generous tap targets,
-   and the page fills whatever box the browser gives it. #main keeps the
-   app's own flex/scroll chain, so extra height is used by the media list
-   instead of leaving a void. */
-:root, :host {
-  font-size: 20px !important;
+   v5 therefore:
+     - root 21px, repeated inside the <=400px media query so the stock shrink
+       rule can never win;
+     - font-size forced on every component host (page styles on a host always
+       beat that component's own :host rule), so everything inside inherits
+       the new size;
+     - roomier controls/spacing and a viewport-filling layout. */
+:root, html {
+  font-size: 21px !important;
   --spacing-small: 4px !important;
   --spacing-medium: 8px !important;
   --spacing-large: 14px !important;
   --spacing-x-large: 24px !important;
-  --video-height: 128px !important;
+  --video-height: 132px !important;
 }
-/* neutralise the stock "real small" shrink (same specificity, later wins) */
 @media (max-width: 400px) {
-  :root, :host {
-    font-size: 20px !important;
+  :root, html {
+    font-size: 21px !important;
     --spacing-small: 4px !important;
     --spacing-medium: 8px !important;
     --spacing-large: 14px !important;
     --spacing-x-large: 24px !important;
-    --video-height: 128px !important;
+    --video-height: 132px !important;
   }
 }
-/* the user's own font-size choice still stacks on top of the new base */
-html[font_size="large"] { font-size: 22px !important; }
-html[font_size="verylarge"] { font-size: 24px !important; }
+/* the user's own font-size setting still stacks on the new base */
+html[font_size="large"] { font-size: 23px !important; }
+html[font_size="verylarge"] { font-size: 25px !important; }
+
+/* win over each component's shadow-DOM `:host` shrink rule */
+com-main, com-toolbar, com-banner, com-notification, com-settings, com-media,
+com-media-downloaded, com-dismiss-button, com-native-menu, com-progress,
+com-debug, com-details, #main > *, #toolbar > *, #settings > * {
+  font-size: 21px !important;
+}
+html[font_size="large"] com-main, html[font_size="large"] com-toolbar,
+html[font_size="large"] #main > *, html[font_size="large"] #toolbar > * {
+  font-size: 23px !important;
+}
+html[font_size="verylarge"] com-main, html[font_size="verylarge"] com-toolbar,
+html[font_size="verylarge"] #main > *, html[font_size="verylarge"] #toolbar > * {
+  font-size: 25px !important;
+}
 
 html, html > body {
   width: 100vw !important;
@@ -176,15 +189,12 @@ html[dockmode="popup"][popup_size="big"] > body {
   height: 100dvh !important;
 }
 
-/* use the width: tighter side margins, full-bleed rows, list takes the rest */
 #main, #settings { overflow-y: auto !important; }
 com-media, com-debug, com-banner, #nomedia {
   margin-left: var(--spacing-medium) !important;
   margin-right: var(--spacing-medium) !important;
 }
-com-toolbar, #toolbar { padding: var(--spacing-medium) !important; min-height: 3rem !important; }
-
-/* thumb-sized controls (Android guideline: ~48px / 2.4rem at this scale) */
+com-toolbar, #toolbar { padding: var(--spacing-medium) !important; min-height: 3.2rem !important; }
 button, input, select, [role="button"] { min-height: 2.2rem !important; }
 button { padding: 0 var(--spacing-medium) !important; }
 """
@@ -206,12 +216,12 @@ def patch_html(root: pathlib.Path) -> None:
                 break
         if upgraded:
             p.write_text(s, encoding="utf-8")
-            print(f"upgraded: {name} (older CSS -> v4)")
+            print(f"upgraded: {name} (older CSS -> v5)")
             continue
         if s.count("</head>") != 1:
             sys.exit(f"ABORT: {name}: expected exactly one </head>")
         p.write_text(s.replace("</head>", CSS + "\n</head>"), encoding="utf-8")
-        print(f"patched: {name} (phone scale CSS v4)")
+        print(f"patched: {name} (phone scale CSS v5)")
 
 
 root = stage(pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD)

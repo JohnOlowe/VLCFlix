@@ -252,3 +252,30 @@ It cannot populate the media list: the app validates the state it receives
 from the worker with a schema, and a fabricated state is rejected ("DOM not
 valid" / valibot "Unreachable"). So row-level layout is unverified here and
 must be judged on the phone.
+
+## Patch v5 + vendor-link strip (2026-11-02)
+
+- v4 was ineffective for a reason worth remembering: the UI is a set of web
+  components, each with its own shadow root, and the stock sheet shrinks them
+  with a `:root, :host { font-size: 0.8rem }` rule below 400px. Raising only
+  `:root` does nothing, because inheritable font-size stops at the shadow
+  boundary. v5 sets the size on `:root` **and on every component host**
+  (page-level styles on a host beat that component's own `:host` rule):
+  21px base, 23/25px for the app's large/verylarge font options.
+- `scripts/strip-vendor-links.py` (new, runs after the UI patch):
+  vendor hosts -> `http://127.0.0.1:9` (inert; every derived endpoint and the
+  remote ruleset now fails fast instead of phoning home), help links ->
+  `about:blank`, store/review URLs -> `""`, `homepage_url` dropped, the two
+  vendor-only content scripts removed with their files, extension renamed to
+  "Video Downloader" in manifest + all 33 `_locales` files, upsell strings
+  neutralised.
+- Polarity trap worth remembering: `M(el, v)` / `I(el)` / `D(el)` are
+  show-if-truthy / show / hide. The banner rule was `M(this, advertize)`
+  (hide by passing `!1`), the review prompt was
+  `i.dont_ask_for_user_review && D(this.p_leave_review)` (dropping the
+  condition would have *shown* it - only the condition is dropped), and the
+  premium buttons were revealed with `I(...)` (flipped to `D(...)`).
+  The script now asserts all three landed, so a silent no-op fails the build.
+- Verified: patch -> strip -> render check (root 21px, component hosts and
+  their shadow text 21px, page height == viewport) -> pack. ID unchanged,
+  "remaining vendor references: none".

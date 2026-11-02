@@ -169,11 +169,25 @@ PROBE = """() => {
     rowCount: document.querySelectorAll('com-media').length,
     firstRow: r(document.querySelector('com-media')),
     buttonH: r(document.querySelector('com-toolbar button, #toolbar button')),
-    fonts: Object.fromEntries(['#nomedia_title', '#nomedia p', '#toolbar button',
-      'com-toolbar button', '#main', 'p'].map(sel => {
-        const el = document.querySelector(sel);
-        return [sel, el ? CS(el, 'fontSize') : null];
-      }).filter(([, v]) => v)),
+    fonts: (() => {
+      const out = {};
+      const add = (name, el) => { if (el) out[name] = CS(el, 'fontSize'); };
+      add('html', document.documentElement);
+      add('#nomedia p', document.querySelector('#nomedia p'));
+      // deepest rendered text inside a component's shadow root: this is the
+      // size the user actually reads, and what the :host rule used to shrink
+      for (const sel of ['com-main', 'com-toolbar', 'com-banner', 'com-notification']) {
+        const host = document.querySelector(sel);
+        if (!host) continue;
+        add(sel + ' :host', host);
+        const root = host.shadowRoot;
+        if (!root) continue;
+        const texts = [...root.querySelectorAll('*')].filter(e =>
+          e.childElementCount === 0 && (e.textContent || '').trim().length > 1);
+        if (texts.length) add(sel + ' text', texts[0]);
+      }
+      return out;
+    })(),
     longestEmptyBand: best,
   };
 }"""

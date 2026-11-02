@@ -321,3 +321,19 @@ must be judged on the phone.
   `content/popup.html` and asserts the components exist, no page errors, and
   the computed font size. Current build: all true, 0 errors, 21px root and
   toolbar. Use it, not the mock harness, whenever the panel "renders nothing".
+
+## Toolbar icons + side margins, patch v6 (2026-11-02)
+
+- The toolbar icons are inline SVGs inside `com-toolbar`'s shadow template, so
+  page-level CSS cannot size them. `patch-vdh-mobile-ui.py` now also injects
+  `TOOLBAR_CSS` just before the *first* `</style>` after
+  `<template id="toolbar-template">` (balance-preserving; the inserted comment
+  must not contain a literal `<style>` string or the balance check trips).
+- Numbers (measured in the real extension at 412px wide): icons 26x26 (stock
+  16-18), buttons 48x44 with 7x9 padding (stock ~30), bar padding 10x12, gap
+  10, body side padding 10px, plus 8px inner margins on scroll content.
+- Overflow lesson: 7 buttons at 46px + gaps do not fit 412px on one line, and
+  the stock bar clips instead of wrapping, so the last button was cut off at
+  the screen edge. `flex-wrap: wrap` + `justify-content: center` fixed it; the
+  bar is now two rows. `scripts/check-real-extension.py` reports
+  `toolbarOverflow` (scrollWidth - clientWidth) and it must be 0.

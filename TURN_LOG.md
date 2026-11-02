@@ -334,3 +334,20 @@
   errors + 21px font. Current build passes.
 - The earlier vendor-link revert stays (it was a second, independent mistake,
   but it was NOT the cause of this symptom).
+
+## 2026-11-02 — v6: bigger toolbar icons, more padding, side margins
+
+- User: enlarge the toolbar icons and their padding, and give the whole
+  extension more margin to the screen edges.
+- Icons live in the toolbar component's shadow template -> patched the
+  template's own style block (page CSS cannot reach a shadow root). Icons
+  16-18px -> 26px, buttons -> 48x44 with 7x9 padding, bar padding 10x12.
+- Side margins: body padding 10px + 8px inner margins on scroll content.
+- First attempt overflowed: 7 buttons at 46px + gaps are wider than a 412px
+  phone and the stock bar clips rather than wraps, so the last button was cut
+  off. Added `flex-wrap: wrap; justify-content: center`; verified
+  `toolbarOverflow: 0`, screenshot checked by eye (two tidy rows, nothing
+  clipped).
+- Also hit my own trap twice: the inserted CSS comment originally contained a
+  literal `<style>` string, which the document verifier counted as a real open
+  tag and aborted the build. Text inside CSS comments must not look like tags.

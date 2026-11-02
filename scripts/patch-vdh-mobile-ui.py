@@ -40,8 +40,8 @@ SRC = REPO / "extension"
 BUILD = REPO / "build" / "extension"
 
 MARKER = "vdhMobileSidebar"      # service worker helper
-CSS_MARK = "vdh-android-ui-v5"   # page override
-OLD_CSS_MARKS = ("vdh-android-ui-v4", "vdh-android-ui-v3",
+CSS_MARK = "vdh-android-ui-v6"   # page override
+OLD_CSS_MARKS = ("vdh-android-ui-v5", "vdh-android-ui-v4", "vdh-android-ui-v3",
                  "vdh-android-ui-v2", "vdh-android-ui")
 
 HELPER = ('var vdhMobileSidebar=function(){'
@@ -123,7 +123,7 @@ def patch_worker(root: pathlib.Path) -> None:
     print(f"patched: service/main.js ({len(pairs)} replacements + helper, parses)")
 
 
-CSS = """<style>/*vdh-android-ui-v5*/
+CSS = """<style>/*vdh-android-ui-v6*/
 /* Phone UI. The app is a set of web components, each with its own shadow
    root; the stock CSS pins :root at 12px and, below 400px wide, shrinks the
    components again via `:root, :host { font-size: 0.8rem }` (9.6px). v4 raised
@@ -190,6 +190,10 @@ html[dockmode="popup"][popup_size="big"] > body {
   height: 100dvh !important;
 }
 
+/* breathing room on the sides of the whole panel */
+body { padding-left: 10px !important; padding-right: 10px !important; }
+#main > *, #settings > * { margin-left: var(--spacing-medium) !important;
+                           margin-right: var(--spacing-medium) !important; }
 #main, #settings { overflow-y: auto !important; }
 com-media, com-debug, com-banner, #nomedia {
   margin-left: var(--spacing-medium) !important;
@@ -263,6 +267,66 @@ def verify_document(name: str, text: str) -> None:
     print(f"  verified: {name} parses with com-main/com-settings/com-toolbar intact")
 
 
+TOOLBAR_MARK = "vdh-android-toolbar"
+
+TOOLBAR_CSS = """/*vdh-android-toolbar*/
+/* Lives INSIDE the com-toolbar shadow template's style block: icons and the
+   bar's own padding are only reachable from there. Bigger icons, real tap
+   targets and roomier padding, scaled to the 21px base font. */
+#toolbar {
+  /* wrap instead of clipping: 7 bigger buttons do not fit a 412px phone on
+     one line (7 x 46 + 6 x 10 + padding > viewport), and the stock bar clips */
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  padding: 10px 12px !important;
+  gap: 10px !important;
+  overflow-x: visible !important;
+}
+#toolbar button,
+#toolbar com-native-menu {
+  padding: 7px 9px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  border-radius: var(--spacing-medium) !important;
+}
+#toolbar button > svg,
+#toolbar com-native-menu > svg,
+#toolbar svg {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+}
+"""
+
+
+def patch_toolbar_template(root: pathlib.Path) -> None:
+    """Insert TOOLBAR_CSS before the first </style> of the toolbar template.
+
+    The page-level stylesheet cannot reach into a shadow root, so the toolbar's
+    icon sizes and padding have to be edited in the template that component
+    clones. Inserting before an existing </style> keeps the block balanced --
+    an unclosed <style> here would swallow the toolbar markup.
+    """
+    for name in ("popup.html", "sidebar.html"):
+        p = root / "content" / name
+        text = p.read_text(encoding="utf-8")
+        if TOOLBAR_MARK in text:
+            print(f"skip (toolbar already patched): {name}")
+            continue
+        start = text.find('<template id="toolbar-template">')
+        if start < 0:
+            sys.exit(f"ABORT: {name}: toolbar template not found")
+        close = text.find("</style>", start)
+        end_tpl = text.find("</template>", start)
+        if close < 0 or (0 <= end_tpl < close):
+            sys.exit(f"ABORT: {name}: toolbar template has no <style> block")
+        text = text[:close] + TOOLBAR_CSS + text[close:]
+        verify_document(name, text)
+        p.write_text(text, encoding="utf-8")
+        print(f"patched: {name} (toolbar icons + padding, inside shadow template)")
+
+
 def patch_html(root: pathlib.Path) -> None:
     for name in ("popup.html", "sidebar.html"):
         p = root / "content" / name
@@ -280,17 +344,18 @@ def patch_html(root: pathlib.Path) -> None:
         if upgraded:
             verify_document(name, s)
             p.write_text(s, encoding="utf-8")
-            print(f"upgraded: {name} (older CSS -> v5)")
+            print(f"upgraded: {name} (older CSS -> v6)")
             continue
         if s.count("</head>") != 1:
             sys.exit(f"ABORT: {name}: expected exactly one </head>")
         out = s.replace("</head>", CSS + "\n</head>")
         verify_document(name, out)
         p.write_text(out, encoding="utf-8")
-        print(f"patched: {name} (phone scale CSS v5)")
+        print(f"patched: {name} (phone scale CSS v6)")
 
 
 root = stage(pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD)
 patch_worker(root)
 patch_html(root)
+patch_toolbar_template(root)
 print("all patches applied.")

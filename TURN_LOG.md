@@ -247,3 +247,24 @@
   payload CRC table == sideload zip and ID
   `gmppgmnjccgklfklpibfkejdjijlnlnd` (unchanged). Artefacts grew ~150 KB
   (crx 4,238,826 B) purely from indentation.
+
+## 2026-11-02 — UI scale patch v4 (v3 reverted)
+
+- User: v3 made it worse. The screenshots were sent to ask for a BIGGER UI,
+  not for both modes to open a tab. Popup mode must stay a popup.
+- Reverted in the worker: popup-mode reroute and the `chrome.action.openPopup`
+  removal are gone; only the two sidebar-path replacements remain.
+- Found the real cause in the stock CSS: `:root { font-size: 12px }` with a
+  rem-based UI, plus a `@media (max-width: 400px)` rule that deliberately
+  shrinks everything to 0.8rem (9.6px) with halved spacing. A phone sheet is
+  right at that breakpoint.
+- v4 CSS: 20px root (repeated in the 400px media query so it wins), spacing
+  4/8/14/24, video-height 128px, `font_size` options stack at 22/24px, both
+  modes fill viewport width + 100dvh, tighter row margins, ~44px controls.
+- Harness rework: fabricated session/persistent state is rejected by the
+  app's own schema validator, so the harness now measures the rendered shell
+  (root font 20px, every rendered text >= 12px, page height == viewport) and
+  reports the longest empty band. Verified PASS for both pages at 412px wide;
+  screenshot checked by eye (text and buttons now scale, nothing clipped).
+- Repacked: crx 4,240,006 B; ID unchanged. Row-level layout with real media is
+  unverified and must be confirmed on the phone.

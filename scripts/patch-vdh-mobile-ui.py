@@ -14,13 +14,14 @@ What it changes (see docs/ANDROID_PORT_PLAN.md and TURN_LOG.md for why):
     - "side panel" mode: toolbar click opens content/sidebar.html in a TAB
       (Edge Canary Android exposes chrome.sidePanel but has no side-panel UI).
       A second click focuses the existing tab instead of stacking copies.
-    - "popup" mode: same tab. The toolbar popup on Android is a bottom sheet
-      sized from the page's fixed 320/460/600 px desktop heights, so it
-      showed one media row in an oversized empty sheet.
-    - switching modes inside the app's settings keeps both paths on the tab.
+    - "popup" mode is left exactly as shipped: it stays a toolbar popup.
+      Patch v3 rerouted it to a tab; that was wrong (user feedback).
 
   content/sidebar.html, content/popup.html
-    - fill the viewport (100vw / 100dvh), including the popup_size variants,
+    - scale the whole UI up for a phone: 20px root (stock is 12px, and
+      0.8rem = 9.6px below 400px wide), bigger spacing/video-height, thumb-
+      sized controls, and it beats the stock "make everything small" rule.
+    - fill viewport width and height, including the popup_size variants,
       without touching the app's own #main / #toolbar flex chain.
 
 Strict: every target must match exactly once or the script aborts without
@@ -38,8 +39,8 @@ SRC = REPO / "extension"
 BUILD = REPO / "build" / "extension"
 
 MARKER = "vdhMobileSidebar"      # service worker helper
-CSS_MARK = "vdh-android-ui-v3"   # page override
-OLD_CSS_MARKS = ("vdh-android-ui-v2", "vdh-android-ui")
+CSS_MARK = "vdh-android-ui-v4"   # page override
+OLD_CSS_MARKS = ("vdh-android-ui-v3", "vdh-android-ui-v2", "vdh-android-ui")
 
 HELPER = ('var vdhMobileSidebar=function(){'
           'function o(){chrome.tabs.create('
@@ -99,22 +100,15 @@ def patch_worker(root: pathlib.Path) -> None:
         print("skip (already patched): service/main.js")
         return
     pairs = [
-        # $b(): sidebar mode -> toolbar click opens/focuses the panel tab
+        # $b(): sidebar mode -> toolbar click opens/focuses the sidebar page in
+        # a tab (Edge Canary Android has chrome.sidePanel but no side-panel
+        # UI). Popup mode is left exactly as shipped.
         ('chrome.sidePanel.setOptions({enabled:!0}),'
          'chrome.sidePanel.setPanelBehavior({openPanelOnActionClick:!0}),'
          'chrome.action.setPopup({popup:""})', OPEN_TAB),
-        # $b(): popup mode -> same tab, no tiny bottom sheet
-        ('chrome.sidePanel.setOptions({enabled:!1}),'
-         'chrome.sidePanel.setPanelBehavior({openPanelOnActionClick:!1}),'
-         'chrome.action.setPopup({popup:chrome.runtime.getURL("/content/popup.html")})',
-         OPEN_TAB),
-        # K0(): choosing a mode from the in-app settings opens the tab at once
+        # K0(): choosing sidebar mode from the in-app settings opens the tab
         ('e=="sidebar"&&t.isSome()&&chrome.sidePanel?.open({windowId:t.value})',
          'e=="sidebar"&&vdhMobileSidebar()'),
-        # K0(): popup mode no longer tries chrome.action.openPopup on Android
-        ('if(e=="popup")try{t.isSome()?chrome.action.openPopup({windowId:t.value})'
-         ':chrome.action.openPopup()}catch{}else e=="sidebar"',
-         'if(e=="popup"){}else e=="sidebar"'),
     ]
     for old, new in pairs:
         s = replace_once(s, old, new, "service/main.js")
@@ -127,31 +121,73 @@ def patch_worker(root: pathlib.Path) -> None:
     print(f"patched: service/main.js ({len(pairs)} replacements + helper, parses)")
 
 
-CSS = """<style>/*vdh-android-ui-v3*/
-/* Phone UI: fill the viewport however the page is opened (tab or popup
-   sheet). Sizes are forced on the elements that carry the fixed desktop
-   size; the app's flex chain (#main flex:1, toolbar last) is left alone. */
+CSS = """<style>/*vdh-android-ui-v4*/
+/* Phone UI. Two problems on Android, both fixed here:
+
+   1. everything is drawn at desktop density -- :root is 12px and the whole
+      app is rem-based, worse, at <=400px wide the stock sheet applies a
+      "the sidebar is real small, let's make everything small" rule
+      (:root font-size 0.8rem => 9.6px, spacing halved). A phone popup sheet
+      sits right at that threshold, which is why the UI looked tiny.
+   2. the sheet was sized for a 480x600 desktop popup, so it either clipped
+      or left a big empty area on a 412px-wide phone.
+
+   So: one scale-up rule that beats the <=400px shrink, generous tap targets,
+   and the page fills whatever box the browser gives it. #main keeps the
+   app's own flex/scroll chain, so extra height is used by the media list
+   instead of leaving a void. */
+:root, :host {
+  font-size: 20px !important;
+  --spacing-small: 4px !important;
+  --spacing-medium: 8px !important;
+  --spacing-large: 14px !important;
+  --spacing-x-large: 24px !important;
+  --video-height: 128px !important;
+}
+/* neutralise the stock "real small" shrink (same specificity, later wins) */
+@media (max-width: 400px) {
+  :root, :host {
+    font-size: 20px !important;
+    --spacing-small: 4px !important;
+    --spacing-medium: 8px !important;
+    --spacing-large: 14px !important;
+    --spacing-x-large: 24px !important;
+    --video-height: 128px !important;
+  }
+}
+/* the user's own font-size choice still stacks on top of the new base */
+html[font_size="large"] { font-size: 22px !important; }
+html[font_size="verylarge"] { font-size: 24px !important; }
+
 html, html > body {
   width: 100vw !important;
   max-width: 100vw !important;
   height: 100dvh !important;
   min-height: 100dvh !important;
   max-height: 100dvh !important;
-  background-color: light-dark(hsl(240 4.8% 95.9%), hsl(240 5.7% 18.2%)) !important;
 }
 html[dockmode="popup"][popup_size="small"],
 html[dockmode="popup"][popup_size="medium"],
-html[dockmode="popup"][popup_size="big"] {
-  width: 100vw !important;
-  height: 100dvh !important;
-}
+html[dockmode="popup"][popup_size="big"],
 html[dockmode="popup"][popup_size="small"] > body,
 html[dockmode="popup"][popup_size="medium"] > body,
 html[dockmode="popup"][popup_size="big"] > body {
   width: 100vw !important;
   height: 100dvh !important;
 }
-</style>"""
+
+/* use the width: tighter side margins, full-bleed rows, list takes the rest */
+#main, #settings { overflow-y: auto !important; }
+com-media, com-debug, com-banner, #nomedia {
+  margin-left: var(--spacing-medium) !important;
+  margin-right: var(--spacing-medium) !important;
+}
+com-toolbar, #toolbar { padding: var(--spacing-medium) !important; min-height: 3rem !important; }
+
+/* thumb-sized controls (Android guideline: ~48px / 2.4rem at this scale) */
+button, input, select, [role="button"] { min-height: 2.2rem !important; }
+button { padding: 0 var(--spacing-medium) !important; }
+"""
 
 
 def patch_html(root: pathlib.Path) -> None:
@@ -170,12 +206,12 @@ def patch_html(root: pathlib.Path) -> None:
                 break
         if upgraded:
             p.write_text(s, encoding="utf-8")
-            print(f"upgraded: {name} (older CSS -> v3)")
+            print(f"upgraded: {name} (older CSS -> v4)")
             continue
         if s.count("</head>") != 1:
             sys.exit(f"ABORT: {name}: expected exactly one </head>")
         p.write_text(s.replace("</head>", CSS + "\n</head>"), encoding="utf-8")
-        print(f"patched: {name} (viewport CSS v3)")
+        print(f"patched: {name} (phone scale CSS v4)")
 
 
 root = stage(pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD)

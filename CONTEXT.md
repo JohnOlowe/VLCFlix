@@ -218,3 +218,37 @@ Measured after cleanup: workspace 30 MB total.
   every "innertube" client. It is not our credential and needs no rotation.
   GitHub secret scanning may still flag it; that is a false positive for this
   repository.
+
+## UI scale, patch v4 (2026-11-02) — supersedes v3
+
+v3 was wrong: it rerouted BOTH dock modes to a browser tab. User feedback:
+keep popup mode as a popup; the actual problem was that everything is tiny.
+Restored: the worker now only remaps the sidebar path (2 replacements);
+popup mode is stock.
+
+Measured cause of "tiny":
+- `:root { font-size: 12px }` and the entire UI is rem-based, so 12px is the
+  ceiling for body text.
+- At `max-width: 400px` the stock sheet adds a rule commented "the sidebar is
+  real small. Let's make everything small." -> `:root { font-size: 0.8rem;
+  --spacing-*: half; --video-height: 70px }` = 9.6px text. A phone popup sheet
+  sits right at that threshold.
+
+v4 CSS (in `content/popup.html` + `content/sidebar.html`):
+- `:root`/`:host` 20px + the same override repeated inside `@media
+  (max-width:400px)` so the shrink can never win; spacing 4/8/14/24px,
+  `--video-height: 128px`.
+- `font_size=large` / `verylarge` still stack: 22px / 24px.
+- popup sheet and sidebar tab both fill width and `100dvh`; `#main` keeps the
+  app's own flex + `overflow-y:auto`, so extra height goes to the media list
+  instead of an empty band.
+- com-media margins tightened, toolbar padded, controls `min-height: 2.2rem`
+  (~44px) for finger targets.
+
+Harness: `scripts/render-check-vdh-ui.py` now reports root font size, real
+element font sizes, page/main/toolbar geometry and the longest empty band;
+it asserts root >= 19px, no rendered text < 12px, page height == viewport.
+It cannot populate the media list: the app validates the state it receives
+from the worker with a schema, and a fabricated state is rejected ("DOM not
+valid" / valibot "Unreachable"). So row-level layout is unverified here and
+must be judged on the phone.

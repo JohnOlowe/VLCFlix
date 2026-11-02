@@ -119,7 +119,25 @@ in `docs/ANDROID_PORT_PLAN.md`.
      phone-viewport CSS override to `popup.html`/`sidebar.html`. Strict
      (every target must match exactly once) and idempotent. Artefacts above
      are the **patched** builds; the patch markers are `vdhMobileSidebar`
-     (service worker) and `vdh-android-ui` (HTML).
+     (service worker) and `vdh-android-ui-v3` (HTML).
+   - **Android UI patch v3 (2026-11-02, after on-device screenshots)**: v1
+     did not fix the phone UI. Measured cause: the toolbar popup is a bottom
+     sheet whose height comes from the page's fixed desktop sizes
+     (`popup_size` = 320/460/600 px, set at runtime), and the panel page keeps
+     that height when opened in a tab, leaving a white void. v3: both modes
+     now open `content/sidebar.html` in a full tab (clicking the icon again
+     focuses it), and the CSS forces `100vw`/`100dvh` on `html` and `body`
+     while leaving the app's `#main`/`#toolbar` flex chain alone.
+   - **UI regression harness**: `scripts/render-check-vdh-ui.py` serves the
+     unpacked tree over http (file:// blocks the ES module) with a tolerant
+     `chrome.*` mock and measures/render-screenshots the panel at phone size
+     with Playwright Chromium. Use it before every repack:
+     `pip install playwright && python3 -m playwright install chromium`.
+     Expect two harmless mount errors (proxy stub) and `#main` ending where
+     `#toolbar` starts; that is the pass condition.
+   - Packing: `scripts/pack-vdh-artifacts.sh` builds all three artefacts and
+     asserts the CRX payload CRC table equals the sideload zip and that the
+     patch markers are inside the packaged payload.
 2. User loads the CRX in Edge Canary and reports: does it install, does the
    icon appear, does it detect a DASH stream (e.g. YouTube) and an HLS
    stream, does Pro sign-in work. Result → `TURN_LOG.md`, labelled

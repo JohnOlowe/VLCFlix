@@ -166,3 +166,36 @@
   correctly, that the popup override actually enlarges Edge Canary's popup
   dialog (the dialog container may impose its own cap — if so, the tab mode
   is the fallback), and that mode-switching round-trips cleanly.
+
+## 2026-11-02 — On-device UI screenshots: v1 CSS was wrong; patch v3
+
+- User committed two phone screenshots (`screenshots/`, commit `90f5e9c`,
+  pulled). Read them: popup mode opens a bottom sheet whose UI stops after
+  one media row, the remaining ~70% of the sheet is white; side-panel mode
+  (screenshot 2) is a tab on `extension://<id>/` and renders full width.
+- Diagnosis, measured instead of guessed: `content/popup.html` only pins
+  sizes on `html[dockmode="popup"][popup_size=...]` and `popup_size` is
+  applied at runtime from settings (default `medium` = 460 px), so v1's
+  `100vh` override on the same element made the sheet and the page agree on
+  a height the UI does not fill. v1 also asserted `height:100%` on `#main`,
+  which the app sizes through a flex chain (`#main flex:1`, toolbar last).
+- Built `scripts/render-check-vdh-ui.py` (Playwright + `chrome.*` mock +
+  local http server, since `file://` blocks the ES module). Baseline and
+  patched renders agree that the lower area is NOT the page background -
+  the app paints nothing because it has nothing to show; the white belongs
+  to the browser container.
+- Patch v3 (`scripts/patch-vdh-mobile-ui.py`, 4 worker replacements):
+  popup mode no longer uses the toolbar popup on Android - selecting either
+  mode opens `content/sidebar.html` in a full tab, and re-clicking the icon
+  focuses that tab (`chrome.tabs.query` + `update`) instead of stacking
+  copies; `chrome.action.openPopup` call removed for popup mode. CSS forces
+  `100vw`/`100dvh` on `html` and `body` for both dock modes, including the
+  `popup_size` variants, with no overrides on `#main`.
+- Verified: renders at 412x915 -> `html`/`body` 915 px, `#main` 874 px,
+  toolbar at y=874 (was 460 px html in a tab before v3); worker parses
+  (`node --check`); patch idempotent; `scripts/pack-vdh-artifacts.sh` asserts
+  CRX payload CRC table == sideload zip and markers inside the payload.
+- Artefacts (v3): crx 4,084,185 B, crx wrapper zip 4,084,323 B, sideload zip
+  4,062,912 B; same key, ID `gmppgmnjccgklfklpibfkejdjijlnlnd`.
+- Unverified on phone: that Edge Canary renders the tab full height and that
+  the icon re-click focuses rather than duplicates.

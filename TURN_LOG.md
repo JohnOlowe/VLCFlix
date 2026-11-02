@@ -367,3 +367,20 @@
   idempotent.
 - Verified the extension still mounts with the patch (real Chromium run, 0 page
   errors); packed with the ID unchanged.
+
+## 2026-11-02 — pause / resume feature (paused paths: progressive http)
+
+- Traced the worker first: ids, message handler, dispatcher `Mo`, strategies,
+  `Ce` streaming loop. Pause is feasible because `Ce` already has an offset and
+  Range-based recovery.
+- Implemented in three layers (worker control map + messages + pause wait,
+  service forwarding, panel button + markup). Caught two of my own mistakes
+  before shipping: the control object was not reaching `Ce` (the dispatcher
+  calls the strategy, not `Ce`), and the pause handler was overwriting the
+  progress object (would have blanked percentage/bytes).
+- Dropped a no-op edit to the segmented loop rather than leave dead plumbing.
+- Verified: `node --check` on all three files, extension mounts with 0 page
+  errors, packed with ID unchanged.
+- NOT verified end to end: synthetic `<video>` pages are not detected by the
+  extension in headless Chromium, so `check-pause-resume.py` cannot drive a
+  real download here. Phone test required.

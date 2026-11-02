@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Pack the PATCHED extension into the three deliverables.
 #
-#   1. scripts/patch-vdh-mobile-ui.py         pristine tree -> build/extension
-#   2. scripts/pack-vdh-artifacts.sh          build/extension -> dist/*
+#   1. scripts/patch-vdh-mobile-ui.py          pristine tree -> build/extension
+#   2. scripts/patch-vdh-keep-on-failure.py    keep the file when handoff fails
+#   3. scripts/patch-vdh-pause-resume.py       pause / resume plumbing
+#   4. scripts/strip-vendor-links.py           hide upsell UI, drop vendor scripts
+#   5. scripts/pack-vdh-artifacts.sh           build/extension -> dist/*
 #
 #   dist/vdh-pro-10.6.1.2.crx            CRX3, Edge Canary Android
 #                                        "Extension install by crx"

@@ -370,3 +370,30 @@ Not done, deliberately: resuming an *interrupted network fetch* would need the
 worker's segment/cache state, which is not persisted deliberately (partial
 files are cleaned). That is a rewrite of the download worker, not a patch, and
 untestable here.
+
+## Pause / resume (2026-11-02)
+
+Feasibility first: the progressive downloader (`Ce` in `download_worker/main.js`)
+already tracks a byte offset `f`, writes at `t.onwrite(e, f, c)` and re-requests
+`Range: bytes=f-` after a stall. So pausing is holding that loop, not a rewrite.
+
+`scripts/patch-vdh-pause-resume.py`:
+
+- worker: `vdhCtl` map download_id -> `{paused, wake, abort}`; messages
+  `pause_download` / `resume_download`; the control object is threaded
+  `No -> Mo -> Ur -> Ce`; `Ce` waits while paused (abort still wins).
+- service: `vdhPause()` forwards both messages from the panel to the worker.
+- panel/markup: a Pause/Resume button next to the stop button in the
+  downloading row, toggling on click.
+
+Scope, honest limits:
+- Exact for the progressive paths: `http_audio_video_one_source` (plain mp4
+  etc.) and `http_audio_video_one_source_jsfetch`.
+- Not covered: segmented/HLS/MPD and the MKV-mux paths run their own loops;
+  abort works there as before. Resume across an extension restart is not
+  supported (partial files are cleaned up on abort by design).
+- Verification: every patched file passes `node --check`; the extension still
+  mounts with zero page errors (`check-real-extension.py`). End-to-end pause
+  could NOT be verified here: headless Chromium does not detect
+  (`check-pause-resume.py` exists and runs the flow, but media detection needs
+  a real browser/site). Confirm on the phone.

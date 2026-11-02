@@ -133,6 +133,11 @@ else:
     w = replace_once(w, 'else if (t.strategy == "http_audio_video_one_source") r = await Ur(t, e);',
                      'else if (t.strategy == "http_audio_video_one_source") r = await Ur(t, e, vdhC);',
                      "worker: pass control to Ur")
+    # ...which means Ur itself has to accept and forward it. Without this the
+    # identifier below is not in scope and *every* progressive download dies
+    # with "ReferenceError: vdhC is not defined" before a byte is written.
+    w = replace_once(w, "async function Ur(t, e) {",
+                     "async function Ur(t, e, vdhC) {", "worker: Ur signature")
     # Ur hands it to the streaming loop Ce
     w = replace_once(w, "o = await Ce(i, r, n, t.url, e, t);",
                      "o = await Ce(i, r, n, t.url, e, t, vdhC);",

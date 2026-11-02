@@ -293,3 +293,22 @@
   now hard-fails if any of the three UI edits misses.
 - Verified: patch (2 replacements) -> strip (asserts) -> render check PASS ->
   pack, 77 entries, ID unchanged, vendor references: none.
+
+## 2026-11-02 — REGRESSION: vendor-host rewrite broke media detection
+
+- User: only OK / get_premium_description / Version / Report on screen, no
+  media rows at all.
+- Diffed the v5 build against a patch-only build: the strip pass had rewritten
+  `https://downloadhelper.net:443` -> `http://127.0.0.1:9:443` and the
+  `files.downloadhelper.net` ruleset URL inside service/main.js, panel.js,
+  global_persistent.js, smartnaming.js and every injected script. Those are
+  the client base URLs and the detection path, not UI links.
+- Reverted every JS/URL edit. strip-vendor-links.py now: panel.js visibility
+  only, manifest (drop activate/premium content scripts + files, rename,
+  drop homepage_url), locales. New gate: a full-tree byte diff against
+  /tmp/vdh-prestrip must show "files changed beyond the allowed set: none",
+  and the service worker must stay byte-identical.
+- Verified: 6 representative JS files byte-identical to the patch-only build;
+  render check PASS (21px everywhere); pack OK, ID unchanged.
+- Lesson recorded in CONTEXT: cosmetic link removal is not worth breaking the
+  download path; do not rewrite hosts in JS again.

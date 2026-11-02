@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
 """Make a VDH Pro tree self-contained: no vendor links, no premium/upsell.
 
-Works on any tree (run it on build/extension, after patch-vdh-mobile-ui.py):
+Runs on build/extension, after patch-vdh-mobile-ui.py.
+
+SAFETY RULE (learned the hard way): this script must not touch URLs or hosts
+inside JavaScript. Rewriting `https://downloadhelper.net:443` -> an inert host
+looks tidy but it runs through code the download/detection pipeline uses
+(entitlement state, the per-client ruleset URL in the injected scripts), and a
+build with those edits showed no media at all. Only three kinds of change are
+made here, all of them outside the network path:
+
+  1. panel.js visibility only: hide the premium banner, hide the review
+     prompt, and never reveal the premium/account buttons.
+  2. manifest: drop the vendor-only content scripts (and delete their files),
+     rename the extension, drop homepage_url.
+  3. _locales: rename the extension and neutralise upsell strings.
+
+Anything that edits another JS file fails the build.
 
   service/main.js
     - the vendor base URL becomes an inert host (http://127.0.0.1:9) so every
@@ -72,83 +87,37 @@ def must_parse(path: pathlib.Path, label: str):
         sys.exit(f"ABORT: {label}: does not parse after edit: {line}")
 
 
-# ------------------------------------------------------------ service worker -
+# The service worker is NOT touched: its vendor URLs are the entitlement and
+# ruleset endpoints the download pipeline depends on. Leave it byte-identical.
 
-SW = ROOT / "service/main.js"
-s = SW.read_text(encoding="utf-8")
+# ------------------------------------------------- content/panel.js (UI only) -
 
-s = replace(s, 'rt = "https://downloadhelper.net:443"',
-            f'rt = "{INERT}"', "worker: vendor base URL")
+# Only visibility of upsell UI is touched, never a URL, never a code path that
+# the download pipeline runs.
+PANEL = ROOT / "content" / "panel.js"
+panel = PANEL.read_text(encoding="utf-8")
 
-# uninstall survey + store "rate us" targets (replace the literal only, keep keys)
-s = replace(s, 'Tm = `${rt}/goodbye`', f'Tm = "{INERT}/goodbye"', "worker: goodbye url")
-for store_host in ("chromewebstore.google.com", "addons.mozilla.org",
-                   "microsoftedge.microsoft.com"):
-    s = re.sub(r'"https://' + re.escape(store_host) + r'[^"]*"', '""', s)
+# hide the premium banner: its own rule is `M(this, advertize)` (M: truthy shows)
+start, end, n = find_ws(panel, "M(this, i.advertize_premium.advertize)")
+if n == 1:
+    panel = panel[:start] + "M(this, !1)" + panel[end:]
+else:
+    print("  (banner rule already absent)")
 
-# remote ruleset fetch -> inert host (bundled ruleset still applies)
-s = replace(s, 'ub = `https://files.downloadhelper.net/${I0}/ruleset-${ym}-${ht}.json`',
-            f'ub = `{INERT}/ruleset.json`', "worker: remote ruleset")
+# hide the review prompt: stock is `cond && D(this.p_leave_review)` (D: hide)
+start, end, n = find_ws(panel, "i.dont_ask_for_user_review && D(this.p_leave_review)")
+if n == 1:
+    panel = panel[:start] + "D(this.p_leave_review)" + panel[end:]
 
-SW.write_text(s, encoding="utf-8")
-must_parse(SW, "service/main.js")
+# never reveal premium/account buttons: stock calls I() (I: show)
+for ident in ("button_get_premium", "button_my_account", "button_restore_purchase",
+              "premium_button"):
+    panel, n = re.subn(r"I\(this\." + ident + r"\)", "D(this." + ident + ")", panel)
 
-# ------------------------------------------------------- content/injected js -
-
-PREMIUM_BANNER = (
-    "M(this, i.advertize_premium)",
-    "M(this, !1)",
-    "content: hide premium banner",
-)
-REVIEW_BLOCK = (
-    'M(this.p_leave_review, !this.persistent().dont_ask_for_user_review '
-    '|| !this.persistent().review)',
-    "",
-    "content: drop review prompt",
-)
-
-for path in sorted(ROOT.rglob("*.js")):
-    if path == SW:
-        continue
-    text = path.read_text(encoding="utf-8")
-    original = text
-    label = str(path.relative_to(ROOT))
-
-    # 1. vendor hosts anywhere in the source: help pages become no-ops,
-    #    every other vendor host (API, files, ruleset) becomes an inert host
-    #    so runtime fetches fail fast instead of phoning home
-    text = re.sub(r"https://help\.downloadhelper\.net", "about:blank", text)
-    text = re.sub(r"https://[\w.-]*downloadhelper\.net", INERT, text)
-    text = re.sub(r'"https://(?:chromewebstore\.google\.com|microsoftedge\.microsoft\.com|'
-                  r'addons\.mozilla\.org)[^"]*"', '""', text)
-
-        # 2. premium banner component: hide it unconditionally. Its own rule is
-    #    `M(this, i.advertize_premium.advertize)` inside onStateChanged();
-    #    replacing the expression makes the element hidden whatever the worker
-    #    advertises.
-    start, end, n = find_ws(text, "M(this, i.advertize_premium.advertize)")
-    if n == 1:
-        text = text[:start] + "M(this, !1)" + text[end:]
-
-    # 3. review prompt: hide it outright. Stock code is
-    #    `i.dont_ask_for_user_review && D(this.p_leave_review)` (D = hide), so
-    #    only the condition is dropped and the hide is kept.
-    start, end, n = find_ws(text, 'i.dont_ask_for_user_review && D(this.p_leave_review)')
-    if n == 1:
-        text = text[:start] + 'D(this.p_leave_review)' + text[end:]
-
-    # 4. premium / account buttons: stock code calls I() (I = show) on them.
-    #    Flip those to D() so no upsell control is ever revealed.
-    for ident in ("button_get_premium", "button_my_account", "button_restore_purchase",
-                  "premium_button"):
-        text, n = re.subn(r'I\(this\.' + ident + r'\)', 'D(this.' + ident + ')', text)
-        if n:
-            print(f"  hid {ident} x{n} in {label}")
-
-    if text != original:
-        path.write_text(text, encoding="utf-8")
-        must_parse(path, label)
-        print(f"edited: {label}")
+if panel != PANEL.read_text(encoding="utf-8"):
+    PANEL.write_text(panel, encoding="utf-8")
+    must_parse(PANEL, "content/panel.js")
+    print("edited: content/panel.js (visibility only)")
 
 # --------------------------------------------------------------- manifest ----
 
@@ -238,17 +207,37 @@ if not all(checks.values()):
 
 # ----------------------------------------------------------------- checks ----
 
-leftovers = []
+# Nothing outside panel.js may differ from the pre-strip tree. The caller
+# passes the reference copy as argv[2] (default: /tmp/vdh-prestrip).
+ref = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else pathlib.Path("/tmp/vdh-prestrip")
+unexpected = []
+if ref.exists():
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(ROOT)
+        other = ref / rel
+        if not other.exists() or other.read_bytes() != path.read_bytes():
+            allowed = (str(rel) in ("content/panel.js", "manifest.json")
+                       or str(rel).startswith("_locales/")
+                       or str(rel) in ("injected/premium.js", "injected/activate.js"))
+            if not allowed:
+                unexpected.append(str(rel))
+    intentional = {"injected/premium.js", "injected/activate.js"}
+    for other in sorted(ref.rglob("*")):
+        rel = other.relative_to(ref)
+        if other.is_file() and not (ROOT / rel).exists() and str(rel) not in intentional:
+            unexpected.append(str(rel) + " (deleted)")
+    print("files changed beyond the allowed set:", unexpected or "none")
+    if unexpected:
+        sys.exit("ABORT: unexpected files changed")
+
+# vendor links that remain are code-path URLs, deliberately left alone
+left = []
 for path in ROOT.rglob("*"):
-    if not path.is_file() or path.suffix not in (".js", ".html", ".json"):
-        continue
-    blob = path.read_text(encoding="utf-8", errors="ignore")
-    for pat in ("downloadhelper.net", "chromewebstore.google.com",
-                "microsoftedge.microsoft.com", "addons.mozilla.org",
-                "files.downloadhelper.net"):
-        if pat in blob:
-            leftovers.append(f"{path.relative_to(ROOT)}: {pat}")
-print("\nremaining vendor references:", "none" if not leftovers else "")
-for item in leftovers:
-    print("  -", item)
+    if path.suffix in (".js", ".json") and path.is_file():
+        blob = path.read_text(encoding="utf-8", errors="ignore")
+        if "downloadhelper.net" in blob:
+            left.append(str(path.relative_to(ROOT)))
+print("JS/JSON files still containing vendor hosts (expected):", len(left))
 sys.exit(0)

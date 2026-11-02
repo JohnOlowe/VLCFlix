@@ -279,3 +279,22 @@ must be judged on the phone.
 - Verified: patch -> strip -> render check (root 21px, component hosts and
   their shadow text 21px, page height == viewport) -> pack. ID unchanged,
   "remaining vendor references: none".
+
+## Never rewrite vendor hosts in JS (2026-11-02, regression)
+
+- The v5 vendor-link strip rewrote `https://downloadhelper.net:443` and the
+  ruleset URL inside `service/main.js`, `content/panel.js`,
+  `content/global_persistent.js` and every `injected/*.js`. Result on device:
+  no media was detected and the panel showed only the empty shell.
+- Cause: those strings are not decoration. `qe`/`nn`/`le` are the client
+  base URLs the entitlement state and per-client ruleset fetch go through;
+  the injected scripts are the detection path.
+- Rule now enforced by the script itself: `strip-vendor-links.py` does not
+  touch any URL or host in JavaScript. It only (1) changes visibility of
+  upsell UI in `content/panel.js`, (2) edits the manifest (drop the two
+  vendor-only content scripts, rename, drop `homepage_url`), (3) edits
+  `_locales`. It then diffs the whole tree against a pre-strip reference copy
+  (`/tmp/vdh-prestrip`) and fails if anything else changed.
+- Consequence: vendor links reachable from the UI (support, premium, terms,
+  store) stay in the code. Cosmetic link removal is not worth a broken
+  detection pipeline; remove them only if a link is proven dead code.

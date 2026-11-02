@@ -119,3 +119,18 @@
   self-signed CRX3 (community reports say the crx path works for
   side-loaded packs, but nobody has run *this* file), that the MV3 service
   worker + sidePanel survive its Chromium build, and Pro sign-in.
+
+## 2026-11-02 — CRX wrapper zip (desktop Chrome auto-install workaround)
+
+- User hit `CRX_REQUIRED_PROOF_MISSING` downloading the `.crx` in desktop
+  Chrome: Chrome intercepts loose crx downloads and tries to install them,
+  requiring Web Store proof in the header; it then discards the file. This is
+  desktop Chrome's install path, not a defect in the packed file (structure
+  and CRCs were verified when built).
+- Created `/home/user/vdh-pro-10.6.1.2-crx.zip` (single entry, the crx;
+  inner sha256 verified equal to the original, 4,069,143 bytes) so the
+  download survives desktop Chrome untouched; unzip happens on the phone.
+- Implication recorded: desktop Chrome enforces store proof; whether **Edge
+  Canary's** "Extension install by crx" enforces it for self-signed CRX3 is
+  still **unverified** — first thing the phone test will answer. Fallback if
+  it refuses: Kiwi (takes the plain zip) or the vendor's Firefox build.

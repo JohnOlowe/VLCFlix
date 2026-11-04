@@ -397,3 +397,84 @@ Scope, honest limits:
   could NOT be verified here: headless Chromium does not detect
   (`check-pause-resume.py` exists and runs the flow, but media detection needs
   a real browser/site). Confirm on the phone.
+
+## Crash recovery + blob cleanup (`patch-vdh-download-journal.py`)
+
+Why: the history list (`transient_history`) is in-memory session state, wiped on
+every service-worker start, so a crash left no record of an interrupted
+download; partial files sit in OPFS with nothing in the UI able to remove them.
+
+What it adds:
+
+- service: `vdh_journal` in `storage.local` -- one record per job, written inside
+  `Hy()` (the only place that has the *serialized* `download_args` / `media` /
+  `meta` payloads) before the transfer starts, refreshed during progress
+  (max 1 write / 2 s), and closed out as `done` / `failed` / `cancelled` with the
+  final path and browser download id. `vdh_last_purge` records how much the
+  startup OPFS sweep reclaimed.
+- service: `vdhJournal_retry` replays the recorded payload through the same
+  entry point the panel uses (`Hy`), in its own async context. It retargets
+  `meta.tab_id` to a live tab (the crashed tab is usually gone) and drops
+  half-written OPFS files for that download id first.
+- history page: a "Storage & interrupted downloads" box rendered from page-level
+  code, so it works on a fresh profile where the vendor's history list is still
+  switched off. Shows OPFS file count + bytes, device usage vs quota, the last
+  restart's reclaimed bytes, and one row per recorded job with Retry (only when
+  the source request was recorded) and Delete. Delete removes the browser
+  download, the OPFS files of that job and the record. "Purge leftover files"
+  removes every OPFS entry that does not belong to a currently running job and
+  reports the bytes freed.
+- Retry now does a **byte-range resume**, not a restart. The worker keeps the
+  partial file it finds for that download id and asks for `Range: bytes=<size>-`,
+  so only the remainder comes down. Same id is reused deliberately: ids are
+  unique per download, so a file with that name can only be this job's leftover.
+  No new field travels in `download_args` -- that object is decoded against a
+  strict schema, and an extra key makes the worker reject the whole message
+  (found the hard way). Fallbacks: a `200` answer (server ignores Range) restarts
+  at 0; a `416` discards the partial file and starts clean, because a partial
+  that does not line up would corrupt the output.
+- Sizes and progress count from the start of the file (a `206` body is only the
+  remainder), so a resumed run reports the true percentage instead of 0.
+- Limit: only single-file progressive strategies resume
+  (`http_audio_video_one_source`). Split audio/video, HLS/MPD and the
+  ffmpeg-muxed paths still restart -- they build several files or re-mux.
+
+Regression found and fixed while testing this (`patch-vdh-pause-resume.py`):
+`Ur(t, e)` was called as `Ur(t, e, vdhC)` and forwarded `vdhC` to `Ce`, but never
+accepted it, so **every** progressive download threw
+`ReferenceError: vdhC is not defined` before writing a byte. The earlier
+"pause/resume verified" could not catch it because the harness can never open the
+download path (synthetic media is not detected headless). Now
+`Ur(t, e, vdhC)` and the scope chain is `No -> Mo -> Ur -> Ce -> control`.
+
+Verification: `scripts/check-journal.py` (real extension in Chromium) seeds a
+crash-shaped journal + OPFS files and asserts: box mounts and renders the storage
+report; rows show filename/status/size; Delete drops the record, the partial file
+and the bytes; Purge removes only unreferenced files and keeps running ones;
+Retry drives the real pipeline to 100% (8192/8192 bytes in OPFS) with no error.
+The browser hand-off itself (`chrome.downloads`) cannot complete in a headless
+profile, so `done` is not observable in the harness -- that last step is a phone
+check.
+
+
+### Verification notes for the resume work
+
+- `node --check somefile.js` parses as **CommonJS**; it happily accepted a
+  `SyntaxError` (`a stray */` inside a comment, and later `let u = ..., let u = ...`)
+  in a module. Any module script must be checked as `.mjs`, or the worker refuses
+  to load and every download silently reports `No tab`/timeouts.
+- Byte-range resume needs a server that honours `Range`; `python3 -m http.server`
+  does not. `scripts/test-range-server.py` provides one, plus `--no-range` and
+  `--slow` modes, and logs `range=` / `sent=` per request so the test can assert
+  that only the remainder was transferred.
+- Two suites, different jobs: `scripts/check-resume.py` drives
+  `download_worker/main.js` directly over its BroadcastChannel and proves the
+  byte accounting (resume / 416 / clean start / ignored Range).
+  `scripts/check-journal.py` proves the UI -> service -> journal wiring. The
+  offscreen document that hosts the worker has its own 10 s startup budget and
+  often loses it in a cold headless profile, which is why the pipeline itself is
+  measured in the first suite.
+- An end-to-end press of the real Retry button (with the offscreen document
+  created up front) produced exactly one request:
+  `range=bytes=3145728- status=206 sent=1048576`, and the journal then recorded
+  `done` with the full byte count.

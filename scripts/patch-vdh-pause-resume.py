@@ -142,9 +142,20 @@ else:
     w = replace_once(w, "o = await Ce(i, r, n, t.url, e, t);",
                      "o = await Ce(i, r, n, t.url, e, t, vdhC);",
                      "worker: pass control to Ce")
+    # Ce's 6th parameter is the DESTRUCTURED args object ({headers, download_id,
+    # cache}). Putting the control object in front of it silently made all three
+    # undefined (no headers sent, and the pause flag never read). The control goes
+    # last: Ce(t, e, r, i, n, args, ctl).
     w = replace_once(w, "async function Ce(t, e, r, i, n, {",
-                     "async function Ce(t, e, r, i, n, vdhC, {",
-                     "worker: Ce signature")
+                     "async function Ce(t, e, r, i, n, {",
+                     "worker: Ce signature (destructured args stay in place)")
+    w = replace_once(w, """  cache: s
+}) {
+  let baseHdrs = new Headers(o);""",
+                     """  cache: s
+}, vdhC) {
+  let baseHdrs = new Headers(o);""",
+                     "worker: Ce takes the control object LAST")
 
     # 5. progressive loop: honour pause before reading the next chunk
     w = replace_once(w, '''for (;;) {

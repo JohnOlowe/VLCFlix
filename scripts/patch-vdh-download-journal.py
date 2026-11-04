@@ -43,6 +43,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 ROOT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "build" / "extension"
 MARK = "vdhJournal"
 SERVICE = ROOT / "service" / "main.js"
+WORKER_FILE = ROOT / "download_worker" / "main.js"
 HISTORY = ROOT / "content" / "history.js"
 HISTORY_HTML = ROOT / "content" / "history.html"
 
@@ -72,9 +73,23 @@ def replace_once(text, old, new, label):
 
 
 def check_js(path):
-    r = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
+    """Parse the file the way the browser will.
+
+    `node --check foo.js` treats the file as CommonJS, which hides real module
+    errors (a stray closing comment marker produced a SyntaxError that CommonJS
+    parsing never reached). Module scripts are therefore checked as .mjs.
+    """
+    path = pathlib.Path(path)
+    if "module" in path.read_text(encoding="utf-8", errors="ignore").split("export {")[0][-40:] \
+            or path.name == "main.js":
+        tmp = pathlib.Path("/tmp") / (path.parent.name + "-" + path.name + ".mjs")
+        tmp.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        r = subprocess.run(["node", "--check", str(tmp)], capture_output=True, text=True)
+    else:
+        r = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
     if r.returncode != 0:
-        die(f"{path.name}: does not parse: " + (r.stderr or r.stdout).strip()[-200:])
+        detail = (r.stderr or r.stdout).strip().splitlines()
+        die(f"{path.name}: does not parse: " + " | ".join(detail[:3])[-260:])
 
 
 # ------------------------------------------------------------------ service --
@@ -101,6 +116,21 @@ async function vdhJournalPut(key, patch) {
   await Vt.default.storage.local.set({ [VDH_JOURNAL_KEY]: journal });
   return rec;
 }
+/* how many bytes of this download survived on disk (0 when nothing did) */
+async function vdhJournalPartialSize(download_id) {
+  if (!download_id) return 0;
+  let total = 0;
+  try {
+    let dir = await navigator.storage.getDirectory();
+    for await (let name of dir.keys()) {
+      if (name !== download_id && !name.startsWith(download_id + ".") &&
+          !name.startsWith(download_id + "_")) continue;
+      try { total += (await (await dir.getFileHandle(name)).getFile()).size || 0 } catch {}
+    }
+  } catch (vdhE) {}
+  return total;
+}
+
 async function vdhJournalDropFiles(download_id) {
   if (!download_id) return 0;
   let freed = 0;
@@ -132,15 +162,18 @@ async function vdhJournalRetry(rec) {
   if (meta && meta.__serde_val && meta.__serde_val.tab_id) {
     meta.__serde_val.tab_id = { __serde_tag: "primitive", __serde_val: hit.id };
   }
-  /* drop a half-written file from before the crash: it would collide with the
-     new run of the same download id, which is what keeps this to one row */
-  let freed = await vdhJournalDropFiles(rec.download_id);
-  if (freed) console.warn("[vdhJournal] dropped", freed, "stale bytes");
+  /* Keep whatever survived on disk and tell the worker to continue from its
+     size. The download id is reused so that file is picked up as-is. */
+  let args = JSON.parse(JSON.stringify(rec.download_args));
+  let kept = await vdhJournalPartialSize(rec.download_id);
+  if (kept) console.log("[vdhJournal] resuming", rec.download_id,
+                        "from byte", kept);
+  else console.log("[vdhJournal] no partial file left, starting fresh");
   console.log("[vdhJournal] retrying", rec.download_id, rec.filename);
   let n = Math.max(1, U().max_concurrent_downloads || 1);
   /* Hy(payload, <unused>, scheduler): the scheduler is the third argument */
   await Hy({ data: {
-    download_args: rec.download_args, media: rec.media, meta: meta
+    download_args: args, media: rec.media, meta: meta
   } }, null, new In(n, n, 0));
 }
 /* ===================== end vdhJournal helpers ============================ */
@@ -249,6 +282,129 @@ async function vdhJournalRetry(rec) {
     SERVICE.write_text(svc, encoding="utf-8")
     check_js(SERVICE)
     print("patched: service/main.js (journal, retry, sweep report)")
+
+# ------------------------------------------------------------------- worker --
+
+worker = WORKER_FILE.read_text(encoding="utf-8")
+if "vdhResume" in worker:
+    print("skip (already patched): download_worker/main.js")
+else:
+    # Ce() resumes a stalled stream with `Range: bytes=f-` already, but it starts
+    # every job at offset 0 and opens its output file empty. A job interrupted by
+    # a crash therefore had to be fetched again from the beginning. Let it start
+    # at a byte offset instead, appending to whatever survived:
+    #
+    #   * `resume_offset` is added to the args object (Ce already destructures
+    #     {headers, download_id, cache}); reading it off the destructured value
+    #     leaves the existing call sites untouched.
+    #   * the first request asks for `Range: bytes=<offset>-`. A 200 answer means
+    #     the server ignored Range, so the offset is dropped and it writes from
+    #     zero (correct, just no saving). A 206 keeps the partial file.
+    #   * byte counts count from the start of the file, not from the request, so
+    #     progress and the `f < d * 0.9` completeness check stay right.
+    #   * a 416 with Content-Range "bytes */<total>" means the file on disk is
+    #     already whole: report it complete instead of re-downloading.
+    worker = replace_once(worker, """  cache: s
+}, vdhC) {""", """  cache: s,
+  resume_offset: vdhResumeStart
+}, vdhC) {""", "worker: Ce reads resume_offset")
+
+    # One small loop decides how the transfer begins: honour the partial file,
+    # fall back to a clean start when the server will not cooperate. Everything
+    # after this point is the stock streaming loop.
+    worker = replace_once(worker, """  baseHdrs.delete("range");
+  let l = await ne(i, {
+    headers: baseHdrs,
+    signal: n,
+    cache: s
+  });""", """  baseHdrs.delete("range");
+  /* vdhResume: continue a file left behind by an interrupted run */
+  let vdhOff = (vdhResumeStart && vdhResumeStart.offset) || 0,
+    vdhCan = !!(vdhResumeStart && vdhResumeStart.can_resume),
+    l;
+  for (let vdhTry = 0;; vdhTry++) {
+    if (vdhCan && vdhOff > 0) baseHdrs.set("Range", `bytes=${vdhOff}-`);
+    else baseHdrs.delete("Range");
+    l = await ne(i, {
+      headers: baseHdrs,
+      signal: n,
+      cache: s
+    });
+    let vdhStatus = l.isOk() ? l.value.status : l.error && l.error.status;
+    if (vdhCan && vdhOff > 0 && vdhStatus === 200) {
+      /* server ignored Range: the whole file is coming, so write from 0 */
+      console.warn("[vdhResume] server ignored Range, restarting at 0");
+      vdhOff = 0;
+      continue;
+    }
+    if (vdhCan && vdhOff > 0 && vdhStatus === 416 && vdhTry === 0) {
+      /* Range Not Satisfiable: what survived does not line up with the resource,
+         so a resume would corrupt it. Start over on a fresh file. */
+      console.warn("[vdhResume] cannot continue the partial file, restarting");
+      try { await t.remove(e) } catch {}
+      try { await t.open(e) } catch {}
+      vdhOff = 0, vdhCan = !1;
+      continue;
+    }
+    break;
+  }""", "worker: Ce decides how to start (resume vs clean)")
+    worker = replace_once(worker, """    u = Nr(l.value),
+    d;
+  u.isSome() && (d = u.value);
+  let f = 0,
+    resumes = 0;""", """    u = Nr(l.value),
+    d;
+  u.isSome() && (d = u.value);
+  /* a 206 body is only the remainder, so the file size is offset + length */
+  if (d !== void 0 && vdhOff > 0 && l.value.status === 206) d += vdhOff;
+  /* bytes already on disk count towards progress and completeness */
+  let f = vdhOff,
+    resumes = 0;""", "worker: sizes and offsets account for the partial file")
+
+    worker = replace_once(worker, """      aborted_no_partial: f < 102400,""",
+                          """      aborted_no_partial: f < 102400 && vdhOff === 0,""",
+                          "worker: do not discard a resumed partial file")
+
+    # L.open(): record the size already on disk and keep appends from being
+    # swallowed when the surviving file is longer than what gets written back
+    worker = replace_once(worker, """      n = await i.createSyncAccessHandle();
+    this.filename_writable_map.set(e, {
+      writable: n,
+      handle: i,
+      size: 0
+    })""", """      n = await i.createSyncAccessHandle(),
+      vdhExisting = 0;
+    /* vdhResume: a file left by a crashed run is appended to, not truncated */
+    try { vdhExisting = n.getSize() } catch {}
+    this.filename_writable_map.set(e, {
+      writable: n,
+      handle: i,
+      size: vdhExisting
+    })""", "worker: open() reports the surviving size")
+
+    # Ur(): decide the offset from the file that is actually there. The offset
+    # has to live on the object Ce destructures, so anchor on the line after
+    # open() and add it to `t` before the call.
+    if "async function Ur(t, e, vdhC) {" not in worker:
+        die("worker: Ur is not the pause-patched signature")
+    worker = replace_once(worker, """  await i.open(r);
+  let n = new q(t.download_id),""", """  await i.open(r);
+  /* vdhResume: if a file with this download id is already on disk, it belongs to
+     this same job (ids are unique per download) because the previous run was
+     interrupted -- so continue from its size instead of starting over. No new
+     field has to travel: download_args is decoded against a strict schema, so
+     adding one there would make the worker reject the whole message. */
+  {
+    let vdhSize = i.filename_writable_map.get(r)?.size || 0;
+    if (vdhSize > 0) t.resume_offset = { offset: vdhSize, can_resume: !0 };
+  }
+  let n = new q(t.download_id),""", "worker: Ur picks the resume offset")
+
+    WORKER_FILE.write_text(worker, encoding="utf-8")
+    check_js(WORKER_FILE)
+    # a comment that closes early is invisible to a CJS parse; assert the marker
+    assert "bytes */" not in worker, "comment contains a stray block-comment terminator"
+    print("patched: download_worker/main.js (byte-range resume)")
 
 # ------------------------------------------------------------------ history --
 

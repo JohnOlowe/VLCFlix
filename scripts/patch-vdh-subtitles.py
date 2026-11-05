@@ -704,3 +704,92 @@ try {
 
 print("vendored: service/vdh-subtitles.js")
 print("all patches applied.")
+
+
+# ------------------------------------------------- subtitle marker on a row --
+# When a download is running, the panel row shows a small CC badge if the stream
+# carries subtitle tracks, so it is obvious before the download finishes that
+# subtitles were found and will be saved with it. It reads the rendition list
+# the worker already recorded with the download (journal -> `subtitles`), so it
+# adds no fetching of its own and is still right after a reload of the panel.
+
+SUBS_BADGE_MARK = "vdhSubsBadge"
+
+SUBS_BADGE = r"""
+/* vdhSubsBadge: a quiet marker on a downloading row. The worker records the
+   stream's subtitle renditions with the download before any transfer (service
+   main.js, in Hy), so the badge is drawn from storage alone -- no extra
+   request, and it is still right after the panel is reloaded. */
+var VDH_SUBS_BADGE = {
+  key: "vdh_journal",
+  rows() {
+    let host = document.querySelector("com-main"),
+      root = host && host.shadowRoot ? host.shadowRoot : document;
+    return [...root.querySelectorAll("com-media-downloading")];
+  },
+  async journal() {
+    try {
+      let got = await chrome.storage.local.get(this.key);
+      return got[this.key] || {};
+    } catch (e) { return {} }
+  },
+  langs(rec) {
+    let list = (rec && (rec.subtitles || rec.renditions)) || [];
+    if (!Array.isArray(list)) return [];
+    return list.map((r) => (r && (r.language || r.lang)) || "und")
+      .filter((v, i, a) => a.indexOf(v) === i);
+  },
+  async paint() {
+    let journal = await this.journal();
+    for (let row of this.rows()) {
+      let sr = row.shadowRoot;
+      if (!sr) continue;
+      let id = row.download_id,
+        rec = id ? (journal["dl:" + id] ||
+          Object.values(journal).find((r) => r && r.download_id === id)) : null,
+        langs = this.langs(rec),
+        badge = sr.getElementById("vdh_subs_badge");
+      if (!langs.length) { if (badge) badge.hidden = true; continue; }
+      if (!badge) {
+        let where = sr.getElementById("hbox_progressbar_container") ||
+          sr.querySelector(".media_vbox");
+        if (!where) continue;
+        badge = document.createElement("span");
+        badge.id = "vdh_subs_badge";
+        /* inline styles: the element is created from the page and lives in the
+           component's shadow root, which no page stylesheet can reach */
+        badge.style.cssText = "align-self:center;flex:0 0 auto;margin-right:.5em;"
+          + "padding:0 .55em;border:1px solid currentColor;border-radius:999px;"
+          + "opacity:.72;font-size:.8em;line-height:1.7em;white-space:nowrap;";
+        where.appendChild(badge);
+      }
+      badge.hidden = false;
+      badge.textContent = "CC " + langs.join(", ");
+      badge.title = "Subtitles found (" + langs.join(", ") + "): saved next to "
+        + "the movie when this download finishes";
+    }
+  },
+  watch() {
+    const run = () => { VDH_SUBS_BADGE.paint(); };
+    run();
+    try {
+      chrome.storage.onChanged.addListener((ch, area) => {
+        if (area === "local" && ch[VDH_SUBS_BADGE.key]) run();
+      });
+    } catch (e) {}
+    /* rows are created when a download starts, inside a shadow root that a
+       document-level observer cannot see, so poll quietly as well */
+    setInterval(run, 3000);
+  }
+};
+try { VDH_SUBS_BADGE.watch() } catch (vdhE) { console.warn("[vdhSubtitles] badge", vdhE) }
+"""
+
+panel_text = PANEL_JS.read_text(encoding="utf-8")
+if SUBS_BADGE_MARK in panel_text:
+    print("skip (already patched): content/panel.js subtitle marker")
+else:
+    panel_text = panel_text.rstrip("\n") + "\n" + SUBS_BADGE
+    PANEL_JS.write_text(panel_text, encoding="utf-8")
+    check_module(PANEL_JS)
+    print("patched: content/panel.js (subtitle marker on a running download)")

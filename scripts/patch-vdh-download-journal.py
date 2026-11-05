@@ -46,6 +46,8 @@ SERVICE = ROOT / "service" / "main.js"
 WORKER_FILE = ROOT / "download_worker" / "main.js"
 HISTORY = ROOT / "content" / "history.js"
 HISTORY_HTML = ROOT / "content" / "history.html"
+TARGET = 'var Hx = async () => { console.log("service::start - ", new Date), B.default.runtime.setUninstallURL(Tm);'
+REPL = 'var Hx = async () => { console.log("service::start - ", new Date), B.default.runtime.setUninstallURL(Tm);\n  /* vdhJournal: partial downloads live in the extension\'s private storage, so\n     ask the browser to make it persistent -- without that the storage is\n     best-effort and can be evicted under pressure, taking a resumable\n     download with it. */\n  try {\n    (async () => {\n      try {\n        let already = await navigator.storage.persisted();\n        if (!already) await navigator.storage.persist();\n      } catch (vdhE) {}\n    })();\n  } catch (vdhE) {}'
 
 
 def die(msg):
@@ -231,13 +233,44 @@ async function vdhJournalRetry(rec) {
     } catch (vdhE) { console.warn("[vdhJournal] final write failed", vdhE) }
     let W = await x;''', "service: journal terminal state")
 
+    # (c2) ask the browser not to evict the origin's storage
+    svc = replace_once(svc, TARGET, REPL, "service: request persistent storage")
+
     # (d) remember how much the startup sweep reclaimed (crash cleanup report)
     svc = replace_once(svc, '''    Promise.allSettled(n.map(r => (console.warn(`main::purging ${r}`), i.removeEntry(r))))''',
-                       '''    let vdhFreed = 0;
-    for (let vdhName of n) {
+                       '''    /* vdhJournal: the vendor's startup sweep deletes EVERY file in the
+       extension's private storage. That is why a partial download never
+       survived a crash or a restart: the bytes were written, the browser (or
+       the crash) restarted the worker, and the sweep threw them away before
+       anything could resume them.
+
+       Keep the partials that the journal still has a live record for -- those
+       are exactly the downloads the user can resume -- and sweep only the
+       orphans. `navigator.storage.persist()` is requested too, so the browser
+       does not evict the origin's storage under pressure. */
+    let vdhLive = [];
+    try {
+      let vdhJournal = (await Vt.default.storage.local.get(VDH_JOURNAL_KEY))[VDH_JOURNAL_KEY] || {};
+      for (let vdhRec of Object.values(vdhJournal)) {
+        if (!vdhRec) continue;
+        if (vdhRec.download_id) vdhLive.push(vdhRec.download_id);
+        if (typeof vdhRec.id === "string" && vdhRec.id.indexOf("dl:") === 0)
+          vdhLive.push(vdhRec.id.slice(3));
+      }
+    } catch (vdhE) {}
+    let vdhOwned = (name) => vdhLive.some((id) => id &&
+      (name === id || name.indexOf(id + ".") === 0 || name.indexOf(id + "_") === 0));
+    let vdhDrop = [], vdhKeep = [];
+    for (let vdhName of n) (vdhOwned(vdhName) ? vdhKeep : vdhDrop).push(vdhName);
+    let vdhFreed = 0;
+    for (let vdhName of vdhDrop) {
       try {
         vdhFreed += (await (await i.getFileHandle(vdhName)).getFile()).size || 0;
       } catch {}
+    }
+    if (vdhKeep.length) {
+      console.warn("[vdhJournal] startup sweep keeping partial(s) with a live "
+        + "record, resumable from History:", vdhKeep.join(", "));
     }
     if (vdhFreed > 0) {
       console.warn("[vdhJournal] startup sweep reclaiming", vdhFreed, "bytes");
@@ -247,7 +280,7 @@ async function vdhJournalRetry(rec) {
         });
       } catch {}
     }
-    Promise.allSettled(n.map(r => (console.warn(`main::purging ${r}`), i.removeEntry(r))))''',
+    Promise.allSettled(vdhDrop.map(r => (console.warn(`main::purging ${r}`), i.removeEntry(r))))''',
                        "service: startup sweep accounting")
 
     # (e) retry: replay the recorded payload through the normal download entry

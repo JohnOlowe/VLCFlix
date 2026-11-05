@@ -68,6 +68,12 @@ was floored at a 44px target / 26px icon, so seven icons could never fit one
 line. They now do -- on a 720px screen at every size, and on a 360px one from
 11px down.
 
+**The footer stays put.** `com-main` is the only child of the panel that grows
+and shrinks (`min-height: 0`, without which a flex child refuses to shrink below
+its content and pushes the page taller than the screen), and `com-toolbar` is
+pinned with `position: sticky; bottom: 0`, so Settings, History and the rest are
+always on screen while the media list scrolls. The page itself does not scroll.
+
 Nothing is allowed to be wider than the screen: the history rows are built from
 web components, so the rules that reach the Play / Retry / Delete buttons and
 the media row's own `flex-shrink: 0` are injected into the component templates
@@ -109,3 +115,28 @@ Chrome build and uses Chromium-only APIs), and use the user's Termux ffmpeg
 (MediaCodec hardware encode/decode) for merging and converting. Personal use
 of the user's own Pro copy; no redistribution. See
 `docs/ANDROID_PORT_PLAN.md` §3A/§3D and the verification plan in §7.
+
+## Partial files: why they used to disappear
+
+The vendor's own startup routine deletes **every** file in the extension's
+private (OPFS) storage each time the service worker starts:
+
+```js
+Promise.allSettled(n.map(r => (console.warn(`main::purging ${r}`), i.removeEntry(r))))
+```
+
+That is why a partial download never survived a crash, a browser restart or a
+service-worker restart: the bytes were on disk, the worker started, the sweep
+deleted them. The journal entry in `chrome.storage.local` survived, which is why
+History kept offering a download there were no bytes left for.
+
+The sweep now keeps any file whose name belongs to a download the journal still
+has a live record for — those are exactly the ones that can be resumed — and
+sweeps the orphans. `scripts/check-partials.py` proves it across a real browser
+restart, and `navigator.storage.persist()` is requested on top of the
+`unlimitedStorage` permission the manifest already declares.
+
+Two things storage cannot survive: **uninstalling or reinstalling the
+extension** (the browser deletes the origin's data) and, on Edge Canary
+Android, a **browser restart that removes a side-loaded extension**. Nothing in
+the extension can prevent either.

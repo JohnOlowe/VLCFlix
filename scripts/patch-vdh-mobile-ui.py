@@ -161,7 +161,7 @@ CSS = """<style>/*vdh-android-ui-v6*/
   --spacing-medium: max(2px, calc(var(--vdh-ui-base-font) * 0.38095)) !important;
   --spacing-large: max(3px, calc(var(--vdh-ui-base-font) * 0.66667)) !important;
   --spacing-x-large: max(5px, calc(var(--vdh-ui-base-font) * 1.14286)) !important;
-  --video-height: max(40px, calc(var(--vdh-ui-base-font) * 6.28571)) !important;
+  --video-height: max(32px, calc(var(--vdh-ui-base-font) * 6.28571)) !important;
   --dismiss-button-width: calc(max(7px, calc(var(--vdh-ui-base-font) * 0.7619))
     + var(--spacing-medium) + 2 * var(--hardware-pixel)) !important;
   --dismiss-button-height: calc(max(7px, calc(var(--vdh-ui-base-font) * 0.7619))
@@ -174,7 +174,7 @@ CSS = """<style>/*vdh-android-ui-v6*/
     --spacing-medium: max(2px, calc(var(--vdh-ui-base-font) * 0.38095)) !important;
     --spacing-large: max(3px, calc(var(--vdh-ui-base-font) * 0.66667)) !important;
     --spacing-x-large: max(5px, calc(var(--vdh-ui-base-font) * 1.14286)) !important;
-    --video-height: max(40px, calc(var(--vdh-ui-base-font) * 6.28571)) !important;
+    --video-height: max(32px, calc(var(--vdh-ui-base-font) * 6.28571)) !important;
   }
 }
 /* the app's own font-size setting still stacks on the (possibly user-set) base:
@@ -215,6 +215,22 @@ html[dockmode="popup"][popup_size="big"] > body {
   width: 100vw !important;
   height: 100dvh !important;
 }
+
+/* The footer (the toolbar: Settings, History and the rest) has to stay put at
+   the bottom of the panel while the media list scrolls. That needs two things:
+   com-main must be the only child that grows and shrinks (min-height: 0, or a
+   flex child refuses to shrink below its content and pushes the page taller
+   than the screen), and the toolbar must be pinned rather than left to be
+   pushed. The page itself must not scroll -- its scrollable child does. */
+com-main { flex: 1 1 auto !important; min-height: 0 !important; }
+com-toolbar, com-banner {
+  flex: 0 0 auto !important;
+  position: sticky !important;
+  z-index: 5 !important;
+}
+com-toolbar { bottom: 0 !important; }
+com-banner { top: 0 !important; }
+html { overflow: hidden !important; }
 
 /* breathing room on the sides of the whole panel: proportional to the text,
    so a smaller size also means a smaller margin (10px at the old 21px base) */
@@ -421,11 +437,27 @@ MEDIA_CSS = """/*vdh-android-media-scale*/
        which beats the page's inherited value, so they have to be redone here.
    All three are now proportional to the base text size. */
 :host {
-  --video-height: max(40px, calc(var(--vdh-ui-base-font) * 6.28571)) !important;
+  --video-height: max(32px, calc(var(--vdh-ui-base-font) * 6.28571)) !important;
   --dismiss-button-width: calc(max(7px, calc(var(--vdh-ui-base-font) * 0.7619))
     + var(--spacing-medium) + 2 * var(--hardware-pixel)) !important;
   --dismiss-button-height: calc(max(7px, calc(var(--vdh-ui-base-font) * 0.7619))
     + 2 * var(--hardware-pixel)) !important;
+}
+/* The Pause button was rendered but unreadable: #box_combo > * paints its
+   children in --theme-colored-fg (near-white), and only #button_stop is given
+   a background of its own, so Pause came out white text on a near-white
+   button. Give it a background, in slate so it still reads as a different
+   action from the red Cancel beside it. */
+#button_pause {
+  --theme-control-bg: light-dark(var(--slate-500), var(--slate-600)) !important;
+  --theme-control-bg-hover: light-dark(var(--slate-400), var(--slate-700)) !important;
+  --theme-control-border: light-dark(var(--slate-700), var(--slate-800)) !important;
+}
+/* Pause and Cancel are the buttons you press mid-download, so they keep a
+   finger-sized floor (20px, the same one the toolbar uses) however small the
+   text gets -- at 5px a proportional button is 10px tall and unhittable. */
+#box_combo > button {
+  min-height: max(20px, calc(var(--vdh-ui-base-font) * 2.09524)) !important;
 }
 button > svg, [tooltip] > svg {
   width: max(10px, calc(var(--vdh-ui-base-font) * 0.7619)) !important;

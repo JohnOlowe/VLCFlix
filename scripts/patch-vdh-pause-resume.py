@@ -254,7 +254,11 @@ else:
 for name in ("popup.html", "sidebar.html"):
     path = ROOT / "content" / name
     text = path.read_text(encoding="utf-8")
-    if "button_pause" in text:
+    # the guard looks for the ELEMENT, not the bare id: the phone stylesheet
+    # ships a rule for #button_pause, and matching the bare string made this
+    # patch skip the markup on a tree where it had never been inserted -- which
+    # left the component throwing 'Element "#button_pause" not found'
+    if '<button id="button_pause">' in text:
         print(f"skip (already patched): {name}")
         continue
     # the downloading row has exactly one <button id="button_stop"></button>

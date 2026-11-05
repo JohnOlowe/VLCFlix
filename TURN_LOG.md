@@ -464,3 +464,34 @@
   embedded history view, at 360px and 720px, at 15/11/8/5px, with real seeded
   journal rows and a media row built from the real component with a very long
   file name.
+
+## 2026-11-05 — round 12: footer, Pause, the subtitle marker, and the partials
+
+- Footer: `com-main { flex: 1 1 auto; min-height: 0 }` plus
+  `com-toolbar { position: sticky; bottom: 0 }` and `html { overflow: hidden }`.
+  Without min-height: 0 the flex child refuses to shrink below its content and
+  pushes the page taller than the screen, which is what let the bar drift.
+  Measured with a 30-item list at 15/11/8/5px: bottom edge always at the
+  viewport bottom, page never scrolls.
+- The Pause button was rendered but unreadable: #box_combo > * paints its
+  children in --theme-colored-fg (near-white) and only #button_stop has a
+  background of its own, so Pause came out white-on-white (measured colour
+  rgb(245,245,245) on background rgb(245,245,245)). It now has a slate
+  background; contrast 0.74. Pause/Cancel also keep a 20px tap-target floor.
+- Third time the same trap bit me: CSS that mentions another patch's id trips
+  that patch's idempotency guard. My #button_pause rule made
+  patch-vdh-pause-resume.py skip inserting the button, so the component threw
+  `Element "#button_pause" not found` -- the button was gone from the build
+  entirely. Guards now match the element, not the bare id (same fix as
+  #vdh_journal_box in round 11).
+- Subtitle marker: a small "CC en, es" badge on a running download, drawn from
+  the rendition list the worker already stores with the journal record (key
+  `subtitles`), so no extra fetching and it survives a reload.
+- Thumbnail scales with --video-height: 94 -> 69 -> 50 -> 32px tall across
+  15/11/8/5px (floor lowered from 40 to 32).
+- PARTIALS ANSWERED: the vendor's startup sweep deletes every OPFS file on
+  every service-worker start -- that is why a partial never survived a crash or
+  a restart. It now keeps files owned by a live journal record and sweeps
+  orphans; proven across a real browser restart (64 KiB partial intact, orphan
+  gone). Reinstalling the extension, or a browser restart that drops a
+  side-loaded extension, still wipes it -- nothing in the extension can help.

@@ -7,7 +7,7 @@ check available: if Chrome's parser accepts it and yields the expected cue
 times, the file is valid.
 
 Part B drives the real `vdh_subtitle_save` message through the service worker and
-asserts that chrome.downloads receives a `text/vtt` file with the right name.
+asserts that chrome.downloads receives a file with the right name.
 
 Part C falls back to a genuinely encrypted live HLS stream (if this machine has
 internet) to prove the refusal path on real-world input.
@@ -269,10 +269,12 @@ async def part_b(ctx, extid):
                     state: d.state, error: d.error, exists: d.exists}))""")
     print(f"   downloads: {json.dumps(downloads)}", flush=True)
     # Playwright intercepts downloads and renames the captured file to a uuid, so
-    # the *intended* name is taken from the worker's own log; the MIME type and
-    # the completion state come from chrome.downloads itself.
-    vtt = [d for d in downloads if "vtt" in (d["mime"] or "")]
-    ok(bool(vtt), f"a text/vtt download was created ({vtt})")
+    # the *intended* name comes from the worker's own log and the completion
+    # state from chrome.downloads. The MIME type is deliberately generic
+    # (application/octet-stream): Chrome would otherwise force the saved name to
+    # .vtt and refuse an .srt name, and the extension is what players act on.
+    vtt = [d for d in downloads if d["state"] == "complete"]
+    ok(bool(vtt), f"a subtitle download was created ({vtt})")
     if vtt:
         ok(vtt[0]["state"] == "complete" and not vtt[0]["error"],
            f"download completed cleanly (state={vtt[0]['state']}, error={vtt[0]['error']})")

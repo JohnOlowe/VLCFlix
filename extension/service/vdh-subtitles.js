@@ -306,9 +306,206 @@ export function renditionsFromMedia(media) {
     .filter((r) => r.url);
 }
 
+/**
+ * Read subtitle renditions straight out of a *master* playlist, so subtitles can
+ * be fetched for a stream that was never downloaded. Resolves each URI against
+ * the playlist URL, keeps the language and the NAME label.
+ *
+ * @param {string} text master playlist body
+ * @param {string} baseUrl the URL the playlist was fetched from
+ * @returns {{url: string, language: string, name: string, type: string}[]}
+ */
+export function renditionsFromPlaylist(text, baseUrl) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(text || "").replace(/\r/g, "").split("\n")) {
+    const line = raw.trim();
+    if (!line.startsWith("#EXT-X-MEDIA:")) continue;
+    const attrs = {};
+    /* EXT-X-MEDIA attributes are comma separated, but values may be quoted */
+    const re = /([A-Z0-9-]+)=("[^"]*"|[^,]*)/g;
+    let m;
+    while ((m = re.exec(line.slice(13)))) {
+      attrs[m[1]] = m[2].replace(/^"|"$/g, "");
+    }
+    if ((attrs.TYPE || "").toUpperCase() !== "SUBTITLES") continue;
+    if (!attrs.URI) continue;
+    let url;
+    try { url = new URL(attrs.URI, baseUrl).href; } catch (e) { continue; }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push({
+      url,
+      language: attrs.LANGUAGE || attrs.NAME || "und",
+      name: attrs.NAME || attrs.LANGUAGE || "",
+      type: "http",
+    });
+  }
+  return out;
+}
+
 /** Make a language tag safe for a file name; falls back to "und" (undetermined). */
 export function safeLanguage(language) {
   const cleaned = String(language || "").trim().replace(/[^A-Za-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "").toLowerCase();
   return cleaned || "und";
+}
+
+/* ------------------------------------------------------------------ formats */
+
+/**
+ * Which format a fetched subtitle document is really in. Our stitcher always
+ * joins *segmented* playlists into WebVTT, but some streams publish a single
+ * plain `.srt` file, and that must not be relabelled as WebVTT.
+ *
+ * @param {string} text
+ * @returns {"vtt"|"srt"}
+ */
+export function detectFormat(text) {
+  const body = String(text || "").replace(/^\uFEFF/, "").trimStart();
+  if (/^WEBVTT(\s|$)/.test(body)) return "vtt";
+  /* a SubRip file has no header at all: look for the first timestamp line */
+  if (/^\d+\s*$/m.test(body) && /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}/.test(body)) {
+    return "srt";
+  }
+  return "vtt";
+}
+
+/** What would be lost by turning this WebVTT document into SubRip? */
+export function assessSubtitleLoss(text) {
+  const src = String(text || "");
+  const reasons = [];
+
+  if (/^STYLE\s*$/m.test(src)) reasons.push("style block");
+  if (/^REGION\s*$/m.test(src)) reasons.push("region block");
+  if (/<ruby|<rt[ >]/i.test(src)) reasons.push("ruby annotations");
+  if (/<lang[ >]/i.test(src)) reasons.push("language spans");
+  if (/<\d{2}:\d{2}:\d{2}\.\d{3}>/.test(src)) reasons.push("karaoke timing");
+  /* class-based styling, e.g. <c.yellow> or <v Bob.class> */
+  if (/<c\.[^>]*>|<v\s[^>]*\.[^>]*>/i.test(src)) reasons.push("css classes");
+  /* cue settings such as align:start position:10% line:0 */
+  const settings = src.match(/-->\s*[^\r\n]*?(\b(?:align|position|line|size|region|vertical):[^\r\n]*)/i);
+  if (settings) reasons.push("cue positioning");
+
+  return { lossy: reasons.length > 0, reasons };
+}
+
+function srtTime(stamp) {
+  const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})$/.exec(String(stamp).trim());
+  if (!m) return null;
+  const hh = String(m[1] ? Number(m[1]) : 0).padStart(2, "0");
+  const mm = String(Number(m[2])).padStart(2, "0");
+  const ss = String(Number(m[3])).padStart(2, "0");
+  const ms = String(m[4]).padEnd(3, "0");
+  return `${hh}:${mm}:${ss},${ms}`;
+}
+
+/** Keep only the inline markup SubRip players understand. */
+function srtSafeMarkup(block) {
+  return block
+    .replace(/<(\/?)(b|i|u)>/gi, "<$1$2>")
+    .replace(/<font\s+color\s*=\s*"?([#\w]+)"?\s*>/gi, '<font color="$1">')
+    .replace(/<\/font>/gi, "</font>")
+    /* everything else is WebVTT-only or positional */
+    .replace(/<[^>]*>/g, "");
+}
+
+/**
+ * Convert a WebVTT document to SubRip. Strips WebVTT-only markup, cue settings
+ * and note/style/region blocks, renumbers the cues and switches the decimal
+ * separator from `.` to `,` the way SubRip requires.
+ *
+ * @param {string} vtt
+ * @returns {string}
+ */
+export function vttToSrt(vtt) {
+  const lines = String(vtt || "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+  let index = 0;
+
+  /* skip the WEBVTT header and any header metadata up to the first blank line */
+  if (/^WEBVTT/.test(lines[0] || "")) {
+    i = 1;
+    while (i < lines.length && lines[i].trim() !== "") i++;
+  }
+
+  while (i < lines.length) {
+    if (lines[i].trim() === "") { i++; continue; }
+
+    /* NOTE / STYLE / REGION blocks run until the next blank line */
+    if (/^(NOTE|STYLE|REGION)\b/.test(lines[i])) {
+      while (i < lines.length && lines[i].trim() !== "") i++;
+      continue;
+    }
+
+    /* an optional cue identifier line, then the timing line */
+    let timing = lines[i];
+    if (!timing.includes("-->")) {
+      i++;
+      timing = lines[i] || "";
+      if (!timing.includes("-->")) { i++; continue; }
+    }
+    i++;
+
+    const arrow = timing.split(/\s*-->\s*/);
+    const start = srtTime(arrow[0]);
+    /* drop cue settings: "00:00:02.000 align:start position:10%" */
+    const end = srtTime((arrow[1] || "").trim().split(/\s+/)[0]);
+    if (!start || !end) continue;
+
+    const text = [];
+    while (i < lines.length && lines[i].trim() !== "") {
+      text.push(srtSafeMarkup(lines[i]));
+      i++;
+    }
+    while (text.length && text[text.length - 1].trim() === "") text.pop();
+    if (!text.length) continue;
+
+    index++;
+    out.push(String(index));
+    out.push(`${start} --> ${end}`);
+    out.push(...text);
+    out.push("");
+  }
+
+  return out.join("\n");
+}
+
+export const SUBTITLE_MODES = ["keep", "smart", "srt"];
+
+/**
+ * Apply the user's format choice.
+ *
+ * - `keep`  : no conversion at all; WebVTT stays WebVTT, SubRip stays SubRip
+ * - `smart` : convert to SubRip only when nothing meaningful would be lost
+ * - `srt`   : always convert, dropping whatever SubRip cannot carry
+ *
+ * @param {string} text    document as produced by the stitcher
+ * @param {"keep"|"smart"|"srt"} mode
+ * @returns {{text: string, ext: "vtt"|"srt", converted: boolean,
+ *            reasons: string[], mode: string}}
+ */
+export function applySubtitleFormat(text, mode) {
+  const chosen = SUBTITLE_MODES.includes(mode) ? mode : "keep";
+  const source = detectFormat(text);
+  const loss = assessSubtitleLoss(text);
+
+  if (chosen === "keep") {
+    return { text, ext: source, converted: false, reasons: loss.reasons, mode: chosen };
+  }
+  if (source === "srt") {
+    /* already SubRip: nothing to do in any mode */
+    return { text, ext: "srt", converted: false, reasons: loss.reasons, mode: chosen };
+  }
+  if (chosen === "smart" && loss.lossy) {
+    return { text, ext: "vtt", converted: false, reasons: loss.reasons, mode: chosen };
+  }
+  return {
+    text: vttToSrt(text),
+    ext: "srt",
+    converted: true,
+    reasons: loss.reasons,
+    mode: chosen,
+  };
 }

@@ -17,8 +17,8 @@ What this script does:
     - read/apply/save the size, localStorage for a synchronous first paint and
       chrome.storage.local for durability + live updates in the other pages
   content/popup.html, content/sidebar.html
-    - a "Text size" card in the Settings view: slider, -/+ steppers, a live
-      readout, a preview line, and a reset to the 21px default
+    - a "Text size" card in the Settings view: slider (5-15px, 15px default),
+      -/+ steppers, a live readout, a preview line, and a reset to 15px
   content/panel.js, content/history.js
     - bootstrap: apply the saved size as the module is evaluated
 
@@ -61,13 +61,13 @@ CARD = '''<vbox id="vdh_text_size_box" class="roundedbox">
         <p>Drag the slider to set the base text size for the whole app. It is remembered on this device.</p>
         <hbox id="vdh_text_size_row">
           <button id="vdh_text_size_minus" aria-label="Smaller text">&#8722;</button>
-          <input id="vdh_text_size_range" type="range" min="15" max="32" step="1" value="21" aria-label="Text size in pixels"/>
+          <input id="vdh_text_size_range" type="range" min="5" max="15" step="1" value="15" aria-label="Text size in pixels"/>
           <button id="vdh_text_size_plus" aria-label="Bigger text">+</button>
-          <span id="vdh_text_size_value">21 px</span>
+          <span id="vdh_text_size_value">15 px</span>
         </hbox>
         <p id="vdh_text_size_preview">The quick brown fox jumps over the lazy dog. 0123456789</p>
         <hbox id="vdh_text_size_row2">
-          <button id="vdh_text_size_default">Reset to 21 px</button>
+          <button id="vdh_text_size_default">Reset to 15 px</button>
         </hbox>
       </vbox>'''
 

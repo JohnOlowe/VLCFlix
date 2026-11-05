@@ -418,3 +418,20 @@
 - `scripts/check-text-size.py`: default still 21px, a real mouse drag on the
   slider, steppers, reset, persistence across reload, history page follows both
   on a fresh load and live, and the app's own large/verylarge still stack on top.
+
+## 2026-11-05 — round 10: the range is 5-15px, and 15px is the ceiling
+
+- The user was right that my measurements had missed something. `getComputedStyle
+  .fontSize` reports CSS pixels, so it reads 21px whether the page is laid out at
+  ~980px and scaled down to the screen (no viewport meta) or at true device
+  width. The apparent size is what changes, and that is the "twice the size"
+  the user kept describing: before `15e176f` a 21px root reached the eye at
+  roughly 15px.
+- So the slider now runs 5-15px with 15px as both the default and the maximum:
+  15 reproduces the size the panel used to have, and below it is for a screen
+  where even that is too large. The stylesheet fallback moved to 15px as well,
+  so an untouched install and the card can never disagree.
+- Spacing, tap targets (44px) and toolbar icons (26px) keep their px floors, so
+  shrinking the text to 5px never shrinks the things you press.
+- Suite green: text-size, viewport, history-open, subtitles, subtitle-options,
+  journal, resume, real-extension (rootFont now reports 15px).

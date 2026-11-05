@@ -18,8 +18,9 @@ What it changes (see docs/ANDROID_PORT_PLAN.md and TURN_LOG.md for why):
       Patch v3 rerouted it to a tab; that was wrong (user feedback).
 
   content/sidebar.html, content/popup.html
-    - scale the whole UI up for a phone: 20px root (stock is 12px, and
-      0.8rem = 9.6px below 400px wide), bigger spacing/video-height, thumb-
+    - scale the whole UI for a phone: the root is the user's base size, 15px
+      by default (stock is 12px, and 0.8rem = 9.6px below 400px wide), bigger
+      spacing/video-height, thumb-
       sized controls, and it beats the stock "make everything small" rule.
     - fill viewport width and height, including the popup_size variants,
       without touching the app's own #main / #toolbar flex chain.
@@ -137,20 +138,22 @@ CSS = """<style>/*vdh-android-ui-v6*/
    :root but never the shadow HOSTS, so the components kept shrinking.
 
    v5 therefore:
-     - root 21px, repeated inside the <=400px media query so the stock shrink
-       rule can never win;
+     - root at the user's base size (15px by default), repeated inside the
+       <=400px media query so the stock shrink rule can never win;
      - font-size forced on every component host (page styles on a host always
        beat that component's own :host rule), so everything inside inherits
        the new size;
      - roomier controls/spacing and a viewport-filling layout. */
 :root, html {
   /* --vdh-ui-base-font is the user's text-size setting (see
-     content/vdh-text-size.js); 21px is the default and it is what the whole
-     UI scales from, because every other size here is expressed in rem. */
-  --vdh-ui-base-font: 21px;
+     content/vdh-text-size.js); 15px is the default and it is what the whole UI
+     scales from, because every other size here is expressed in rem. The user
+     chooses 5-15px in Settings; 15px reproduces the size the panel had before
+     the viewport fix (15e176f) made the phone lay it out at true device width. */
+  --vdh-ui-base-font: 15px;
   font-size: var(--vdh-ui-base-font) !important;
   /* the spacing follows the text size too, but never below the value the phone
-     UI was tuned for: at the 21px default every one of these is unchanged */
+     UI was tuned for: at the 15px default every one of these is unchanged */
   --spacing-small: max(4px, calc(var(--vdh-ui-base-font) * 0.19048)) !important;
   --spacing-medium: max(8px, calc(var(--vdh-ui-base-font) * 0.38095)) !important;
   --spacing-large: max(14px, calc(var(--vdh-ui-base-font) * 0.66667)) !important;
@@ -168,8 +171,9 @@ CSS = """<style>/*vdh-android-ui-v6*/
   }
 }
 /* the app's own font-size setting still stacks on the (possibly user-set) base:
-   large and verylarge were 23px and 25px on top of the 21px base, so keep those
-   ratios instead of pinning absolute px values that would shrink a bigger base */
+   large and verylarge were 23px and 25px on top of the old 21px base, so keep
+   those ratios instead of pinning absolute px values that would shrink a
+   bigger base */
 html[font_size="large"] { font-size: calc(var(--vdh-ui-base-font) * 1.0952) !important; }
 html[font_size="verylarge"] { font-size: calc(var(--vdh-ui-base-font) * 1.1905) !important; }
 
@@ -287,7 +291,7 @@ TOOLBAR_MARK = "vdh-android-toolbar"
 TOOLBAR_CSS = """/*vdh-android-toolbar*/
 /* Lives INSIDE the com-toolbar shadow template's style block: icons and the
    bar's own padding are only reachable from there. Bigger icons, real tap
-   targets and roomier padding, scaled to the 21px base font. */
+   targets and roomier padding, scaled to the base font size. */
 #toolbar {
   /* wrap instead of clipping: 7 bigger buttons do not fit a 412px phone on
      one line (7 x 46 + 6 x 10 + padding > viewport), and the stock bar clips */
@@ -354,7 +358,7 @@ def patch_viewport(root: pathlib.Path) -> None:
     """Without a viewport meta tag Chromium lays these pages out at a default
     ~980px width and then boosts the text to compensate, which makes everything
     look roughly twice its intended size on a phone. Declaring the device width
-    makes the 21px base mean 21 real pixels and keeps the layout consistent."""
+    makes the base size mean real pixels and keeps the layout consistent."""
     for name in ("popup.html", "sidebar.html", "history.html"):
         p = root / "content" / name
         s = p.read_text(encoding="utf-8")

@@ -58,8 +58,8 @@ async def main():
                f"{width}px device lays out at {width}px, not 980 ({info['layout']})")
             ok(not info["overflow"],
                f"nothing overflows the {width}px screen ({info['overflow']})")
-            ok(info["font"] == "21px",
-               f"the 21px base really is 21px ({info['font']})")
+            ok(info["font"] == "15px",
+               f"the 15px base really is 15px ({info['font']})")
 
             # the in-panel history view must follow the user's own text size
             await page.evaluate("""() => document.documentElement.setAttribute(

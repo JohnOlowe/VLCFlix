@@ -79,7 +79,7 @@ async def state(page):
 
 
 async def part_a(ctx, extid):
-    print("\nA. the default has not moved")
+    print("\nA. the default is the 15px ceiling")
     page = await ctx.new_page()
     await page.goto(f"chrome-extension://{extid}/content/popup.html")
     await page.wait_for_timeout(1500)
@@ -92,11 +92,11 @@ async def part_a(ctx, extid):
     await page.wait_for_timeout(1200)
     m = await page.evaluate(MEASURE)
     print(f"   {m}", flush=True)
-    ok(m["root"] == "21px", f"root font-size is 21px by default ({m['root']})")
-    ok(m["main"] == "21px", f"com-main is 21px ({m['main']})")
-    ok(m["toolbar"] == "21px", f"the toolbar is 21px ({m['toolbar']})")
-    ok(m["button"] and m["button"]["font"] == "21px",
-       f"a toolbar button is 21px ({m['button']})")
+    ok(m["root"] == "15px", f"root font-size is 15px by default ({m['root']})")
+    ok(m["main"] == "15px", f"com-main is 15px ({m['main']})")
+    ok(m["toolbar"] == "15px", f"the toolbar is 15px ({m['toolbar']})")
+    ok(m["button"] and m["button"]["font"] == "15px",
+       f"a toolbar button is 15px ({m['button']})")
     return page
 
 
@@ -106,10 +106,10 @@ async def part_b(page):
     s0 = await state(page)
     print(f"   initial: {s0}", flush=True)
     ok(s0 is not None, "the card is in the Settings view")
-    ok(s0 and s0["min"] == "15" and s0["max"] == "32",
-       f"the slider spans 15..32 px ({s0 and (s0['min'], s0['max'])})")
-    ok(s0 and s0["value"] == 21 and s0["readout"] == "21 px",
-       f"it starts on the 21px default ({s0 and (s0['value'], s0['readout'])})")
+    ok(s0 and s0["min"] == "5" and s0["max"] == "15",
+       f"the slider spans 5..15 px ({s0 and (s0['min'], s0['max'])})")
+    ok(s0 and s0["value"] == 15 and s0["readout"] == "15 px",
+       f"it starts on the 15px ceiling ({s0 and (s0['value'], s0['readout'])})")
     ok(s0 and s0["right"] <= 412, f"the card fits the panel width (right {s0 and s0['right']})")
 
     # a real drag: press on the slider near its right end, the way a thumb moves
@@ -118,11 +118,11 @@ async def part_b(page):
     await page.wait_for_timeout(300)
     s0 = await state(page)
     r = s0["rect"]
-    await page.mouse.click(r["x"] + r["w"] * 0.9, r["y"] + r["h"] / 2)
+    await page.mouse.click(r["x"] + r["w"] * 0.15, r["y"] + r["h"] / 2)
     await page.wait_for_timeout(400)
     s1 = await state(page)
     print(f"   after drag: {s1}", flush=True)
-    ok(s1 and s1["value"] > 24, f"dragging the slider raises the size ({s1 and s1['value']})")
+    ok(s1 and s1["value"] < 15, f"dragging the slider lowers the size ({s1 and s1['value']})")
     ok(s1 and s1["readout"] == f"{s1['value']} px",
        f"the readout shows the size ({s1 and s1['readout']})")
     ok(s1 and s1["rootFont"] == f"{s1['value']}px",
@@ -133,8 +133,8 @@ async def part_b(page):
     m1 = await page.evaluate(MEASURE)
     print(f"   {m1}", flush=True)
     ok(m1["main"] == f"{s1['value']}px", f"com-main follows ({m1['main']})")
-    ok(m1["button"]["h"] > 44,
-       f"the buttons grew with the text ({m1['button']})")
+    ok(m1["button"]["h"] >= 44,
+       f"the tap targets stay thumb-sized ({m1['button']})")
 
     # the steppers move it one pixel at a time
     base = s1["value"]
@@ -152,30 +152,30 @@ async def part_b(page):
     await page.evaluate("(() => {" + DEEP + " return deep(document, 'vdh_text_size_default').click(); })()")
     await page.wait_for_timeout(300)
     reset = await state(page)
-    ok(reset and reset["value"] == 21 and reset["rootFont"] == "21px",
-       f"Reset returns to 21px ({reset and (reset['value'], reset['rootFont'])})")
+    ok(reset and reset["value"] == 15 and reset["rootFont"] == "15px",
+       f"Reset returns to 15px ({reset and (reset['value'], reset['rootFont'])})")
     return s1["value"]
 
 
 async def part_c(page):
     print("\nC. the choice is remembered")
-    await page.evaluate("(() => {" + DEEP + " return window.vdhTextSizeUI.set(28); })()")
+    await page.evaluate("(() => {" + DEEP + " return window.vdhTextSizeUI.set(11); })()")
     await page.wait_for_timeout(400)
     stored = await page.evaluate("""async () => {
         const got = await chrome.storage.local.get('vdh_ui_text_size');
         return {storage: got.vdh_ui_text_size, local: localStorage.getItem('vdh_ui_text_size')};
     }""")
     print(f"   stored: {stored}", flush=True)
-    ok(stored["storage"] == 28, f"chrome.storage holds 28 ({stored['storage']})")
-    ok(stored["local"] == "28", f"localStorage holds 28 ({stored['local']})")
+    ok(stored["storage"] == 11, f"chrome.storage holds 11 ({stored['storage']})")
+    ok(stored["local"] == "11", f"localStorage holds 11 ({stored['local']})")
 
     await page.reload()
     await page.wait_for_timeout(1400)
     m = await page.evaluate(MEASURE)
-    ok(m["root"] == "28px", f"a fresh load comes back at 28px ({m['root']})")
+    ok(m["root"] == "11px", f"a fresh load comes back at 11px ({m['root']})")
     ok(await open_settings(page), "Settings still opens after the reload")
     s = await state(page)
-    ok(s and s["value"] == 28 and s["readout"] == "28 px",
+    ok(s and s["value"] == 11 and s["readout"] == "11 px",
        f"the slider shows the saved size ({s and (s['value'], s['readout'])})")
 
 
@@ -191,15 +191,15 @@ async def part_d(ctx, extid, page):
                     return el ? getComputedStyle(el).fontSize : null; })()
     })""")
     print(f"   history page: {h}", flush=True)
-    ok(h["root"] == "28px", f"the history page opens at 28px, not the vendor 12px ({h['root']})")
+    ok(h["root"] == "11px", f"the history page opens at 11px, not the vendor 12px ({h['root']})")
 
     # live: change the size in the panel, the open history page must follow
     await page.bring_to_front()
-    await page.evaluate("(() => window.vdhTextSizeUI.set(19))()")
+    await page.evaluate("(() => window.vdhTextSizeUI.set(7))()")
     await page.wait_for_timeout(500)
     live = await hist.evaluate(
         "() => getComputedStyle(document.documentElement).fontSize")
-    ok(live == "19px", f"an already open history page resizes itself ({live})")
+    ok(live == "7px", f"an already open history page resizes itself ({live})")
 
     # and the embedded history view inside the panel, which is an iframe
     await page.evaluate("(() => {" + DEEP + """
@@ -213,7 +213,7 @@ async def part_d(ctx, extid, page):
         emb = await frames[0].evaluate(
             "() => getComputedStyle(document.documentElement).fontSize")
     print(f"   embedded history ({len(frames)} frame(s)): {emb}", flush=True)
-    ok(emb == "19px", f"the history view inside the panel is 19px too ({emb})")
+    ok(emb == "7px", f"the history view inside the panel is 7px too ({emb})")
     await hist.close()
 
 
@@ -227,9 +227,9 @@ async def part_e(page):
             document.documentElement.removeAttribute('font_size');
             return v;
         }""", attr)
-        want = round(19 * factor, 1)
+        want = round(7 * factor, 1)
         ok(abs(got - want) < 0.6,
-           f"font_size={attr} on a 19px base gives {got:.1f}px (want ~{want}px)")
+           f"font_size={attr} on a 7px base gives {got:.1f}px (want ~{want}px)")
 
 
 async def main():

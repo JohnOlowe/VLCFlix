@@ -15,9 +15,15 @@
    The service worker cannot reach localStorage, which is why both exist. */
 
 export const VDH_TEXT_SIZE_KEY = "vdh_ui_text_size";
-export const VDH_TEXT_SIZE_DEFAULT = 21;
-export const VDH_TEXT_SIZE_MIN = 15;
-export const VDH_TEXT_SIZE_MAX = 32;
+/* 15px is the ceiling, not a middle value: it is the size that looks the way
+   the panel did before the pages declared a viewport (commit 15e176f), when a
+   phone laid the panel out at ~980px and scaled it down to the screen. Below
+   it, the range goes down to 5px for a screen where even 15 is too large. The
+   stylesheet's own fallback is the same 15px, so an untouched install and the
+   card always agree. */
+export const VDH_TEXT_SIZE_DEFAULT = 15;
+export const VDH_TEXT_SIZE_MIN = 5;
+export const VDH_TEXT_SIZE_MAX = 15;
 
 export function clampTextSize(px) {
   let n = Math.round(Number(px));

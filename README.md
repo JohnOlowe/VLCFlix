@@ -16,7 +16,7 @@ holds source only:
 | `extension/` | pristine unpacked VDH Pro 10.6.1.2 tree (vendor drop, unmodified, diffable against upstream) |
 | `scripts/format-vdh-source.py` | reformats every `.js`/`.html` in `extension/`; verified behaviour-neutral (identical token stream / tag sequence) |
 | `scripts/patch-vdh-mobile-ui.py` | copies `extension/` to `build/extension` and applies the Android UI patch |
-| `scripts/patch-vdh-text-size.py` | adds the manual text-size control (Settings -> Text size, 15-32px) |
+| `scripts/patch-vdh-text-size.py` | adds the manual text-size control (Settings -> Text size, 5-15px) |
 | `scripts/render-check-vdh-ui.py` | renders the patched panel in headless Chromium at phone size and asserts the layout |
 | `scripts/strip-vendor-links.py` | makes the build self-contained: vendor links → inert host, premium/account/review UI hidden, store links and vendor content scripts removed, extension renamed |
 | `scripts/pack-vdh-artifacts.sh` | packs `build/extension` into `dist/` (crx + two zips) with integrity checks |
@@ -44,8 +44,15 @@ old one in place.
 The phone UI is built around one number: `--vdh-ui-base-font`, the root font
 size in CSS pixels. Every other size in the stylesheet is expressed in `rem`,
 so changing that one property rescales the whole panel, the sidebar and the
-history page. **Settings -> Text size** sets it (slider, steppers, or Reset);
-the default is 21px, which is the size the port has used since `6c95ba9`.
+history page. **Settings -> Text size** sets it (slider, steppers, or Reset):
+the range is **5-15px and 15px is the default and the maximum**.
+
+15px is the ceiling on purpose. It is the size that looks the way the panel did
+before `15e176f` gave the pages a viewport meta tag: without one, a phone laid
+the panel out at ~980px and scaled that down to the screen, so 21 CSS px reached
+the eye at roughly 15. Once the pages declared `width=device-width` that scaling
+disappeared and everything got correspondingly bigger. Going below 15 is for
+screens where even that is too large.
 
 The chosen size lives in `localStorage` (read synchronously, so a saved size is
 applied before the first paint) and in `chrome.storage.local` (durable, and the

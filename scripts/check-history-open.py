@@ -268,6 +268,25 @@ async def part_c(ctx, extid):
     ok(state["radios"] == ["keep", "smart", "srt"],
        f"the subtitle format choices are there too ({state['radios']})")
     ok(state["back"], "there is a Back button")
+    # the view must sit BELOW the toolbar, never under it: the toolbar is the
+    # app's own chrome and on a phone it is where the fingers go
+    layout = await panel.evaluate("""() => {
+        const v = document.getElementById('vdh_history_view');
+        const tb = document.getElementById('toolbar');
+        const bar = v.querySelector('.vdh_view_toolbar');
+        const rv = v.getBoundingClientRect(), rt = tb.getBoundingClientRect();
+        const rb = bar.getBoundingClientRect();
+        return {toolbarBottom: Math.round(rt.bottom), viewTop: Math.round(rv.top),
+                barTop: Math.round(rb.top),
+                overlap: Math.round(Math.max(0, rt.bottom - rv.top))};
+    }""")
+    print(f"   layout: {layout}", flush=True)
+    ok(layout["overlap"] == 0,
+       f"the view starts below the toolbar, no overlap ({layout['overlap']}px)")
+    ok(layout["barTop"] >= layout["toolbarBottom"],
+       f"the Back bar is below the toolbar ({layout['barTop']} >= {layout['toolbarBottom']})")
+
+
     ok(len(ctx.pages) == tabs_before,
        f"no tab or window was opened ({tabs_before} -> {len(ctx.pages)})")
 
@@ -280,6 +299,35 @@ async def part_c(ctx, extid):
     print(f"   after Back: {after}", flush=True)
     ok(after["hidden"] and after["panelShown"] is None,
        f"Back returns to the panel ({after})")
+    await panel.evaluate("() => window.vdhHistoryOpen()")
+    await asyncio.sleep(0.6)
+    nan = await panel.evaluate("""async () => {
+        const j = (await chrome.storage.local.get('vdh_journal')).vdh_journal || {};
+        j['dl:nan_probe'] = {id:'dl:nan_probe', download_id:'nan_probe', status:'done',
+            filename:'No percent.mp4', bytes: 907699136, percent: null,
+            subdir:'', updated_at: Date.now()};
+        await chrome.storage.local.set({vdh_journal: j});
+        for (let i = 0; i < 40; i++) {
+            const v = document.getElementById('vdh_history_view');
+            const row = [...v.querySelectorAll('.vdh_history_row')]
+                .find(r => r.textContent.indexOf('No percent.mp4') >= 0);
+            if (row) {
+                return {text: row.textContent,
+                        nan: document.body.textContent.indexOf('NaN') >= 0};
+            }
+            await new Promise(r => setTimeout(r, 100));
+        }
+        return {text: null, nan: document.body.textContent.indexOf('NaN') >= 0};
+    }""")
+    print(f"   no-percent row: {nan['text']}", flush=True)
+    ok(nan["text"] and "NaN" not in nan["text"],
+       f"a download with no percentage shows no NaN ({nan['text']})")
+    ok(not nan["nan"], "NaN appears nowhere on the page")
+    await panel.evaluate("""async () => {
+        const j = (await chrome.storage.local.get('vdh_journal')).vdh_journal || {};
+        delete j['dl:nan_probe'];
+        await chrome.storage.local.set({vdh_journal: j});
+    }""")
     await panel.close()
 
 

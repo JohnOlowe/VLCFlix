@@ -28,6 +28,9 @@
       "  display: flex; flex-direction: column; gap: var(--spacing-medium, 8px);",
       "  padding: var(--spacing-medium, 8px);",
       "}",
+      /* the toolbar has a natural, fixed height: it must not shrink and spill
+         its buttons over this view, which is what put the Back bar under it */
+      "#" + VIEW_ID + " ~ #toolbar, #toolbar { flex: 0 0 auto !important; }",
       "#" + VIEW_ID + " .vdh_card { padding: var(--spacing-large, 14px); }",
       "#" + VIEW_ID + " .vdh_card h2 { margin: 0 0 6px 0; }",
       "#" + VIEW_ID + " .vdh_history_row:last-child { border-bottom: 0; padding-bottom: 0; }",
@@ -117,10 +120,16 @@
 
       var label = document.createElement("span");
       label.className = "vdh_history_label";
-      var pct = e.percent ? " - " + Math.round(e.percent) + "%" : "";
-      label.textContent = (e.filename || e.download_id) + " - " +
-        (e.status || "unknown") + " - " + fmt(e.bytes || 0) + pct;
+      var pct = (typeof e.percent === "number" && isFinite(e.percent))
+        ? " - " + Math.round(Math.max(0, Math.min(100, e.percent))) + "%" : "";
+      var sizeText = (typeof e.bytes === "number" && e.bytes > 0)
+        ? fmt(e.bytes) + pct : "";
+      label.textContent = (e.filename || e.download_id);
+      var meta = document.createElement("div");
+      meta.className = "vdh_history_meta";
+      meta.textContent = [e.status || "unknown", sizeText].filter(Boolean).join(" \u00b7 ");
       row.appendChild(label);
+      row.appendChild(meta);
 
       var actions = document.createElement("div");
       actions.className = "vdh_history_actions";
@@ -289,12 +298,9 @@
       if (!this.view) {
         installStyle();
         this.view = build();
-        var toolbar = document.getElementById("toolbar");
-        if (toolbar && toolbar.parentNode === document.body) {
-          document.body.insertBefore(this.view, toolbar);
-        } else {
-          document.body.appendChild(this.view);
-        }
+        /* last child of <body>: the settings view keeps its Back banner above
+           its cards, and the toolbar belongs above this view's Back too */
+        document.body.appendChild(this.view);
       }
       /* exactly what the settings toggle does: hide the other views with the
          hidden attribute and show this one. The toolbar stays, as it does for

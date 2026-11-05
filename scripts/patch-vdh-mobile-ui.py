@@ -144,40 +144,48 @@ CSS = """<style>/*vdh-android-ui-v6*/
        the new size;
      - roomier controls/spacing and a viewport-filling layout. */
 :root, html {
-  font-size: 21px !important;
-  --spacing-small: 4px !important;
-  --spacing-medium: 8px !important;
-  --spacing-large: 14px !important;
-  --spacing-x-large: 24px !important;
+  /* --vdh-ui-base-font is the user's text-size setting (see
+     content/vdh-text-size.js); 21px is the default and it is what the whole
+     UI scales from, because every other size here is expressed in rem. */
+  --vdh-ui-base-font: 21px;
+  font-size: var(--vdh-ui-base-font) !important;
+  /* the spacing follows the text size too, but never below the value the phone
+     UI was tuned for: at the 21px default every one of these is unchanged */
+  --spacing-small: max(4px, calc(var(--vdh-ui-base-font) * 0.19048)) !important;
+  --spacing-medium: max(8px, calc(var(--vdh-ui-base-font) * 0.38095)) !important;
+  --spacing-large: max(14px, calc(var(--vdh-ui-base-font) * 0.66667)) !important;
+  --spacing-x-large: max(24px, calc(var(--vdh-ui-base-font) * 1.14286)) !important;
   --video-height: 132px !important;
 }
 @media (max-width: 400px) {
   :root, html {
-    font-size: 21px !important;
-    --spacing-small: 4px !important;
-    --spacing-medium: 8px !important;
-    --spacing-large: 14px !important;
-    --spacing-x-large: 24px !important;
+    font-size: var(--vdh-ui-base-font) !important;
+    --spacing-small: max(4px, calc(var(--vdh-ui-base-font) * 0.19048)) !important;
+    --spacing-medium: max(8px, calc(var(--vdh-ui-base-font) * 0.38095)) !important;
+    --spacing-large: max(14px, calc(var(--vdh-ui-base-font) * 0.66667)) !important;
+    --spacing-x-large: max(24px, calc(var(--vdh-ui-base-font) * 1.14286)) !important;
     --video-height: 132px !important;
   }
 }
-/* the user's own font-size setting still stacks on the new base */
-html[font_size="large"] { font-size: 23px !important; }
-html[font_size="verylarge"] { font-size: 25px !important; }
+/* the app's own font-size setting still stacks on the (possibly user-set) base:
+   large and verylarge were 23px and 25px on top of the 21px base, so keep those
+   ratios instead of pinning absolute px values that would shrink a bigger base */
+html[font_size="large"] { font-size: calc(var(--vdh-ui-base-font) * 1.0952) !important; }
+html[font_size="verylarge"] { font-size: calc(var(--vdh-ui-base-font) * 1.1905) !important; }
 
 /* win over each component's shadow-DOM `:host` shrink rule */
 com-main, com-toolbar, com-banner, com-notification, com-settings, com-media,
 com-media-downloaded, com-dismiss-button, com-native-menu, com-progress,
 com-debug, com-details, #main > *, #toolbar > *, #settings > * {
-  font-size: 21px !important;
+  font-size: var(--vdh-ui-base-font) !important;
 }
 html[font_size="large"] com-main, html[font_size="large"] com-toolbar,
 html[font_size="large"] #main > *, html[font_size="large"] #toolbar > * {
-  font-size: 23px !important;
+  font-size: calc(var(--vdh-ui-base-font) * 1.0952) !important;
 }
 html[font_size="verylarge"] com-main, html[font_size="verylarge"] com-toolbar,
 html[font_size="verylarge"] #main > *, html[font_size="verylarge"] #toolbar > * {
-  font-size: 25px !important;
+  font-size: calc(var(--vdh-ui-base-font) * 1.1905) !important;
 }
 
 html, html > body {
@@ -285,24 +293,28 @@ TOOLBAR_CSS = """/*vdh-android-toolbar*/
      one line (7 x 46 + 6 x 10 + padding > viewport), and the stock bar clips */
   flex-wrap: wrap !important;
   justify-content: center !important;
-  padding: 10px 12px !important;
-  gap: 10px !important;
+  padding: max(10px, calc(var(--vdh-ui-base-font) * 0.47619))
+           max(12px, calc(var(--vdh-ui-base-font) * 0.57143)) !important;
+  gap: max(10px, calc(var(--vdh-ui-base-font) * 0.47619)) !important;
   overflow-x: visible !important;
 }
+/* icons and tap targets scale with the text, with the phone sizes (44px
+   target, 26px icon) as a floor so they never become unusable */
 #toolbar button,
 #toolbar com-native-menu {
-  padding: 7px 9px !important;
-  min-width: 44px !important;
-  min-height: 44px !important;
+  padding: max(7px, calc(var(--vdh-ui-base-font) * 0.33333))
+           max(9px, calc(var(--vdh-ui-base-font) * 0.42857)) !important;
+  min-width: max(44px, calc(var(--vdh-ui-base-font) * 2.09524)) !important;
+  min-height: max(44px, calc(var(--vdh-ui-base-font) * 2.09524)) !important;
   border-radius: var(--spacing-medium) !important;
 }
 #toolbar button > svg,
 #toolbar com-native-menu > svg,
 #toolbar svg {
-  width: 26px !important;
-  height: 26px !important;
-  min-width: 26px !important;
-  min-height: 26px !important;
+  width: max(26px, calc(var(--vdh-ui-base-font) * 1.2381)) !important;
+  height: max(26px, calc(var(--vdh-ui-base-font) * 1.2381)) !important;
+  min-width: max(26px, calc(var(--vdh-ui-base-font) * 1.2381)) !important;
+  min-height: max(26px, calc(var(--vdh-ui-base-font) * 1.2381)) !important;
 }
 """
 

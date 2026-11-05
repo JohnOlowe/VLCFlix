@@ -16,6 +16,7 @@ holds source only:
 | `extension/` | pristine unpacked VDH Pro 10.6.1.2 tree (vendor drop, unmodified, diffable against upstream) |
 | `scripts/format-vdh-source.py` | reformats every `.js`/`.html` in `extension/`; verified behaviour-neutral (identical token stream / tag sequence) |
 | `scripts/patch-vdh-mobile-ui.py` | copies `extension/` to `build/extension` and applies the Android UI patch |
+| `scripts/patch-vdh-text-size.py` | adds the manual text-size control (Settings -> Text size, 15-32px) |
 | `scripts/render-check-vdh-ui.py` | renders the patched panel in headless Chromium at phone size and asserts the layout |
 | `scripts/strip-vendor-links.py` | makes the build self-contained: vendor links → inert host, premium/account/review UI hidden, store links and vendor content scripts removed, extension renamed |
 | `scripts/pack-vdh-artifacts.sh` | packs `build/extension` into `dist/` (crx + two zips) with integrity checks |
@@ -28,6 +29,7 @@ unavailable here). The signing key is never committed.
 ```bash
 python3 scripts/format-vdh-source.py     # optional; in-place, verified, --check to dry run
 python3 scripts/patch-vdh-mobile-ui.py   # vendor tree -> build/extension
+python3 scripts/patch-vdh-text-size.py   # manual base text size (default 21px)
 python3 scripts/strip-vendor-links.py    # no vendor links, no upsell UI
 python3 scripts/render-check-vdh-ui.py   # layout assertion (needs playwright)
 bash    scripts/pack-vdh-artifacts.sh    # -> dist/*.crx, dist/*.zip
@@ -36,6 +38,18 @@ bash    scripts/pack-vdh-artifacts.sh    # -> dist/*.crx, dist/*.zip
 The signing key keeps the extension ID stable
 (`gmppgmnjccgklfklpibfkejdjijlnlnd`), so installing a new build replaces the
 old one in place.
+
+## Text size
+
+The phone UI is built around one number: `--vdh-ui-base-font`, the root font
+size in CSS pixels. Every other size in the stylesheet is expressed in `rem`,
+so changing that one property rescales the whole panel, the sidebar and the
+history page. **Settings -> Text size** sets it (slider, steppers, or Reset);
+the default is 21px, which is the size the port has used since `6c95ba9`.
+
+The chosen size lives in `localStorage` (read synchronously, so a saved size is
+applied before the first paint) and in `chrome.storage.local` (durable, and the
+channel that resizes already-open pages such as the embedded history view).
 
 ## Branch policy (user instruction, 2026-11-01)
 

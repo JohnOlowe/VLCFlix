@@ -384,3 +384,37 @@
 - NOT verified end to end: synthetic `<video>` pages are not detected by the
   extension in headless Chromium, so `check-pause-resume.py` cannot drive a
   real download here. Phone test required.
+
+## 2026-11-05 — round 8: the text size was not the panel, it was History
+
+- User: "reduce the font back to the exact size it was before", naming `a02412f`
+  as the good size, and "everywhere in the app".
+- Measured instead of guessing: rendered `a02412f` (`git archive` into /tmp/base,
+  rebuilt with the same patches) side by side with HEAD. The panel is identical
+  -- root 21px, main 21px, toolbar 21px, toolbar button 21px in a 46x44 box, in
+  both trees. The only font-size line added since `a02412f` is `1.05em` on the
+  new subtitles summary.
+- The real regression was History: at `a02412f` it rendered root/body/p at 21px;
+  now it is an iframe of the vendor's stock `history.html`, which runs at 12px
+  root / 16px body. `patch_html()` now patches `history.html` too, and
+  `verify_document()` takes `required=()` because that page has no
+  com-main / com-settings / com-toolbar (without it the build aborted).
+- After: history root 21px, paragraph 21px. Suite green; `3adfd09`.
+
+## 2026-11-05 — round 9: a manual text-size control
+
+- User asked to be able to choose the size themselves.
+- `scripts/patch-vdh-text-size.py` + `extension/content/vdh-text-size.js`:
+  the stylesheet's three hard-coded 21px values (root, the <=400px media query,
+  and the component-host list) became `var(--vdh-ui-base-font, 21px)`, so one
+  property rescales everything else (all other sizes are rem). Spacing and the
+  toolbar icons/tap targets scale too, each with the phone value as a floor
+  (`max(44px, base * 2.09524)`), which leaves 21px bit-for-bit unchanged.
+- Card is the first box in Settings: slider (15-32px), -/+ steppers, live px
+  readout, preview line, reset to 21. Applied live while dragging.
+- Two-tier storage: localStorage for a synchronous first paint (no flash of the
+  default size), chrome.storage.local for durability and for the live update of
+  the other open pages, including the embedded history iframe.
+- `scripts/check-text-size.py`: default still 21px, a real mouse drag on the
+  slider, steppers, reset, persistence across reload, history page follows both
+  on a fresh load and live, and the app's own large/verylarge still stack on top.

@@ -241,7 +241,7 @@ def parsed_shape(text: str):
     return tc
 
 
-def verify_document(name: str, text: str) -> None:
+def verify_document(name: str, text: str, required=("com-main", "com-settings", "com-toolbar")) -> None:
     """Compare the patched document's parsed shape with the pristine one.
 
     The vendor markup is genuinely loose (unclosed <template>/<vbox> at EOF), so
@@ -266,12 +266,12 @@ def verify_document(name: str, text: str) -> None:
         problems.append(f"unclosed stack changed: {after.stack}")
     if text.count("<style") != text.count("</style>"):
         problems.append(f"<style> {text.count('<style')} vs </style> {text.count('</style>')}")
-    for required in ("com-main", "com-settings", "com-toolbar"):
-        if required not in [t for t, _ in after.tags]:
-            problems.append(f"{required} missing from parsed DOM")
+    for needed in required:
+        if needed not in [t for t, _ in after.tags]:
+            problems.append(f"{needed} missing from parsed DOM")
     if problems:
         sys.exit(f"ABORT: {name}: patched document is broken: {'; '.join(problems)}")
-    print(f"  verified: {name} parses with com-main/com-settings/com-toolbar intact")
+    print(f"  verified: {name} parses" + ("" if "history" not in name else " (history page)") + " with the components intact")
 
 
 TOOLBAR_MARK = "vdh-android-toolbar"
@@ -367,7 +367,10 @@ def patch_viewport(root: pathlib.Path) -> None:
 
 
 def patch_html(root: pathlib.Path) -> None:
-    for name in ("popup.html", "sidebar.html"):
+    """history.html is included because the panel shows that page inside itself:
+    on its own it keeps the vendor's 12px root, which would make the history view
+    a different size from the panel it sits in."""
+    for name in ("popup.html", "sidebar.html", "history.html"):
         p = root / "content" / name
         s = p.read_text(encoding="utf-8")
         if CSS_MARK in s:
@@ -388,7 +391,8 @@ def patch_html(root: pathlib.Path) -> None:
         if s.count("</head>") != 1:
             sys.exit(f"ABORT: {name}: expected exactly one </head>")
         out = s.replace("</head>", CSS + "\n</head>")
-        verify_document(name, out)
+        verify_document(name, out, required=() if name == "history.html"
+                        else ("com-main", "com-settings", "com-toolbar"))
         p.write_text(out, encoding="utf-8")
         print(f"patched: {name} (phone scale CSS v6)")
 

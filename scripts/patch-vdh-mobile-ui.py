@@ -334,6 +334,38 @@ def patch_toolbar_template(root: pathlib.Path) -> None:
         print(f"patched: {name} (toolbar icons + padding, inside shadow template)")
 
 
+VIEWPORT = ('<meta name="viewport" content="width=device-width, '
+            'initial-scale=1, viewport-fit=cover">')
+
+
+def patch_viewport(root: pathlib.Path) -> None:
+    """Without a viewport meta tag Chromium lays these pages out at a default
+    ~980px width and then boosts the text to compensate, which makes everything
+    look roughly twice its intended size on a phone. Declaring the device width
+    makes the 21px base mean 21 real pixels and keeps the layout consistent."""
+    for name in ("popup.html", "sidebar.html", "history.html"):
+        p = root / "content" / name
+        s = p.read_text(encoding="utf-8")
+        if 'name="viewport"' in s:
+            print(f"skip (already patched): {name} viewport")
+            continue
+        if s.count("</head>") != 1:
+            sys.exit(f"ABORT: {name}: expected exactly one </head>")
+        head = s.split("</head>")[0]
+        out = head + VIEWPORT + "\n</head>" + s.split("</head>", 1)[1]
+        # earlier passes have already added their own tags, so compare with the
+        # document as it stands rather than with the pristine one
+        was = parsed_shape(s)
+        now = parsed_shape(out)
+        if ([t for t in now.tags if t[0] != "meta"] !=
+                [t for t in was.tags if t[0] != "meta"]):
+            sys.exit(f"ABORT: {name}: the viewport edit changed the document shape")
+        if now.stack != was.stack or s.count("<style") != out.count("<style"):
+            sys.exit(f"ABORT: {name}: the viewport edit unbalanced the document")
+        p.write_text(out, encoding="utf-8")
+        print(f"patched: {name} (viewport meta, device width)")
+
+
 def patch_html(root: pathlib.Path) -> None:
     for name in ("popup.html", "sidebar.html"):
         p = root / "content" / name
@@ -439,5 +471,6 @@ root = stage(pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD)
 patch_worker(root)
 patch_html(root)
 patch_toolbar_template(root)
+patch_viewport(root)
 patch_history_buttons(root)
 print("all patches applied.")

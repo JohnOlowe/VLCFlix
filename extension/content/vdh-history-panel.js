@@ -123,7 +123,7 @@
 
     var title = document.createElement("span");
     title.textContent = "Subtitle format";
-    title.style.cssText = "font-weight:bold; font-size:22px;";
+    title.style.cssText = "font-weight:bold; font-size:1.05em;";
     box.appendChild(title);
 
     var choices = [
@@ -191,7 +191,7 @@
     view.hidden = true;
     view.style.cssText =
       "display:flex; flex-direction:column; gap:10px; padding:10px; " +
-      "overflow:auto; box-sizing:border-box; font-size:21px;";
+      "overflow:auto; box-sizing:border-box;";  /* inherit the user's text size */
 
     var bar = document.createElement("hbox");
     bar.setAttribute("xalign", "center");
@@ -201,7 +201,7 @@
     spacer.setAttribute("flex", "1");
     var title = document.createElement("span");
     title.textContent = "History";
-    title.style.cssText = "font-weight:bold; font-size:23px;";
+    title.style.cssText = "font-weight:bold; font-size:1.1em;";
     bar.appendChild(back);
     bar.appendChild(spacer);
     bar.appendChild(title);
@@ -238,6 +238,7 @@
       if (toolbar) toolbar.style.display = "none";
       this.view.hidden = false;
       this.visible = true;
+      this.syncScale();
       this.refresh();
     },
     close: function () {
@@ -250,6 +251,15 @@
       if (settings) settings.style.display = "";
       if (toolbar) toolbar.style.display = "";
       this.visible = false;
+    },
+    /* follow the panel's own scale: whatever the app set on <html>, use it */
+    syncScale: function () {
+      if (!this.view) return;
+      var root = document.documentElement,
+        size = getComputedStyle(root).fontSize;
+      this.view.style.fontSize = size;
+      var bar = this.view.querySelector("hbox");
+      if (bar) bar.style.fontSize = size;
     },
     refresh: function () {
       var self = this;
@@ -272,6 +282,9 @@
   try {
     chrome.storage.onChanged.addListener(function (ch) {
       if (ch.vdh_journal && api.visible) api.refresh();
+      /* the panel re-applies the font size on <html>; mirror it onto the view so
+         a change while history is open takes effect immediately */
+      if (ch.global_session_state || ch.global_persistent_state) api.syncScale();
     });
   } catch (e) {}
 })();

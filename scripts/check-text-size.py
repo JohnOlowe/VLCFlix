@@ -133,8 +133,8 @@ async def part_b(page):
     m1 = await page.evaluate(MEASURE)
     print(f"   {m1}", flush=True)
     ok(m1["main"] == f"{s1['value']}px", f"com-main follows ({m1['main']})")
-    ok(m1["button"]["h"] >= 44,
-       f"the tap targets stay thumb-sized ({m1['button']})")
+    ok(20 <= m1["button"]["h"] < 44,
+       f"the toolbar shrinks with the text, floored at 20px ({m1['button']})")
 
     # the steppers move it one pixel at a time
     base = s1["value"]

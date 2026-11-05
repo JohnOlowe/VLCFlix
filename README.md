@@ -58,6 +58,22 @@ The chosen size lives in `localStorage` (read synchronously, so a saved size is
 applied before the first paint) and in `chrome.storage.local` (durable, and the
 channel that resizes already-open pages such as the embedded history view).
 
+**Everything else follows it.** The side margins, the spacing unit, the video
+thumbnail height and the toolbar (icons, targets, padding and gap) are all
+proportional to the base size with small floors, so the whole layout shrinks
+with the text instead of the text shrinking inside a fixed frame. Two of those
+were pinned rather than proportional before, which is why nothing appeared to
+move: the spacing floors were the old 21px values themselves, and the toolbar
+was floored at a 44px target / 26px icon, so seven icons could never fit one
+line. They now do -- on a 720px screen at every size, and on a 360px one from
+11px down.
+
+Nothing is allowed to be wider than the screen: the history rows are built from
+web components, so the rules that reach the Play / Retry / Delete buttons and
+the media row's own `flex-shrink: 0` are injected into the component templates
+(`patch_media_templates`). `scripts/check-fit.py` asserts it, with real seeded
+rows, at 360px and 720px and at every text size.
+
 ## Branch policy (user instruction, 2026-11-01)
 
 This branch is an **orphan**: it shares no history and no files with `main`,

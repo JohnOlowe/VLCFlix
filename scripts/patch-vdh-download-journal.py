@@ -599,7 +599,10 @@ try { VDH_STORAGE.mount() } catch (vdhE) { console.warn("[vdhJournal] mount fail
 # ------------------------------------------------------------------- markup --
 
 html = HISTORY_HTML.read_text(encoding="utf-8")
-if "vdh_journal_box" in html:
+# the guard looks for the ELEMENT, not the bare id: the phone stylesheet ships
+# rules for #vdh_journal_box too, and matching the bare string made this patch
+# skip the markup on a tree where it had never been inserted
+if '<vbox id="vdh_journal_box"' in html:
     print("skip (already patched): content/history.html")
 else:
     BLOCK = '''<vbox id="vdh_journal_box" class="roundedbox" hidden>

@@ -435,3 +435,32 @@
   shrinking the text to 5px never shrinks the things you press.
 - Suite green: text-size, viewport, history-open, subtitles, subtitle-options,
   journal, resume, real-extension (rootFont now reports 15px).
+
+## 2026-11-05 — round 11: margins, icons and rows all scale with the text
+
+- The user: the side margins never reduced, the icons never got small enough to
+  sit on one line, and the history rows (Storage & interrupted downloads, the
+  Play buttons) had to be swiped sideways to be read.
+- Root cause of the first two: two things were pinned to floors rather than
+  proportional. The spacing variables had floors equal to their own 21px values
+  (4/8/14/24), so below a 21px base nothing moved at all; and the toolbar was
+  floored at a 44px target / 26px icon, so seven icons could never fit one line.
+  Floors are now 1/2/3/5/40px for the spacing and thumbnail, and 20px (target)
+  / 12px (icon) for the toolbar.
+- Measured on a 720px screen (the user's width): icons 19 -> 14 -> 12 -> 12px
+  across 15/11/8/5px, one line at every size. On 360px: two rows at 15px, one
+  row from 11px down. Side margin 7.1px -> 2.4px across the range.
+- History rows are web components, so page CSS cannot reach the Play / Retry /
+  Delete buttons (sized by width="16" ATTRIBUTES) or the vendor's
+  `flex-shrink: 0`, which is what pushed rows off the screen. New
+  `patch_media_templates()` in patch-vdh-mobile-ui.py injects scaling CSS into
+  the media templates' own <style>, the same way the toolbar is patched.
+- One self-inflicted bug worth remembering: my new CSS mentions
+  `#vdh_journal_box`, and patch-vdh-download-journal.py's idempotency guard
+  greps for the bare string, so it silently skipped inserting the storage box
+  markup. The guard now looks for `<vbox id="vdh_journal_box"`.
+- scripts/check-fit.py (new): margins shrink, icons end up one line, and
+  nothing is wider than the screen -- panel, settings, history page and the
+  embedded history view, at 360px and 720px, at 15/11/8/5px, with real seeded
+  journal rows and a media row built from the real component with a very long
+  file name.

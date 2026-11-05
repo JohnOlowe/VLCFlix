@@ -152,8 +152,15 @@ async def scenario(name, port, seed_bytes, expect, file_id="resume_probe"):
             } catch (e) { return {size: -1, sha: null} }
             return {size, sha};
         }""", f"{file_id}.mp4")
-        await asyncio.sleep(0.5)
-        log = [l for l in logpath.read_text().strip().splitlines() if "big.mp4" in l]
+        # the server writes its log line when the request starts, which can land
+        # just after the worker reports its result: wait for it instead of
+        # reading once and calling a missing line a failure
+        log = []
+        for _ in range(40):
+            await asyncio.sleep(0.25)
+            log = [l for l in logpath.read_text().strip().splitlines() if "big.mp4" in l]
+            if log and any("sent=" in l for l in log):
+                break
         sent = sum(int(l.split("sent=")[1]) for l in log)
         ranges = [l for l in log if "range=bytes=" in l and "range=bytes=0-" not in l]
         print(f"   server: {log or 'nothing'}", flush=True)

@@ -117,9 +117,10 @@ def patch_worker(root: pathlib.Path) -> None:
     for old, new in pairs:
         s = replace_once(s, old, new, "service/main.js")
     # listen for the history request from any content page
-    LISTEN = ('try{chrome.runtime.onMessage.addListener(function(m){'
+    LISTEN = ('try{chrome.runtime.onMessage.addListener(function(m,s){'
               'var a=m&&m.msg?m.msg:m;'
-              'if(a&&a.name==="vdh_open_history"){vdhOpenHistoryOnce.open()}})}catch(e){}')
+              'if(a&&a.name==="vdh_open_history"){'
+              'vdhOpenHistoryOnce.open(s&&s.tab?s.tab.id:undefined)}})}catch(e){}')
     s = HELPER + "\n" + HISTORY_SRC + "\n" + LISTEN + "\n" + s
     sw.write_text(s, encoding="utf-8")
     check = subprocess.run(["node", "--check", str(sw)], capture_output=True, text=True)
@@ -363,6 +364,32 @@ def patch_html(root: pathlib.Path) -> None:
 HIST_MARK = "vdhOpenHistoryOnce()"
 
 
+PANEL_BRIDGE = """
+/* vdhHistoryPanel: history as a view inside the panel, exactly like Settings.
+   The view swaps in place and its Back button restores the panel; nothing is
+   opened in a tab or a window. Loaded from here because both popup.html and
+   sidebar.html already load this module, so no markup or extra script tag (and
+   therefore no CSP change) is needed. */
+window.vdhHistoryOpen = function () {
+  function view() {
+    if (window.vdhHistoryPanel) { window.vdhHistoryPanel.open(); return true; }
+    return false;
+  }
+  try {
+    if (view()) return;
+    import(chrome.runtime.getURL("/content/vdh-history-panel.js")).then(function () {
+      if (!view()) { location.href = "/content/history.html"; }
+    }).catch(function () {
+      /* last resort, and still the same extension page */
+      location.href = "/content/history.html";
+    });
+  } catch (e) {
+    location.href = "/content/history.html";
+  }
+};
+"""
+
+
 def patch_history_buttons(root: pathlib.Path) -> None:
     """The history button used to always open a full tab, ignoring the user's
     dockmode choice. Route every occurrence through the opener helper."""
@@ -385,14 +412,27 @@ def patch_history_buttons(root: pathlib.Path) -> None:
         out, n2 = re.subn(r"[A-Za-z_$][\w$]*\.@@OPEN@@", "@@CALL@@", out)
         if n2 != n:
             sys.exit(f"ABORT: content/{name}: {n} call(s) but {n2} namespace(s)")
-        out = out.replace("@@CALL@@",
-                          "chrome.runtime.sendMessage({msg: {name: 'vdh_open_history', "
-                          "data: null}, channel: 1 /* FromContentToService */})")
+        # In place first (like Settings), and if that is not possible navigate
+        # this very page, which also keeps it inside the panel.
+        out = out.replace("@@CALL@@", "vdhHistoryOpen()")
+        # the original handler closed the popup after opening history in a tab.
+        # The view now swaps in place, so closing the window would destroy it.
+        out, closed = re.subn(
+            r",\s*this\.(?:persistent\(\)\.)?dockmode\s*==\s*\"popup\"\s*&&\s*window\.close\(\)",
+            "", out)
+        if not closed:
+            sys.exit(f"ABORT: content/{name}: the window.close() after history "
+                     "was not found, so history would close itself")
+        if name == "panel.js":
+            # the bridge must exist BEFORE the module body runs: the click handler
+            # references it, and a page error can abort the module before it loads
+            out = PANEL_BRIDGE + "\n" + out
         p.write_text(out, encoding="utf-8")
         total += n
         print(f"patched: content/{name} ({n} history button(s))")
     if not total:
         sys.exit("ABORT: no history buttons patched")
+
 
 
 root = stage(pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD)

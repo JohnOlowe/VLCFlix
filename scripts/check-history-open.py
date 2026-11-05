@@ -160,7 +160,7 @@ async def part_b(ctx, extid):
         for (const f of files) {
             const t = await (await fetch('/content/' + f)).text();
             out[f] = {direct: (t.match(/tabs\\.create\\(\\{\\s*url:\\s*"?\\/content\\/history\\.html/g) || []).length,
-                      viaOpener: (t.match(/_open_history/g) || []).length};
+                      viaOpener: (t.match(/vdhHistoryOpen/g) || []).length};
         }
         return out;
     }""")
@@ -168,7 +168,7 @@ async def part_b(ctx, extid):
     ok(all(v["direct"] == 0 for v in shipped.values()),
        "no shipped page opens history in a tab by itself any more")
     ok(all(v["viaOpener"] >= 1 for v in shipped.values()),
-       "every history button now asks the worker")
+       "every history button shows the in-place view")
 
     # popup mode: the result must be a popup window, never a full tab
     await page.evaluate("""async () => {
@@ -215,54 +215,120 @@ async def part_b(ctx, extid):
 
 
 async def part_c(ctx, extid):
-    """The real button, in the real panel, for each dockmode. Source inspection
-    is not enough: the handler itself once threw before sending anything."""
-    print("\nC. pressing the real history button")
-    for mode in ("popup", "sidebar"):
-        for pg in list(ctx.pages):
-            if "/content/history.html" in pg.url:
-                await pg.close()
-        panel = await ctx.new_page()
-        await panel.goto(f"chrome-extension://{extid}/content/popup.html")
-        await panel.wait_for_timeout(1200)
-        await panel.evaluate("""async (m) => {
-            await chrome.runtime.sendMessage({msg:{name:'redock',data:{mode:m}},channel:1})
-        }""", mode)
-        await asyncio.sleep(1.2)
-        before = len(ctx.pages)
-        clicked = await panel.evaluate("""() => {
-            function deep(root, id) {
-                if (root.getElementById) { const e = root.getElementById(id); if (e) return e; }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) { const r = deep(el.shadowRoot, id); if (r) return r; }
-                }
-                return null;
+    """Pressing History must show history *inside the panel*, the way Settings
+    does, with a Back button that restores the panel. No new tab, no new window,
+    and the page must not navigate away."""
+    print("\nC. history opens in place, like Settings")
+    # part B leaves the sidebar page open; the opener focuses an open history
+    # view first, so start from a clean set of pages
+    for pg in list(ctx.pages):
+        if "/content/sidebar.html" in pg.url or "/content/history.html" in pg.url:
+            await pg.close()
+    panel = await ctx.new_page()
+    await panel.goto(f"chrome-extension://{extid}/content/popup.html")
+    await panel.wait_for_timeout(1500)
+
+    tabs_before = len(ctx.pages)
+    clicked = await panel.evaluate("""() => {
+        function deep(root, id) {
+            if (root.getElementById) { const e = root.getElementById(id); if (e) return e; }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const r = deep(el.shadowRoot, id); if (r) return r; }
             }
-            const el = deep(document, 'button_show_history');
-            if (!el) return 'no button';
-            el.click();
-            return 'clicked';
-        }""")
-        await asyncio.sleep(2.5)
-        views = [p for p in ctx.pages if "/content/history.html" in p.url]
-        print(f"   {mode} mode: click={clicked} history views={len(views)}", flush=True)
-        ok(clicked == "clicked", f"{mode} mode: the history button exists in the panel")
-        ok(bool(views), f"{mode} mode: pressing it opens a history view")
-        if views:
-            body = await views[0].evaluate("""() => ({
-                heading: (document.querySelector('h2') || {}).textContent || '',
-                settings: !!document.getElementById('vdh_subs_settings_box'),
-                url_box: !!document.getElementById('vdh_subs_url'),
-            })""")
-            ok("ubtitle" in body["heading"] or body["settings"],
-               f"{mode} mode: the page really rendered ({body['heading'][:30]!r})")
-            ok(body["url_box"], f"{mode} mode: the stream address box is there too")
-        if mode == "popup" and views:
-            kind = await views[0].evaluate("""async () =>
-                (await chrome.windows.getCurrent()).type""")
-            ok(kind == "popup",
-               f"popup mode keeps the panel size, never a browser tab ({kind})")
-        await panel.close()
+            return null;
+        }
+        const el = deep(document, 'button_show_history');
+        if (!el) return 'no button';
+        el.click();
+        return 'clicked';
+    }""")
+    await asyncio.sleep(2)
+    ok(clicked == "clicked", "the history button exists in the panel")
+    ok(not panel.is_closed(), "the panel was not closed or navigated away")
+
+    state = await panel.evaluate("""() => {
+        const v = document.getElementById('vdh_history_view');
+        const main = document.getElementById('main');
+        return {path: location.pathname, has: !!v,
+                hidden: v ? v.hidden : null,
+                panelHidden: main ? main.style.display : null,
+                rows: v ? v.querySelectorAll('.vdh_history_row').length : -1,
+                radios: v ? [...v.querySelectorAll('input[type=radio]')].map(r => r.value) : [],
+                back: v ? [...v.querySelectorAll('button')].some(b => b.textContent.indexOf('Back') >= 0) : false};
+    }""")
+    print(f"   state: {state}", flush=True)
+    ok(state["path"].endswith("/content/popup.html"),
+       f"the panel page is still the panel, not history.html ({state['path']})")
+    ok(state["has"] and state["hidden"] is False,
+       "a history view is shown inside the panel")
+    ok(state["panelHidden"] == "none", "the normal panel view is swapped out")
+    ok(state["rows"] >= 0, f"the history list rendered ({state['rows']} row(s))")
+    ok(state["radios"] == ["keep", "smart", "srt"],
+       f"the subtitle format choices are there too ({state['radios']})")
+    ok(state["back"], "there is a Back button")
+    ok(len(ctx.pages) == tabs_before,
+       f"no tab or window was opened ({tabs_before} -> {len(ctx.pages)})")
+
+    after = await panel.evaluate("""() => {
+        const v = document.getElementById('vdh_history_view');
+        [...v.querySelectorAll('button')].find(b => b.textContent.indexOf('Back') >= 0).click();
+        const main = document.getElementById('main');
+        return {hidden: v.hidden, panelShown: main ? main.style.display : null};
+    }""")
+    print(f"   after Back: {after}", flush=True)
+    ok(after["hidden"] and after["panelShown"] == "",
+       f"Back returns to the panel ({after})")
+    await panel.close()
+
+
+async def part_d(ctx, extid):
+    """A download's subtitle button inside the panel view must work too."""
+    print("\nD. saving subtitles from inside the panel view")
+    panel = await ctx.new_page()
+    await panel.goto(f"chrome-extension://{extid}/content/popup.html")
+    await panel.wait_for_timeout(1200)
+    await panel.evaluate("""async (fix) => {
+        const got = await chrome.storage.local.get('vdh_journal');
+        const j = got.vdh_journal || {};
+        j['dl:panel_probe'] = {id: 'dl:panel_probe', download_id: 'panel_probe',
+            status: 'done', filename: 'Panel Course.mp4', subdir: '', updated_at: Date.now(),
+            bytes: 4194304, subtitles: [{url: fix + '/segmented/subs/en.m3u8',
+                                        language: 'en', type: 'http'}]};
+        await chrome.storage.local.set({vdh_journal: j});
+    }""", "http://127.0.0.1:8140")
+    await asyncio.sleep(1)
+    await panel.evaluate("""() => window.vdhHistoryOpen()""")
+    await asyncio.sleep(1.5)
+    before = await panel.evaluate("""async () => (await chrome.downloads.search({})).length""")
+    clicked = await panel.evaluate("""() => {
+        const v = document.getElementById('vdh_history_view');
+        const row = [...v.querySelectorAll('.vdh_history_row')]
+            .find(r => r.textContent.indexOf('Panel Course.mp4') >= 0);
+        if (!row) return 'no row';
+        const b = [...row.querySelectorAll('button')]
+            .find(x => x.textContent.indexOf('Subtitles:') === 0);
+        if (!b) return 'no subtitle button';
+        b.click();
+        return 'clicked';
+    }""")
+    print(f"   {clicked}", flush=True)
+    ok(clicked == "clicked", "the in-panel view offers the subtitles button")
+    got = []
+    for _ in range(60):
+        await asyncio.sleep(0.25)
+        got = await panel.evaluate("""async () =>
+            (await chrome.downloads.search({})).map(d => ({state: d.state}))""")
+        if len(got) > before and got[-1]["state"] == "complete":
+            break
+    ok(len(got) > before and got[-1]["state"] == "complete",
+       f"the subtitle file was written from the panel view ({got[-1] if got else None})")
+    await panel.evaluate("""async () => {
+        const j = (await chrome.storage.local.get('vdh_journal')).vdh_journal || {};
+        delete j['dl:panel_probe'];
+        await chrome.storage.local.set({vdh_journal: j,
+            vdh_subtitle_settings: {format: 'keep', placement: 'file'}});
+    }""")
+    await panel.close()
 
 
 async def main():
@@ -281,6 +347,7 @@ async def main():
         await part_a(ctx, extid)
         await part_b(ctx, extid)
         await part_c(ctx, extid)
+        await part_d(ctx, extid)
         await ctx.close()
     print("\nRESULT:", "PASS" if not failures else f"FAIL ({len(failures)})")
     for f in failures:

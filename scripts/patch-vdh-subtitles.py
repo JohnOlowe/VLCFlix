@@ -566,4 +566,5 @@ else:
     check_module(HISTORY)
     print("patched: content/history.js (settings ui + stream address)")
 
+print("vendored: service/vdh-subtitles.js")
 print("all patches applied.")

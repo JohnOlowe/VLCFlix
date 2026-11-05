@@ -4,6 +4,7 @@ Serves three subtitle shapes so the stitcher is exercised, not just the happy
 path:
 
   /plain/master.m3u8            one subtitle rendition -> a single .vtt file
+  /srtserved/master.m3u8        a rendition that is already SubRip (no conversion)
   /segmented/master.m3u8        two renditions, each a media playlist of
                                 WebVTT segments that carry X-TIMESTAMP-MAP, so
                                 the cue times must be offset to stay continuous
@@ -120,9 +121,27 @@ en-1.vtt
 #EXT-X-ENDLIST
 """
 
+MASTER_SRT = """#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="subs/en.srt"
+#EXT-X-STREAM-INF:BANDWIDTH=800000,SUBTITLES="subs"
+video.m3u8
+"""
+
+SRT_EN = """1
+00:00:01,000 --> 00:00:02,500
+Already SubRip, served as SubRip
+
+2
+00:00:03,000 --> 00:00:04,000
+Second cue
+"""
+
 ROUTES = {
     "/plain/master.m3u8": ("application/vnd.apple.mpegurl", MASTER_PLAIN),
     "/plain/subs/en.vtt": ("text/vtt", VTT_ONE),
+    "/srtserved/master.m3u8": ("application/vnd.apple.mpegurl", MASTER_SRT),
+    "/srtserved/subs/en.srt": ("application/x-subrip", SRT_EN),
     "/segmented/master.m3u8": ("application/vnd.apple.mpegurl", MASTER_SEGMENTED),
     "/segmented/subs/en.m3u8": ("application/vnd.apple.mpegurl", SUBS_EN),
     "/segmented/subs/es.m3u8": ("application/vnd.apple.mpegurl", SUBS_ES),

@@ -40,6 +40,8 @@ SRC = REPO / "extension"
 BUILD = REPO / "build" / "extension"
 
 MARKER = "vdhMobileSidebar"      # service worker helper
+HISTORY_SRC = (pathlib.Path(__file__).resolve().parent.parent
+               / "extension" / "service" / "vdh-history-opener.js").read_text(encoding="utf-8")      # service worker helper
 CSS_MARK = "vdh-android-ui-v6"   # page override
 OLD_CSS_MARKS = ("vdh-android-ui-v5", "vdh-android-ui-v4", "vdh-android-ui-v3",
                  "vdh-android-ui-v2", "vdh-android-ui")
@@ -114,7 +116,10 @@ def patch_worker(root: pathlib.Path) -> None:
     ]
     for old, new in pairs:
         s = replace_once(s, old, new, "service/main.js")
-    s = HELPER + "\n" + s
+    # listen for the history request from any content page
+    LISTEN = ('try{chrome.runtime.onMessage.addListener(function(m){'
+              'if(m&&m.name==="vdh_open_history"){vdhOpenHistoryOnce()}})}catch(e){}')
+    s = HELPER + "\n" + HISTORY_SRC + "\n" + LISTEN + "\n" + s
     sw.write_text(s, encoding="utf-8")
     check = subprocess.run(["node", "--check", str(sw)], capture_output=True, text=True)
     if check.returncode != 0:
@@ -354,8 +359,37 @@ def patch_html(root: pathlib.Path) -> None:
         print(f"patched: {name} (phone scale CSS v6)")
 
 
+HIST_MARK = "vdhOpenHistoryOnce()"
+
+
+def patch_history_buttons(root: pathlib.Path) -> None:
+    """The history button used to always open a full tab, ignoring the user's
+    dockmode choice. Route every occurrence through the opener helper."""
+    total = 0
+    for name in ("panel.js", "history.js", "register_components.js"):
+        p = root / "content" / name
+        s = p.read_text(encoding="utf-8")
+        if HIST_MARK in s:
+            print(f"skip (already patched): content/{name} history button")
+            continue
+        out, n = re.subn(r"[A-Za-z_$][\w$]*\.tabs\.create\(\{\s*url:\s*\"/content/history\.html\"\s*\}\)",
+                         "vdhOpenHistoryOnce()", s)
+        if not n:
+            sys.exit(f"ABORT: content/{name}: no history tab creation found")
+        # the helper lives in the worker; ask it rather than duplicating logic
+        out = re.sub(r"vdhOpenHistoryOnce\(\)",
+                     "chrome.runtime.sendMessage({name: 'vdh_open_history', data: null})",
+                     out)
+        p.write_text(out, encoding="utf-8")
+        total += n
+        print(f"patched: content/{name} ({n} history button(s))")
+    if not total:
+        sys.exit("ABORT: no history buttons patched")
+
+
 root = stage(pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else BUILD)
 patch_worker(root)
 patch_html(root)
 patch_toolbar_template(root)
+patch_history_buttons(root)
 print("all patches applied.")

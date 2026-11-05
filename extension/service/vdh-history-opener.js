@@ -1,74 +1,75 @@
 var vdhOpenHistoryOnce=function(){
-  function open(kind){
-    var h=chrome.runtime.getURL("/content/history.html");
-    if(kind==="sidebar"){
-      var sb=chrome.runtime.getURL("/content/sidebar.html");
-      try{
-        chrome.tabs.query({url:sb},function(t){
-          if(t&&t.length){chrome.tabs.update(t[0].id,{active:!0})}
-          else{chrome.tabs.create({url:sb})}
-        });
-      }catch(e){chrome.tabs.create({url:sb})}
-      return;
-    }
-    /* popup and window modes both keep the panel size: never a full tab */
+  var H="/content/history.html", SB="/content/sidebar.html", PO="/content/popup.html";
+  function u(p){return chrome.runtime.getURL(p)}
+  function liveMode(){
     try{
-      chrome.windows.create({url:h,type:"popup",width:460,height:760,focused:!0});
-    }catch(e){
-      chrome.tabs.create({url:h});
-    }
-  }
-  function fromChoice(){
-    /* the worker holds the live settings object; it is always current, while
-       the persisted copy may still be in flight right after a mode change */
-    try{
-      var live=globalThis._persistent_state;
-      if(live&&(live.dockmode==="sidebar"||live.dockmode==="popup"||live.dockmode==="window")){
-        open(live.dockmode);
-        return;
+      var s=globalThis._persistent_state;
+      if(s&&(s.dockmode==="sidebar"||s.dockmode==="popup"||s.dockmode==="window")){
+        return s.dockmode;
       }
     }catch(e){}
-    try{
-      chrome.storage.local.get("global_persistent_state",function(g){
-        var v=g&&g.global_persistent_state,
-            m=v&&v.__serde_val&&v.__serde_val.dockmode,
-            m2=v&&v.dockmode;
-        m=m||m2;
-        if(m==="sidebar"||m==="popup"||m==="window"){open(m);return}
-        /* no explicit choice: the origin of an open popup tells the truth */
-        var po=chrome.runtime.getURL("/content/popup.html");
-        try{
-          chrome.tabs.query({url:po},function(t){
-            if(t&&t.length&&t[0].url&&t[0].url.indexOf("sidebar")>0){open("sidebar")}
-            else{open("window")}
-          });
-        }catch(e){open("window")}
-      });
-    }catch(e){open("window")}
+    return null;
   }
-  try{
-    var po=chrome.runtime.getURL("/content/popup.html");
-    if(chrome.runtime.getContexts){
-      var live=chrome.runtime.getContexts({contextTypes:["POPUP"]});
-      if(live&&live.then){
-        live.then(function(c){
-          if(c&&c.length){
-            /* a popup is open, so that is where history belongs. Reloading the
-               popup keeps it a popup and shows the fresh list. */
-            try{
-              chrome.tabs.query({active:!0,currentWindow:!0},function(t){
-                if(t&&t[0]&&t[0].url&&t[0].url.indexOf(po)===0){
-                  chrome.tabs.reload(t[0].id);
-                  return;
-                }
-                fromChoice();
-              });
-            }catch(e){fromChoice()}
-          }else{fromChoice()}
-        }).catch(fromChoice);
-        return;
+  /* an already open history view is the best target: focus it, never duplicate */
+  function focusExisting(done){
+    try{
+      chrome.tabs.query({url:u(H)+"*"},function(t){
+        if(t&&t.length){
+          try{chrome.tabs.update(t[0].id,{active:!0})}catch(e){}
+          try{chrome.windows.update(t[0].windowId,{focused:!0})}catch(e){}
+          return done(true);
+        }
+        done(false);
+      });
+    }catch(e){done(false)}
+  }
+  /* sidebar mode: the sidebar page becomes history, so the choice is respected.
+     Sidebar mode on this build is a page, not a browser panel. */
+  function sidebar(){
+    /* the sidebar page is the sidebar on this build. If it is open, it becomes
+       history in place (no extra view). If it is still starting up, wait for it
+       briefly instead of racing it and leaving two views behind. */
+    var tries=0;
+    (function look(){
+      tries++;
+      try{
+        chrome.tabs.query({url:u(SB)+"*"},function(t){
+          if(t&&t.length){
+            try{chrome.tabs.update(t[0].id,{url:u(H),active:!0})}
+            catch(e){try{chrome.tabs.create({url:u(H)})}catch(e2){}}
+            return;
+          }
+          if(tries<10){return setTimeout(look,150)}
+          try{chrome.tabs.create({url:u(H)})}catch(e){}
+        });
+      }catch(e){
+        if(tries<10){return setTimeout(look,150)}
+        try{chrome.tabs.create({url:u(H)})}catch(e2){}
       }
-    }
-  }catch(e){}
-  fromChoice();
-};
+    })();
+  }
+  /* popup and window modes: a compact window keeps the panel size and, unlike
+     the toolbar popup, can actually be looked at. */
+  function compact(){
+    try{
+      chrome.windows.create({url:u(H),type:"popup",width:460,height:760,focused:!0});
+      return;
+    }catch(e){}
+    try{chrome.tabs.create({url:u(H)})}catch(e){}
+  }
+  function open(){
+    focusExisting(function(found){
+      if(found)return;
+      var m=liveMode();
+      if(m==="sidebar"){sidebar();return}
+      compact();
+    });
+  }
+  /* the panel asks for this when the button is pressed and the popup is about to
+     close: do not let the request die with the popup */
+  function openSoon(){
+    open();
+    setTimeout(function(){},0);
+  }
+  return {open:open, openSoon:openSoon};
+}();

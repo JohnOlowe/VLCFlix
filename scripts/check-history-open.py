@@ -214,6 +214,57 @@ async def part_b(ctx, extid):
     await page.close()
 
 
+async def part_c(ctx, extid):
+    """The real button, in the real panel, for each dockmode. Source inspection
+    is not enough: the handler itself once threw before sending anything."""
+    print("\nC. pressing the real history button")
+    for mode in ("popup", "sidebar"):
+        for pg in list(ctx.pages):
+            if "/content/history.html" in pg.url:
+                await pg.close()
+        panel = await ctx.new_page()
+        await panel.goto(f"chrome-extension://{extid}/content/popup.html")
+        await panel.wait_for_timeout(1200)
+        await panel.evaluate("""async (m) => {
+            await chrome.runtime.sendMessage({msg:{name:'redock',data:{mode:m}},channel:1})
+        }""", mode)
+        await asyncio.sleep(1.2)
+        before = len(ctx.pages)
+        clicked = await panel.evaluate("""() => {
+            function deep(root, id) {
+                if (root.getElementById) { const e = root.getElementById(id); if (e) return e; }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const r = deep(el.shadowRoot, id); if (r) return r; }
+                }
+                return null;
+            }
+            const el = deep(document, 'button_show_history');
+            if (!el) return 'no button';
+            el.click();
+            return 'clicked';
+        }""")
+        await asyncio.sleep(2.5)
+        views = [p for p in ctx.pages if "/content/history.html" in p.url]
+        print(f"   {mode} mode: click={clicked} history views={len(views)}", flush=True)
+        ok(clicked == "clicked", f"{mode} mode: the history button exists in the panel")
+        ok(bool(views), f"{mode} mode: pressing it opens a history view")
+        if views:
+            body = await views[0].evaluate("""() => ({
+                heading: (document.querySelector('h2') || {}).textContent || '',
+                settings: !!document.getElementById('vdh_subs_settings_box'),
+                url_box: !!document.getElementById('vdh_subs_url'),
+            })""")
+            ok("ubtitle" in body["heading"] or body["settings"],
+               f"{mode} mode: the page really rendered ({body['heading'][:30]!r})")
+            ok(body["url_box"], f"{mode} mode: the stream address box is there too")
+        if mode == "popup" and views:
+            kind = await views[0].evaluate("""async () =>
+                (await chrome.windows.getCurrent()).type""")
+            ok(kind == "popup",
+               f"popup mode keeps the panel size, never a browser tab ({kind})")
+        await panel.close()
+
+
 async def main():
     async with async_playwright() as p:
         ctx = await p.chromium.launch_persistent_context(
@@ -229,6 +280,7 @@ async def main():
         print("extension id:", extid)
         await part_a(ctx, extid)
         await part_b(ctx, extid)
+        await part_c(ctx, extid)
         await ctx.close()
     print("\nRESULT:", "PASS" if not failures else f"FAIL ({len(failures)})")
     for f in failures:

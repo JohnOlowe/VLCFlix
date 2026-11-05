@@ -118,7 +118,8 @@ def patch_worker(root: pathlib.Path) -> None:
         s = replace_once(s, old, new, "service/main.js")
     # listen for the history request from any content page
     LISTEN = ('try{chrome.runtime.onMessage.addListener(function(m){'
-              'if(m&&m.name==="vdh_open_history"){vdhOpenHistoryOnce()}})}catch(e){}')
+              'var a=m&&m.msg?m.msg:m;'
+              'if(a&&a.name==="vdh_open_history"){vdhOpenHistoryOnce.open()}})}catch(e){}')
     s = HELPER + "\n" + HISTORY_SRC + "\n" + LISTEN + "\n" + s
     sw.write_text(s, encoding="utf-8")
     check = subprocess.run(["node", "--check", str(sw)], capture_output=True, text=True)
@@ -373,13 +374,20 @@ def patch_history_buttons(root: pathlib.Path) -> None:
             print(f"skip (already patched): content/{name} history button")
             continue
         out, n = re.subn(r"[A-Za-z_$][\w$]*\.tabs\.create\(\{\s*url:\s*\"/content/history\.html\"\s*\}\)",
-                         "vdhOpenHistoryOnce()", s)
+                         "@@OPEN@@", s)
         if not n:
             sys.exit(f"ABORT: content/{name}: no history tab creation found")
-        # the helper lives in the worker; ask it rather than duplicating logic
-        out = re.sub(r"vdhOpenHistoryOnce\(\)",
-                     "chrome.runtime.sendMessage({name: 'vdh_open_history', data: null})",
-                     out)
+        # the helper lives in the worker; ask it rather than duplicating logic.
+        # The extension only dispatches {msg, channel} envelopes, so the request
+        # must be wrapped the same way or the worker never sees it.
+        # consume the "namespace." that preceded the call, otherwise the site
+        # reads `Wr.chrome.runtime...` (Wr has no such member) and throws.
+        out, n2 = re.subn(r"[A-Za-z_$][\w$]*\.@@OPEN@@", "@@CALL@@", out)
+        if n2 != n:
+            sys.exit(f"ABORT: content/{name}: {n} call(s) but {n2} namespace(s)")
+        out = out.replace("@@CALL@@",
+                          "chrome.runtime.sendMessage({msg: {name: 'vdh_open_history', "
+                          "data: null}, channel: 1 /* FromContentToService */})")
         p.write_text(out, encoding="utf-8")
         total += n
         print(f"patched: content/{name} ({n} history button(s))")

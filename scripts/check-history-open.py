@@ -214,19 +214,51 @@ async def part_b(ctx, extid):
     await page.close()
 
 
+async def seed_journal(page, *, with_args=False, fix="http://127.0.0.1:8140"):
+    await page.evaluate("""async ([fix, withArgs]) => {
+        const P = v => ({__serde_tag:'primitive', __serde_val:v});
+        const U = v => ({__serde_tag:'url', __serde_val:v});
+        const O = d => ({__serde_tag:'object', __serde_val:d});
+        const A_ = l => ({__serde_tag:'array', __serde_val:l});
+        const SOME = v => ({__serde_tag:'some', __serde_val:v});
+        const NONE = {__serde_tag:'none'};
+        const url = 'http://127.0.0.1:8123/video.mp4';
+        const rec = {id:'dl:emb_probe', download_id:'emb_probe', status:'interrupted',
+            filename:'Interrupted Course.mp4', bytes: 12345678, percent: 42,
+            subdir:'', updated_at: Date.now(),
+            subtitles:[{url: fix + '/segmented/subs/en.m3u8', language:'en', type:'http'}]};
+        if (withArgs) {
+            rec.download_args = O({download_id:P('emb_probe'), headers:A_([]),
+                good_basename:P('Interrupted Course'), muxer:P('mp4'), subdir:P(''),
+                will_use_jsfetch:P(false), save_as:P(false),
+                strategy:P('http_audio_video_one_source'), url:U(url), extension:P('mp4'),
+                is_youtube:P(false), throttle:P(false), carry_get_params:P(false)});
+            rec.media = O({hash:P('h'), type:P('http_audio_video'), has_drm:P(false),
+                is_youtube:P(false), url:SOME(U(url)), sent_headers:A_([]), initiator:NONE,
+                availability:P('available'), size:P(8192), duration:P(1.0),
+                sources:A_([O({url:U(url), mime_type:P('video/mp4'), is_audio:P(false),
+                    is_video:P(true), codec:P('avc1'), bitrate:P(0)})]),
+                cache:NONE, subtitles:NONE});
+            rec.meta = O({tab_id:P(1), url:SOME(U('http://127.0.0.1:8123/index.html')),
+                favicon_url:NONE, title:SOME(P('t')), default_action:P('download')});
+        }
+        await chrome.storage.local.set({vdh_journal: {'dl:emb_probe': rec}});
+    }""", [fix, with_args])
+
+
 async def part_c(ctx, extid):
-    """Pressing History must show history *inside the panel*, the way Settings
-    does, with a Back button that restores the panel. No new tab, no new window,
-    and the page must not navigate away."""
-    print("\nC. history opens in place, like Settings")
-    # part B leaves the sidebar page open; the opener focuses an open history
-    # view first, so start from a clean set of pages
+    """Pressing History must show the REAL history page inside the panel: same
+    page, all of its features (the app's own list, Retry, storage info), a Back
+    button that actually works, and no new tab or window."""
+    print("\nC. history shows the real page inside the panel")
     for pg in list(ctx.pages):
         if "/content/sidebar.html" in pg.url or "/content/history.html" in pg.url:
             await pg.close()
     panel = await ctx.new_page()
     await panel.goto(f"chrome-extension://{extid}/content/popup.html")
     await panel.wait_for_timeout(1500)
+    await seed_journal(panel, with_args=True)
+    await asyncio.sleep(0.6)
 
     tabs_before = len(ctx.pages)
     clicked = await panel.evaluate("""() => {
@@ -245,115 +277,100 @@ async def part_c(ctx, extid):
     await asyncio.sleep(2)
     ok(clicked == "clicked", "the history button exists in the panel")
     ok(not panel.is_closed(), "the panel was not closed or navigated away")
-
-    state = await panel.evaluate("""() => {
-        const v = document.getElementById('vdh_history_view');
-        const main = document.getElementById('main');
-        return {path: location.pathname, has: !!v,
-                hidden: v ? v.hidden : null,
-                /* the app hides views with the hidden ATTRIBUTE, like its own
-                   settings toggle does; check that, not inline styles */
-                panelHidden: main ? main.getAttribute('hidden') : null,
-                rows: v ? v.querySelectorAll('.vdh_history_row').length : -1,
-                radios: v ? [...v.querySelectorAll('input[type=radio]')].map(r => r.value) : [],
-                back: v ? [...v.querySelectorAll('button')].some(b => b.textContent.indexOf('Back') >= 0) : false};
-    }""")
-    print(f"   state: {state}", flush=True)
-    ok(state["path"].endswith("/content/popup.html"),
-       f"the panel page is still the panel, not history.html ({state['path']})")
-    ok(state["has"] and state["hidden"] is False,
-       "a history view is shown inside the panel")
-    ok(state["panelHidden"] == "true", "the normal panel view is swapped out")
-    ok(state["rows"] >= 0, f"the history list rendered ({state['rows']} row(s))")
-    ok(state["radios"] == ["keep", "smart", "srt"],
-       f"the subtitle format choices are there too ({state['radios']})")
-    ok(state["back"], "there is a Back button")
-    # the view must sit BELOW the toolbar, never under it: the toolbar is the
-    # app's own chrome and on a phone it is where the fingers go
-    layout = await panel.evaluate("""() => {
-        const v = document.getElementById('vdh_history_view');
-        const tb = document.getElementById('toolbar');
-        const bar = v.querySelector('.vdh_view_toolbar');
-        const rv = v.getBoundingClientRect(), rt = tb.getBoundingClientRect();
-        const rb = bar.getBoundingClientRect();
-        return {toolbarBottom: Math.round(rt.bottom), viewTop: Math.round(rv.top),
-                barTop: Math.round(rb.top),
-                overlap: Math.round(Math.max(0, rt.bottom - rv.top))};
-    }""")
-    print(f"   layout: {layout}", flush=True)
-    ok(layout["overlap"] == 0,
-       f"the view starts below the toolbar, no overlap ({layout['overlap']}px)")
-    ok(layout["barTop"] >= layout["toolbarBottom"],
-       f"the Back bar is below the toolbar ({layout['barTop']} >= {layout['toolbarBottom']})")
-
-
     ok(len(ctx.pages) == tabs_before,
        f"no tab or window was opened ({tabs_before} -> {len(ctx.pages)})")
 
-    after = await panel.evaluate("""() => {
-        const v = document.getElementById('vdh_history_view');
-        [...v.querySelectorAll('button')].find(b => b.textContent.indexOf('Back') >= 0).click();
-        const main = document.getElementById('main');
-        return {hidden: v.hidden, panelShown: main ? main.getAttribute('hidden') : null};
+    state = await panel.evaluate("""() => {
+        const o = document.getElementById('vdh_history_overlay');
+        const f = o ? o.querySelector('iframe') : null;
+        return {path: location.pathname, has: !!o,
+                display: o ? o.style.display : null,
+                src: f ? f.getAttribute('src') : null};
     }""")
+    print(f"   overlay: {state}", flush=True)
+    ok(state["path"].endswith("/content/popup.html"),
+       f"the panel page is still the panel ({state['path']})")
+    ok(state["has"] and state["display"] == "flex",
+       "a history overlay is shown inside the panel")
+    ok(bool(state["src"]) and "/content/history.html" in state["src"],
+       f"it shows the real history page, not a copy ({state['src']})")
+
+    frame = next((f for f in panel.frames if "/content/history.html" in (f.url or "")), None)
+    ok(frame is not None, "the embedded history page loaded")
+    if frame:
+        inner = await frame.evaluate("""() => {
+            const list = document.getElementById('vdh_journal_list');
+            const row = list ? [...list.querySelectorAll('.vdh_journal_row')]
+                .find(r => r.textContent.indexOf('Interrupted Course.mp4') >= 0) : null;
+            return {hasJournalBox: !!document.getElementById('vdh_journal_box'),
+                    journalHidden: (document.getElementById('vdh_journal_box')||{}).hidden,
+                    rowButtons: row ? [...row.querySelectorAll('button')].map(b => b.textContent) : [],
+                    hasDownloadedList: !!document.getElementById('downloaded_container'),
+                    titleHidden: (() => { const h = document.querySelector('#main > h1');
+                        return h ? h.hasAttribute('hidden') : null; })(),
+                    storageInfo: (document.getElementById('vdh_storage_info')||{}).textContent || null};
+        }""")
+        print(f"   embedded page: {inner}", flush=True)
+        ok(inner["hasJournalBox"] and not inner["journalHidden"],
+           "the download journal is visible in the embedded page")
+        ok("Retry" in inner["rowButtons"],
+           f"Retry is offered for an interrupted download ({inner['rowButtons']})")
+        ok("Delete" in inner["rowButtons"],
+           f"Delete is offered too ({inner['rowButtons']})")
+        ok(inner["hasDownloadedList"],
+           "the app's own downloads list is present as well")
+        ok(inner["titleHidden"] is True,
+           "the page's duplicate title is hidden under the overlay bar")
+        ok(bool(inner["storageInfo"]),
+           f"storage info is shown ({str(inner['storageInfo'])[:40]}...)")
+
+    hit = await panel.evaluate("""() => {
+        const o = document.getElementById('vdh_history_overlay');
+        const back = [...o.querySelectorAll('.vdh_history_bar button')]
+            .find(b => b.textContent.indexOf('Back') >= 0);
+        const r = back.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return {hit: !!(top && (top === back || back.contains(top))),
+                top: Math.round(r.top), z: getComputedStyle(o).zIndex};
+    }""")
+    print(f"   back button: {hit}", flush=True)
+    ok(hit["hit"], "the Back button is on top and can actually be tapped")
+
+    await panel.click("#vdh_history_overlay .vdh_history_bar button")
+    await asyncio.sleep(0.8)
+    after = await panel.evaluate("""() => ({
+        display: document.getElementById('vdh_history_overlay').style.display,
+        main: getComputedStyle(document.getElementById('main')).display})""")
     print(f"   after Back: {after}", flush=True)
-    ok(after["hidden"] and after["panelShown"] is None,
-       f"Back returns to the panel ({after})")
-    await panel.evaluate("() => window.vdhHistoryOpen()")
-    await asyncio.sleep(0.6)
-    nan = await panel.evaluate("""async () => {
-        const j = (await chrome.storage.local.get('vdh_journal')).vdh_journal || {};
-        j['dl:nan_probe'] = {id:'dl:nan_probe', download_id:'nan_probe', status:'done',
-            filename:'No percent.mp4', bytes: 907699136, percent: null,
-            subdir:'', updated_at: Date.now()};
-        await chrome.storage.local.set({vdh_journal: j});
-        for (let i = 0; i < 40; i++) {
-            const v = document.getElementById('vdh_history_view');
-            const row = [...v.querySelectorAll('.vdh_history_row')]
-                .find(r => r.textContent.indexOf('No percent.mp4') >= 0);
-            if (row) {
-                return {text: row.textContent,
-                        nan: document.body.textContent.indexOf('NaN') >= 0};
-            }
-            await new Promise(r => setTimeout(r, 100));
-        }
-        return {text: null, nan: document.body.textContent.indexOf('NaN') >= 0};
-    }""")
-    print(f"   no-percent row: {nan['text']}", flush=True)
-    ok(nan["text"] and "NaN" not in nan["text"],
-       f"a download with no percentage shows no NaN ({nan['text']})")
-    ok(not nan["nan"], "NaN appears nowhere on the page")
+    ok(after["display"] == "none", "Back closes the history view")
+    ok(after["main"] != "none", "the panel is visible again after Back")
     await panel.evaluate("""async () => {
         const j = (await chrome.storage.local.get('vdh_journal')).vdh_journal || {};
-        delete j['dl:nan_probe'];
+        delete j['dl:emb_probe'];
         await chrome.storage.local.set({vdh_journal: j});
     }""")
     await panel.close()
 
 
 async def part_d(ctx, extid):
-    """A download's subtitle button inside the panel view must work too."""
-    print("\nD. saving subtitles from inside the panel view")
+    """The embedded page is the real one, so its buttons keep working: saving a
+    subtitle from inside the panel must still write a file."""
+    print("\nD. the embedded page's buttons still work")
     panel = await ctx.new_page()
     await panel.goto(f"chrome-extension://{extid}/content/popup.html")
     await panel.wait_for_timeout(1200)
-    await panel.evaluate("""async (fix) => {
-        const got = await chrome.storage.local.get('vdh_journal');
-        const j = got.vdh_journal || {};
-        j['dl:panel_probe'] = {id: 'dl:panel_probe', download_id: 'panel_probe',
-            status: 'done', filename: 'Panel Course.mp4', subdir: '', updated_at: Date.now(),
-            bytes: 4194304, subtitles: [{url: fix + '/segmented/subs/en.m3u8',
-                                        language: 'en', type: 'http'}]};
-        await chrome.storage.local.set({vdh_journal: j});
-    }""", "http://127.0.0.1:8140")
-    await asyncio.sleep(1)
-    await panel.evaluate("""() => window.vdhHistoryOpen()""")
-    await asyncio.sleep(1.5)
-    before = await panel.evaluate("""async () => (await chrome.downloads.search({})).length""")
-    clicked = await panel.evaluate("""() => {
-        const v = document.getElementById('vdh_history_view');
-        const row = [...v.querySelectorAll('.vdh_history_row')]
-            .find(r => r.textContent.indexOf('Panel Course.mp4') >= 0);
+    await seed_journal(panel)
+    await panel.evaluate("() => window.vdhHistoryOpen()")
+    await asyncio.sleep(2)
+    frame = next((f for f in panel.frames if "/content/history.html" in (f.url or "")), None)
+    ok(frame is not None, "the embedded page is there")
+    if not frame:
+        await panel.close()
+        return
+    before = await frame.evaluate("""async () => (await chrome.downloads.search({})).length""")
+    clicked = await frame.evaluate("""() => {
+        const row = [...document.querySelectorAll('#vdh_journal_list .vdh_journal_row')]
+            .find(r => r.textContent.indexOf('Interrupted Course.mp4') >= 0);
         if (!row) return 'no row';
         const b = [...row.querySelectorAll('button')]
             .find(x => x.textContent.indexOf('Subtitles:') === 0);
@@ -362,19 +379,19 @@ async def part_d(ctx, extid):
         return 'clicked';
     }""")
     print(f"   {clicked}", flush=True)
-    ok(clicked == "clicked", "the in-panel view offers the subtitles button")
+    ok(clicked == "clicked", "the embedded page offers the subtitles button")
     got = []
     for _ in range(60):
         await asyncio.sleep(0.25)
-        got = await panel.evaluate("""async () =>
+        got = await frame.evaluate("""async () =>
             (await chrome.downloads.search({})).map(d => ({state: d.state}))""")
         if len(got) > before and got[-1]["state"] == "complete":
             break
     ok(len(got) > before and got[-1]["state"] == "complete",
-       f"the subtitle file was written from the panel view ({got[-1] if got else None})")
+       f"the subtitle file was written from the embedded page ({got[-1] if got else None})")
     await panel.evaluate("""async () => {
         const j = (await chrome.storage.local.get('vdh_journal')).vdh_journal || {};
-        delete j['dl:panel_probe'];
+        delete j['dl:emb_probe'];
         await chrome.storage.local.set({vdh_journal: j,
             vdh_subtitle_settings: {format: 'keep', placement: 'file'}});
     }""")

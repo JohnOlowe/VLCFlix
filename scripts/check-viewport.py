@@ -67,14 +67,18 @@ async def main():
             await page.evaluate("() => window.vdhHistoryOpen()")
             await page.wait_for_timeout(1000)
             scale = await page.evaluate("""() => {
-                const v = document.getElementById('vdh_history_view');
+                /* the view is now the real history page in an overlay, so its
+                   text size is the embedded page's, not an inline value */
+                const o = document.getElementById('vdh_history_overlay');
+                const bar = o ? o.querySelector('.vdh_history_bar') : null;
                 return {html: getComputedStyle(document.documentElement).fontSize,
-                        view: v ? getComputedStyle(v).fontSize : null,
+                        view: o ? getComputedStyle(o).fontSize : null,
+                        bar: bar ? getComputedStyle(bar).fontSize : null,
                         overflow: document.documentElement.scrollWidth > innerWidth + 1};
             }""")
             print(f"   history view: {json.dumps(scale)}", flush=True)
-            ok(scale["view"] == scale["html"],
-               f"the history view follows the text size ({scale['view']} vs {scale['html']})")
+            ok(scale["bar"] == scale["html"],
+               f"the history bar follows the text size ({scale['bar']} vs {scale['html']})")
             ok(not scale["overflow"],
                f"the history view does not overflow ({scale['overflow']})")
             await ctx.close()

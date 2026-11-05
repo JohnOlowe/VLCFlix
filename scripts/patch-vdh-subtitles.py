@@ -566,5 +566,28 @@ else:
     check_module(HISTORY)
     print("patched: content/history.js (settings ui + stream address)")
 
+# when the panel embeds this page, its own Back banner would be a second Back
+embedded = HISTORY.read_text(encoding="utf-8")
+MARK = "vdh_embedded"
+if MARK in embedded:
+    print("skip (already patched): content/history.js embedded mode")
+else:
+    embedded = embedded.rstrip("\n") + "\n" + r'''
+/* vdhHistoryPanel: when the panel shows this page inside itself, the overlay
+   owns the Back button, so hide this page's own banner and title. */
+try {
+  if (location.search.indexOf("vdh_embedded=1") >= 0) {
+    /* this page has no Back banner of its own; only its big title duplicates
+       the overlay's bar, so hide just that */
+    var vdhTitle = document.querySelector("#main > h1");
+    if (vdhTitle) vdhTitle.setAttribute("hidden", "true");
+    document.documentElement.setAttribute("vdh_embedded", "1");
+  }
+} catch (vdhE) {}
+'''
+    HISTORY.write_text(embedded, encoding="utf-8")
+    check_module(HISTORY)
+    print("patched: content/history.js (embedded mode hides its own Back)")
+
 print("vendored: service/vdh-subtitles.js")
 print("all patches applied.")

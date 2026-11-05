@@ -134,38 +134,140 @@ async def part_a(ctx, extid):
     await page.close()
 
 
-async def part_b(ctx, extid):
-    print("\nB. the settings panel")
-    page = await ctx.new_page()
-    await page.goto(f"chrome-extension://{extid}/content/history.html")
-    await page.wait_for_timeout(1200)
+DEEP = """function deep(root, id) {
+    if (root.getElementById) { const e = root.getElementById(id); if (e) return e; }
+    for (const el of root.querySelectorAll('*'))
+        if (el.shadowRoot) { const r = deep(el.shadowRoot, id); if (r) return r; }
+    return null;
+}"""
 
-    shown = await page.evaluate("""() => {
-        const box = document.getElementById("vdh_subs_settings_box");
+
+async def open_settings(page):
+    """Settings is a view inside the panel, built on demand, so press the real
+    button and wait for the card the same way a finger would find it."""
+    await page.evaluate("(() => {" + DEEP + """
+        const b = deep(document, 'toolbar_button_settings');
+        if (!b) throw new Error('settings button missing');
+        b.click();
+    })()""")
+    for _ in range(60):
+        await asyncio.sleep(0.1)
+        if await page.evaluate("(() => {" + DEEP +
+                               " return !!deep(document, 'vdh_subs_settings_box'); })()"):
+            return True
+    return False
+
+
+async def part_b(ctx, extid):
+    print("\nB. the subtitle settings, where Settings lives")
+    page = await ctx.new_page()
+    await page.goto(f"chrome-extension://{extid}/content/popup.html")
+    await page.wait_for_timeout(1500)
+    ok(await open_settings(page), "pressing Settings shows the subtitle card")
+
+    shown = await page.evaluate("(() => {" + DEEP + """
+        const box = deep(document, 'vdh_subs_settings_box');
         if (!box) return null;
         return {hidden: box.hidden,
-                formats: [...document.querySelectorAll('input[name=\\"vdh_subs_format\\"]')]
-                            .map((r) => r.value),
-                embed: !!document.getElementById("vdh_subs_embed")};
-    }""")
-    print(f"   panel: {shown}", flush=True)
-    ok(shown is not None and not shown["hidden"], "the subtitle settings box is visible")
+                formats: [...box.querySelectorAll('input[name=\\"vdh_subs_format\\\"]')].map((r) => r.value),
+                embed: !!deep(document, 'vdh_subs_embed')};
+    })()""")
+    print(f"   settings card: {shown}", flush=True)
+    ok(shown is not None and not shown["hidden"], "the subtitle settings card is visible")
     ok(shown and shown["formats"] == ["keep", "smart", "srt"],
        f"all three format choices are offered ({shown and shown['formats']})")
     ok(shown and shown["embed"], "the embed checkbox exists")
-    label = await page.evaluate("""() => {
-        const c = document.getElementById("vdh_subs_embed");
-        return c && c.parentElement ? c.parentElement.textContent : "";
-    }""")
+    label = await page.evaluate("(() => {" + DEEP + """
+        const c = deep(document, 'vdh_subs_embed');
+        return c && c.parentElement ? c.parentElement.textContent : '';
+    })()""")
     ok("interrupted" in label and "separate file" in label,
        "the embed option states exactly what it can and cannot do")
 
+    # it must live in Settings, not on the history page
+    hist = await ctx.new_page()
+    await hist.goto(f"chrome-extension://{extid}/content/history.html")
+    await hist.wait_for_timeout(1200)
+    left = await hist.evaluate(
+        "() => !!document.getElementById('vdh_subs_settings_box')")
+    ok(not left, "the history page no longer carries the settings card")
+    await hist.close()
+
+    # the stream address line is collapsed to one line, and really opens
+    collapsed = await page.evaluate("(() => {" + DEEP + """
+        const det = deep(document, 'vdh_subs_url_details');
+        const box = deep(document, 'vdh_subs_url_box');
+        const sum = det.querySelector('summary');
+        const rect = sum.getBoundingClientRect();
+        return {open: det.open, lines: sum.innerText.trim().split('\\n').length,
+                summary: sum.innerText.trim(), cardHeight: Math.round(box.getBoundingClientRect().height),
+                summaryHeight: Math.round(rect.height),
+                inputShown: (() => { const i = deep(document, 'vdh_subs_url');
+                    const b = i.getBoundingClientRect(); return b.height > 0; })()};
+    })()""")
+    print(f"   collapsed: {collapsed}", flush=True)
+    ok(collapsed["open"] is False, "the stream address box starts collapsed")
+    # "one line" means only the title, not the address fields: measure that the
+    # card is no taller than its own heading, whichever way the heading wraps
+    ok(collapsed["cardHeight"] <= collapsed["summaryHeight"] + 26,
+       f"only the heading is visible while collapsed "
+       f"(card {collapsed['cardHeight']}px, heading {collapsed['summaryHeight']}px)")
+    ok(collapsed["inputShown"] is False,
+       "the address field is not painted until the line is opened")
+
+    await page.evaluate("(() => {" + DEEP +
+                        " return deep(document, 'vdh_subs_url_details')"
+                        ".querySelector('summary').click(); })()")
+    await page.wait_for_timeout(600)
+    opened = await page.evaluate("(() => {" + DEEP + """
+        const det = deep(document, 'vdh_subs_url_details');
+        const box = deep(document, 'vdh_subs_url_box');
+        return {open: det.open, cardHeight: Math.round(box.getBoundingClientRect().height),
+                findHeight: Math.round(deep(document, 'vdh_subs_url_find').getBoundingClientRect().height)};
+    })()""")
+    print(f"   expanded: {opened}", flush=True)
+    ok(opened["open"] is True, "tapping the line expands it")
+    ok(opened["cardHeight"] > collapsed["cardHeight"] + 40,
+       f"expanding reveals the contents ({collapsed['cardHeight']} -> {opened['cardHeight']}px)")
+    ok(opened["findHeight"] > 20, "the buttons are usable once expanded")
+
+    # the address box must actually work where it now lives: paste a stream,
+    # press Find, expect the languages, then save one
+    await page.evaluate("(() => {" + DEEP + """
+        deep(document, 'vdh_subs_url').value = 'http://127.0.0.1:8140/segmented/master.m3u8';
+        deep(document, 'vdh_subs_movie_name').value = 'From Settings.mp4';
+        return deep(document, 'vdh_subs_url_find').click();
+    })()""")
+    found = []
+    for _ in range(80):
+        await asyncio.sleep(0.25)
+        found = await page.evaluate("(() => {" + DEEP + """
+            const box = deep(document, 'vdh_subs_url_results');
+            return [...box.querySelectorAll('button')].map((b) => b.textContent);
+        })()""")
+        if found:
+            break
+    print(f"   languages found from Settings: {found}", flush=True)
+    ok(found, "pressing Find subtitles in Settings lists the languages")
+    before = len(await page.evaluate("async () => await chrome.downloads.search({})"))
+    await page.evaluate("(() => {" + DEEP + """
+        return deep(document, 'vdh_subs_url_results').querySelector('button').click();
+    })()""")
+    state = None
+    for _ in range(80):
+        await asyncio.sleep(0.25)
+        dl = await page.evaluate("async () => await chrome.downloads.search({})")
+        if len(dl) > before and dl[-1]["state"] == "complete":
+            state = dl[-1]["state"]
+            break
+    ok(state == "complete", f"a subtitle saved from the Settings card finishes ({state})")
+
     # click "always srt", expect it to persist
-    await page.evaluate("""() => {
-        const r = [...document.querySelectorAll('input[name="vdh_subs_format"]')]
-            .find((x) => x.value === "srt");
-        r.checked = true; r.onchange();
-    }""")
+    await page.evaluate("(() => {" + DEEP + """
+        const box = deep(document, 'vdh_subs_settings_box');
+        [...box.querySelectorAll('input[name=\\"vdh_subs_format\\\"]')]
+            .find((x) => x.value === 'srt').click();
+    })()""")
     await page.wait_for_timeout(1000)
     stored = await page.evaluate("""async () => (await chrome.storage.local.get(
         'vdh_subtitle_settings')).vdh_subtitle_settings""")
@@ -174,10 +276,10 @@ async def part_b(ctx, extid):
        f"choosing 'always srt' is saved ({stored})")
 
     # embed checkbox
-    await page.evaluate("""() => {
-        const c = document.getElementById("vdh_subs_embed");
-        c.checked = true; c.onchange();
-    }""")
+    await page.evaluate("(() => {" + DEEP + """
+        const c = deep(document, 'vdh_subs_embed');
+        c.click();
+    })()""")
     await page.wait_for_timeout(900)
     stored2 = await page.evaluate("""async () => (await chrome.storage.local.get(
         'vdh_subtitle_settings')).vdh_subtitle_settings""")
@@ -186,47 +288,57 @@ async def part_b(ctx, extid):
 
     # survives a reload
     await page.reload()
-    await page.wait_for_timeout(1300)
-    after = await page.evaluate("""() => ({
-        format: [...document.querySelectorAll('input[name="vdh_subs_format"]')]
+    await page.wait_for_timeout(1500)
+    ok(await open_settings(page), "Settings opens again after a reload")
+    after = await page.evaluate("(() => {" + DEEP + """
+        const box = deep(document, 'vdh_subs_settings_box');
+        return {format: [...box.querySelectorAll('input[name=\\"vdh_subs_format\\\"]')]
                   .filter((r) => r.checked).map((r) => r.value)[0],
-        embed: document.getElementById("vdh_subs_embed").checked})""")
+                embed: deep(document, 'vdh_subs_embed').checked};
+    })()""")
     ok(after["format"] == "srt" and after["embed"],
        f"the choices survive a reload ({after})")
 
     # put it back
-    await page.evaluate("""() => {
-        const r = [...document.querySelectorAll('input[name="vdh_subs_format"]')]
-            .find((x) => x.value === "keep");
-        r.checked = true; r.onchange();
-        const c = document.getElementById("vdh_subs_embed");
-        c.checked = false; c.onchange();
-    }""")
-    await page.wait_for_timeout(800)
+    await page.evaluate("(() => {" + DEEP + """
+        const box = deep(document, 'vdh_subs_settings_box');
+        [...box.querySelectorAll('input[name=\\"vdh_subs_format\\\"]')]
+            .find((x) => x.value === 'keep').click();
+        deep(document, 'vdh_subs_embed').click();
+    })()""")
+    await page.wait_for_timeout(900)
     await page.close()
 
 
 async def part_c(ctx, extid, first=False):
     print("\nC. subtitles for a stream that was never downloaded")
     page = await ctx.new_page()
-    await page.goto(f"chrome-extension://{extid}/content/history.html")
-    await page.wait_for_timeout(1000)
+    await page.goto(f"chrome-extension://{extid}/content/popup.html")
+    await page.wait_for_timeout(1500)
+    ok(await open_settings(page), "Settings opens for the address test")
 
     master = f"{FIXTURE}/segmented/master.m3u8"
-    await page.evaluate("""(u) => {
-        const i = document.getElementById("vdh_subs_url");
-        i.value = u;
-        const n = document.getElementById("vdh_subs_movie_name");
+    await page.evaluate("(() => {" + DEEP + """
+        deep(document, 'vdh_subs_url_details').open = true;
+        deep(document, 'vdh_subs_url').value = arguments[0] || '';
+    })()""") if False else None
+    await page.evaluate("(u) => {" + DEEP + """
+        deep(document, 'vdh_subs_url_details').open = true;
+        deep(document, 'vdh_subs_url').value = u;
+        const n = deep(document, 'vdh_subs_movie_name');
         if (n) n.value = "Lecture 4.mp4";
-        document.getElementById("vdh_subs_url_find").click();
+        deep(document, 'vdh_subs_url_find').click();
     }""", master)
 
+    def rows_js(sel):
+        return ("(() => {" + DEEP + """
+            const box = deep(document, 'vdh_subs_url_results');
+            return [...box.querySelectorAll('button')].map((b) => b.textContent);
+        })()""")
+
     rows = None
-    for _ in range(60):
-        rows = await page.evaluate("""() => {
-            const box = document.getElementById("vdh_subs_url_results");
-            return [...box.querySelectorAll("button")].map((b) => b.textContent);
-        }""")
+    for _ in range(80):
+        rows = await page.evaluate(rows_js(""))
         if rows:
             break
         await page.wait_for_timeout(250)
@@ -234,25 +346,25 @@ async def part_c(ctx, extid, first=False):
     ok(bool(rows) and len(rows) >= 2, f"both languages found in the pasted stream ({rows})")
     ok(any("es" in (r or "") for r in (rows or [])), "Spanish is offered")
 
-    downloads_before = await page.evaluate("""async () =>
-        (await chrome.downloads.search({})).length""")
-    await page.evaluate("""() => {
-        const b = [...document.querySelectorAll('#vdh_subs_url_results button')]
-            .find((x) => x.textContent.indexOf("en") >= 0);
+    downloads_before = await page.evaluate(
+        "async () => (await chrome.downloads.search({})).length")
+    await page.evaluate("(() => {" + DEEP + """
+        const b = [...deep(document, 'vdh_subs_url_results').querySelectorAll('button')]
+            .find((x) => x.textContent.indexOf('en') >= 0);
         b.click();
-    }""")
+    })()""")
     sw_logs = []
     for w in ctx.service_workers:
         w.on("console", lambda m: sw_logs.append(m.text))
     downloads = []
-    for _ in range(60):
+    for _ in range(80):
         downloads = await page.evaluate("""async () =>
             (await chrome.downloads.search({})).map((d) =>
                 ({mime: d.mime, state: d.state, error: d.error}))""")
         if len(downloads) > downloads_before and downloads[-1]["state"] == "complete":
             break
         await page.wait_for_timeout(250)
-    saved_name = next((l.split("wrote ")[1].split(" from")[0] for l in sw_logs
+    saved_name = next((l.split("wrote ")[1].split(" from")[0] for l in sw_logs[::-1]
                        if "[vdhSubtitles] wrote" in l), "")
     print(f"   downloads: {downloads} saved as {saved_name}", flush=True)
     ok(len(downloads) == downloads_before + 1,
@@ -265,15 +377,15 @@ async def part_c(ctx, extid, first=False):
     # and with 'always srt' the very same button yields a SubRip file
     await page.evaluate("""async () => { await chrome.storage.local.set(
         { vdh_subtitle_settings: { format: "srt", placement: "file" } }) }""")
-    await page.wait_for_timeout(300)
+    await page.wait_for_timeout(400)
     before = len(downloads)
-    await page.evaluate("""() => {
-        const b = [...document.querySelectorAll('#vdh_subs_url_results button')]
-            .find((x) => x.textContent.indexOf("es") >= 0);
+    await page.evaluate("(() => {" + DEEP + """
+        const b = [...deep(document, 'vdh_subs_url_results').querySelectorAll('button')]
+            .find((x) => x.textContent.indexOf('es') >= 0);
         b.click();
-    }""")
+    })()""")
     downloads2 = []
-    for _ in range(60):
+    for _ in range(80):
         downloads2 = await page.evaluate("""async () =>
             (await chrome.downloads.search({})).map((d) =>
                 ({mime: d.mime, state: d.state, error: d.error}))""")
@@ -296,8 +408,8 @@ async def part_c(ctx, extid, first=False):
 async def part_d(ctx, extid):
     print("\nD. a recorded download keeps honouring the setting")
     page = await ctx.new_page()
-    await page.goto(f"chrome-extension://{extid}/content/history.html")
-    await page.wait_for_timeout(800)
+    await page.goto(f"chrome-extension://{extid}/content/popup.html")
+    await page.wait_for_timeout(1400)
     await page.evaluate("""async (fix) => {
         const got = await chrome.storage.local.get('vdh_journal');
         const j = got.vdh_journal || {};
@@ -306,21 +418,38 @@ async def part_d(ctx, extid):
             filename: 'Options Course.mp4', subdir: '', updated_at: 1,
             subtitles: [{url: fix + '/plain/subs/en.vtt', language: 'en', type: 'http'}],
         };
-        await chrome.storage.local.set({vdh_journal: j});
+        await chrome.storage.local.set({vdh_journal: j,
+            vdh_subtitle_settings: {format: 'srt', placement: 'file'}});
     }""", FIXTURE)
-    await page.wait_for_timeout(1800)
-    before = await page.evaluate("""async () => (await chrome.downloads.search({})).length""")
-    await page.evaluate("""async () => { await chrome.storage.local.set(
-        { vdh_subtitle_settings: { format: "srt", placement: "file" } }) }""")
-    await page.evaluate("""() => {
+    await page.wait_for_timeout(600)
+    # the journal row is in the history view, which is the real page in an overlay
+    await page.evaluate("() => window.vdhHistoryOpen()")
+    frame = None
+    for _ in range(40):
+        await asyncio.sleep(0.25)
+        frame = next((f for f in page.frames if "/content/history.html" in (f.url or "")), None)
+        if frame:
+            break
+    ok(frame is not None, "the history view is showing")
+    if not frame:
+        await page.close()
+        return
+    before = await frame.evaluate("async () => (await chrome.downloads.search({})).length")
+    clicked = await frame.evaluate("""() => {
         const rows = [...document.querySelectorAll('div.vdh_journal_row')];
         const row = rows.find((r) => r.textContent.indexOf('Options Course.mp4') >= 0);
-        const b = [...row.querySelectorAll('button')].find((x) => x.textContent.startsWith('Subtitles:'));
+        if (!row) return 'no row';
+        const b = [...row.querySelectorAll('button')]
+            .find((x) => x.textContent.startsWith('Subtitles:'));
+        if (!b) return 'no button';
         b.click();
+        return 'clicked';
     }""")
+    print(f"   {clicked}", flush=True)
+    ok(clicked == "clicked", "the journal row offers its subtitles button")
     got = []
-    for _ in range(60):
-        got = await page.evaluate("""async () =>
+    for _ in range(80):
+        got = await frame.evaluate("""async () =>
             (await chrome.downloads.search({})).map((d) => ({mime: d.mime, state: d.state}))""")
         if len(got) > before and got[-1]["state"] == "complete":
             break

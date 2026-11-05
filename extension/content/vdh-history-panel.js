@@ -10,6 +10,37 @@
   "use strict";
   var VIEW_ID = "vdh_history_view";
 
+
+  /* the view's own styles, expressed with the app's theme variables so it
+     follows light/dark exactly like the settings page does */
+  function installStyle() {
+    if (document.getElementById("vdh_history_style")) return;
+    var css = document.createElement("style");
+    css.id = "vdh_history_style";
+    css.textContent = [
+      "#" + VIEW_ID + " .vdh_view_toolbar {",
+      "  padding: var(--spacing-medium, 8px);",
+      "  border-bottom: 1px solid var(--theme-box-border);",
+      "  background-color: var(--theme-box-bg);",
+      "}",
+      "#" + VIEW_ID + " .vdh_view_body {",
+      "  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;",
+      "  display: flex; flex-direction: column; gap: var(--spacing-medium, 8px);",
+      "  padding: var(--spacing-medium, 8px);",
+      "}",
+      "#" + VIEW_ID + " .vdh_card { padding: var(--spacing-large, 14px); }",
+      "#" + VIEW_ID + " .vdh_card h2 { margin: 0 0 6px 0; }",
+      "#" + VIEW_ID + " .vdh_history_row:last-child { border-bottom: 0; padding-bottom: 0; }",
+      "#" + VIEW_ID + " .vdh_history_actions { display: flex; flex-wrap: wrap; gap: 8px; }",
+      "#" + VIEW_ID + " .vdh_history_label { word-break: break-word; }",
+      "#" + VIEW_ID + " label { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0; }",
+      "#" + VIEW_ID + " input[type=radio], #" + VIEW_ID + " input[type=checkbox] {",
+      "  width: 1.1em; height: 1.1em; flex: none; margin-top: .15em;",
+      "}"
+    ].join("\n");
+    document.head.appendChild(css);
+  }
+
   function makeButton(label, onclick) {
     var b = document.createElement("button");
     b.textContent = label;
@@ -81,6 +112,8 @@
       var e = journal[key];
       var row = document.createElement("div");
       row.className = "vdh_history_row";
+      row.style.cssText = "display:flex; flex-direction:column; gap:6px; " +
+        "padding-bottom:8px; border-bottom:1px solid var(--theme-box-border, rgba(128,128,128,.3));";
 
       var label = document.createElement("span");
       label.className = "vdh_history_label";
@@ -118,12 +151,11 @@
   function buildSettings() {
     var box = document.createElement("vbox");
     box.id = "vdh_history_settings";
-    box.style.cssText = "display:flex; flex-direction:column; gap:6px; " +
-      "border-top:1px solid rgba(128,128,128,.35); padding-top:10px;";
+    box.className = "roundedbox vdh_card";
+    box.style.cssText = "display:flex; flex-direction:column; gap:6px;";
 
-    var title = document.createElement("span");
+    var title = document.createElement("h2");
     title.textContent = "Subtitle format";
-    title.style.cssText = "font-weight:bold; font-size:1.05em;";
     box.appendChild(title);
 
     var choices = [
@@ -189,19 +221,32 @@
     view.id = VIEW_ID;
     view.setAttribute("flex", "1");
     view.hidden = true;
+    /* Same shape as the app's own views: a flex child of <body>, hidden by the
+       attribute rather than by inline styles, so the layout is identical to how
+       com-main and com-settings behave. */
     view.style.cssText =
-      "display:flex; flex-direction:column; gap:10px; padding:10px; " +
-      "overflow:auto; box-sizing:border-box;";  /* inherit the user's text size */
+      "flex:1 1 auto; min-height:0; display:flex; flex-direction:column; " +
+      "gap:var(--spacing-medium, 8px); padding:var(--spacing-medium, 8px); " +
+      "overflow-y:auto; overflow-x:hidden; box-sizing:border-box;";
 
+    /* the app's settings view puts its Back in a banner with a border under it;
+       match that so this page reads as the same place, not a different one */
     var bar = document.createElement("hbox");
     bar.setAttribute("xalign", "center");
-    bar.style.cssText = "display:flex; align-items:center; gap:10px;";
-    var back = makeButton("\u2039 Back", function () { api.close(); });
+    bar.className = "vdh_view_toolbar";
+    var back = document.createElement("button");
+    back.innerHTML =
+      '<svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="m15 6-6 6 6 6"/></svg><span>Back</span>';
+    back.onclick = function () { api.close(); };
+    back.style.cssText = "display:inline-flex; align-items:center; gap:6px;";
+    back.querySelector("svg").style.cssText = "width:1.1em; height:1.1em;";
     var spacer = document.createElement("spacer");
     spacer.setAttribute("flex", "1");
     var title = document.createElement("span");
     title.textContent = "History";
-    title.style.cssText = "font-weight:bold; font-size:1.1em;";
+    title.style.cssText = "font-weight:bold;";
     bar.appendChild(back);
     bar.appendChild(spacer);
     bar.appendChild(title);
@@ -210,15 +255,30 @@
     list.id = "vdh_history_list";
     list.style.cssText = "display:flex; flex-direction:column; gap:8px;";
 
+    /* one card per download, the same rounded box the settings sections use */
+    var listCard = document.createElement("vbox");
+    listCard.className = "roundedbox vdh_card";
+    var listTitle = document.createElement("h2");
+    listTitle.textContent = "Downloads";
+    listCard.appendChild(listTitle);
+    listCard.appendChild(list);
+
+    var noteCard = document.createElement("vbox");
+    noteCard.className = "roundedbox vdh_card";
     var note = document.createElement("p");
-    note.style.cssText = "opacity:.75; margin:0;";
+    note.style.cssText = "margin:0; opacity:.75;";
     note.textContent = "Downloaded files stay in the browser's downloads. " +
       "Forget removes the entry from this list only.";
+    noteCard.appendChild(note);
+
+    var scroller = document.createElement("div");
+    scroller.className = "vdh_view_body";
+    scroller.appendChild(listCard);
+    scroller.appendChild(noteCard);
+    scroller.appendChild(buildSettings());
 
     view.appendChild(bar);
-    view.appendChild(list);
-    view.appendChild(note);
-    view.appendChild(buildSettings());
+    view.appendChild(scroller);
     return view;
   }
 
@@ -227,29 +287,46 @@
     view: null,
     open: function () {
       if (!this.view) {
+        installStyle();
         this.view = build();
-        document.body.appendChild(this.view);
+        var toolbar = document.getElementById("toolbar");
+        if (toolbar && toolbar.parentNode === document.body) {
+          document.body.insertBefore(this.view, toolbar);
+        } else {
+          document.body.appendChild(this.view);
+        }
       }
-      var main = document.getElementById("main"),
-        settings = document.getElementById("settings"),
-        toolbar = document.getElementById("toolbar");
-      if (main) main.style.display = "none";
-      if (settings) settings.style.display = "none";
-      if (toolbar) toolbar.style.display = "none";
-      this.view.hidden = false;
+      /* exactly what the settings toggle does: hide the other views with the
+         hidden attribute and show this one. The toolbar stays, as it does for
+         settings, so there is always a way back. */
+      this.hideOthers(true);
+      this.view.removeAttribute("hidden");
       this.visible = true;
       this.syncScale();
       this.refresh();
     },
+    hideOthers: function (hide) {
+      ["main", "settings"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (hide) el.setAttribute("hidden", "true");
+        else el.removeAttribute("hidden");
+      });
+    },
     close: function () {
       if (!this.view) return;
-      this.view.hidden = true;
-      var main = document.getElementById("main"),
-        settings = document.getElementById("settings"),
-        toolbar = document.getElementById("toolbar");
-      if (main) main.style.display = "";
-      if (settings) settings.style.display = "";
-      if (toolbar) toolbar.style.display = "";
+      this.view.setAttribute("hidden", "true");
+      /* restore whatever the app itself considered visible: settings if the
+         settings view was open, otherwise the main view */
+      var settings = document.getElementById("settings"),
+        wasSettings = settings && !settings.hasAttribute("hidden");
+      this.hideOthers(false);
+      if (wasSettings) {
+        var main = document.getElementById("main");
+        if (main) main.setAttribute("hidden", "true");
+      } else if (settings) {
+        settings.setAttribute("hidden", "true");
+      }
       this.visible = false;
     },
     /* follow the panel's own scale: whatever the app set on <html>, use it */

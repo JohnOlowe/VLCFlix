@@ -251,7 +251,9 @@ async def part_c(ctx, extid):
         const main = document.getElementById('main');
         return {path: location.pathname, has: !!v,
                 hidden: v ? v.hidden : null,
-                panelHidden: main ? main.style.display : null,
+                /* the app hides views with the hidden ATTRIBUTE, like its own
+                   settings toggle does; check that, not inline styles */
+                panelHidden: main ? main.getAttribute('hidden') : null,
                 rows: v ? v.querySelectorAll('.vdh_history_row').length : -1,
                 radios: v ? [...v.querySelectorAll('input[type=radio]')].map(r => r.value) : [],
                 back: v ? [...v.querySelectorAll('button')].some(b => b.textContent.indexOf('Back') >= 0) : false};
@@ -261,7 +263,7 @@ async def part_c(ctx, extid):
        f"the panel page is still the panel, not history.html ({state['path']})")
     ok(state["has"] and state["hidden"] is False,
        "a history view is shown inside the panel")
-    ok(state["panelHidden"] == "none", "the normal panel view is swapped out")
+    ok(state["panelHidden"] == "true", "the normal panel view is swapped out")
     ok(state["rows"] >= 0, f"the history list rendered ({state['rows']} row(s))")
     ok(state["radios"] == ["keep", "smart", "srt"],
        f"the subtitle format choices are there too ({state['radios']})")
@@ -273,10 +275,10 @@ async def part_c(ctx, extid):
         const v = document.getElementById('vdh_history_view');
         [...v.querySelectorAll('button')].find(b => b.textContent.indexOf('Back') >= 0).click();
         const main = document.getElementById('main');
-        return {hidden: v.hidden, panelShown: main ? main.style.display : null};
+        return {hidden: v.hidden, panelShown: main ? main.getAttribute('hidden') : null};
     }""")
     print(f"   after Back: {after}", flush=True)
-    ok(after["hidden"] and after["panelShown"] == "",
+    ok(after["hidden"] and after["panelShown"] is None,
        f"Back returns to the panel ({after})")
     await panel.close()
 

@@ -495,3 +495,66 @@
   orphans; proven across a real browser restart (64 KiB partial intact, orphan
   gone). Reinstalling the extension, or a browser restart that drops a
   side-loaded extension, still wipes it -- nothing in the extension can help.
+
+## Round 13 - subtitles for DASH streams (.mpd)
+
+You asked for the one case that was still missing: HLS subtitles worked, DASH
+did not. Both halves of that are now done.
+
+**Why DASH had nothing to download.** The vendor's HLS path records a subtitle
+as a URL. Its DASH path does not: `TS()` in main.js records
+`{language, type: "id", id}` where the id is the MPD Representation id, because
+on desktop the track is muxed by ffmpeg rather than fetched. There is no ffmpeg
+here, so my code -- which kept only renditions with a url -- dropped every DASH
+track before anyone could see it. Two changes fix that: `renditionsFromMedia()`
+now resolves a `type: "id"` rendition into `dash:<manifest>#<id>` using the
+media's own `master_url`, and `vdh-subtitles.js` grew an MPD reader that turns
+that reference into text.
+
+**What the new code handles.**
+- An MPD is XML, so it is parsed with a small XML reader written for this
+  module. A service worker has no DOM and therefore no DOMParser, which is the
+  first thing that broke: the manifest parsed fine in a page and silently
+  returned nothing in the worker.
+- AdaptationSets are recognised by `contentType="text"`, by a text mimeType,
+  by codecs (`stpp`, `wvtt`, `webvtt`) or by a `subtitle`/`caption` Role. The
+  video and audio sets are left alone. BaseURLs concatenate up the tree.
+- Both segment shapes: `SegmentTemplate` + `SegmentTimeline`
+  (`$Number$`/`$Time$`/`$RepresentationID$`, with `S@t`, `S@d`, `S@r` repeats
+  walked in order) and fixed-`duration` templates, where the count comes from
+  the Period length and is capped at MAX_SEGMENTS so a live stream cannot run
+  away.
+- TTML -> WebVTT, because DASH carries `application/ttml+xml` far more often
+  than HLS does. Handles `begin`/`end`/`dur`, the frame (`120f`) and clock
+  (`00:00:01.500`) time forms, `<br/>`, and nested spans.
+- Segment cues are shifted by each segment's timeline position, exactly as the
+  HLS path does, so a segmented track comes out continuous instead of restarting
+  at 00:00 every segment.
+
+**One case is refused on purpose.** WebVTT wrapped in MP4 boxes (`wvtt`) is
+binary: the cues live in mdats and reading them needs an ISOBMFF parser this
+module does not have. It is reported as "WebVTT in an MP4 container (wvtt)
+cannot be read as plain text" in the panel rather than written out as a .vtt
+that is really an MP4. A save-all still saves the other languages and reports
+that one.
+
+**Verified, not assumed** -- `scripts/check-dash-subtitles.py`, five parts
+against a fixture MPD served over HTTP (`scripts/test-subtitle-server.py` grew
+the DASH routes): the four AdaptationSets (en single file, es 3 segments, fr
+TTML, de wvtt), each shape stitched into one valid WebVTT with the right
+timings, wvtt refused, the panel path (paste the .mpd address -> Save
+en/es/fr, names read from the panel's own "Saved ..." line and bytes read back
+from the chrome.downloads record, since Playwright renames intercepted
+downloads to a uuid), and the automatic path: a media payload shaped exactly
+like the vendor's `mpd_playlist` one, offering Subtitles: en/es/fr on the
+History row and saving a correctly-timed file from it. RESULT: PASS. All ten
+earlier suites still PASS and the extension audit is clean.
+
+Two bugs worth remembering, both found by the fixture rather than by reading:
+comments in the XML made my reader skip to the *next* `-->` and swallow the
+AdaptationSets between them; and `<br/>` inside a TTML cue lost its place
+("Bonjourtout le monde") until text runs and child elements were recorded in
+document order.
+
+Artifacts rebuilt (same id `gmppgmnjccgklfklpibfkejdjijlnlnd`):
+`vdh-pro-10.6.1.2.crx` 4,294,951 B sha256 1be1716a7f6ba1bd42be3b413785effea76999d566003cf5c3f90d71ba0ada61.

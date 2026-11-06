@@ -10,6 +10,15 @@ path:
                                 the cue times must be offset to stay continuous
   /encrypted/master.m3u8        EXT-X-KEY METHOD=AES-128 -> must be refused
 
+DASH fixtures (an .mpd manifest, parsed as XML rather than as tag lines):
+
+  /dash/manifest.mpd            three text AdaptationSets:
+      en  one complete file                     (Representation + BaseURL)
+      es  SegmentTemplate + SegmentTimeline     (segments must be walked and
+                                                 each shifted by its own start)
+      fr  TTML                                  (converted to WebVTT)
+      de  wvtt, i.e. WebVTT inside MP4 boxes    -> must be refused, not broken
+
 Segments of the segmented variant are deliberately offset in MPEGTS (90000 ticks
 per second): the first starts at 10 s of media time, the second 5 s later. A
 naive concatenation would leave both starting at 00:00, which is exactly the bug
@@ -158,6 +167,123 @@ ROUTES = {
                               "#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:5.0,\nv-1.ts\n#EXT-X-ENDLIST\n"),
 }
 
+
+
+# ------------------------------------------------------------------ DASH ----
+# One manifest, four shapes. The segment timeline starts at 4 s of media time
+# and the segments are 4 s long, so a naive concatenation would leave every
+# segment's cues beginning at 00:00 -- the same bug the HLS fixture catches.
+
+MPD = """<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+     mediaPresentationDuration="PT20S" minBufferTime="PT4S">
+  <Period id="0" duration="PT20S">
+    <AdaptationSet mimeType="video/mp4">
+      <Representation id="v0" bandwidth="800000" codecs="avc1.4d401f">
+        <BaseURL>video.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+
+    <!-- one complete file: the simplest case -->
+    <AdaptationSet contentType="text" mimeType="text/vtt" lang="en">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="subtitle"/>
+      <Representation id="en" bandwidth="256">
+        <BaseURL>en.vtt</BaseURL>
+      </Representation>
+    </AdaptationSet>
+
+    <!-- segmented: SegmentTemplate + SegmentTimeline -->
+    <AdaptationSet contentType="text" mimeType="text/vtt" lang="es" label="Espanol">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="subtitle"/>
+      <Representation id="es" bandwidth="256">
+        <SegmentTemplate timescale="1000" media="es-$Number$.vtt">
+          <SegmentTimeline>
+            <S t="4000" d="4000"/>
+            <S d="4000"/>
+            <S d="4000"/>
+          </SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+
+    <!-- TTML, which DASH uses far more often than HLS does -->
+    <AdaptationSet contentType="text" mimeType="application/ttml+xml" lang="fr">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="subtitle"/>
+      <Representation id="fr" bandwidth="256">
+        <BaseURL>fr.ttml</BaseURL>
+      </Representation>
+    </AdaptationSet>
+
+    <!-- WebVTT inside MP4 boxes: not plain text, must be refused -->
+    <AdaptationSet contentType="text" mimeType="application/mp4" lang="de">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="subtitle"/>
+      <Representation id="de" bandwidth="256" codecs="wvtt">
+        <BaseURL>de.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"""
+
+DASH_VTT_EN = """WEBVTT
+
+1
+00:00:01.000 --> 00:00:03.000
+Hello from the DASH single file
+
+2
+00:00:04.000 --> 00:00:06.500
+Second line
+"""
+
+# three 4s segments starting at 4s of media time; cues are relative to the
+# segment, so the second cue of the result must be at 00:00:08.000
+DASH_SEG_ES_1 = """WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+Empieza aqui
+
+00:00:02.000 --> 00:00:04.000
+y sigue
+"""
+
+DASH_SEG_ES_2 = """WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+Segundo segmento
+
+00:00:02.500 --> 00:00:03.500
+mas texto
+"""
+
+DASH_SEG_ES_3 = """WEBVTT
+
+00:00:00.000 --> 00:00:01.500
+Tercer segmento
+"""
+
+DASH_TTML_FR = """<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="fr">
+  <body>
+    <div>
+      <p begin="00:00:01.000" end="00:00:03.000">Bonjour<br/>tout le monde</p>
+      <p begin="00:00:04.000" end="00:00:06.000">Deuxieme ligne</p>
+    </div>
+  </body>
+</tt>
+"""
+
+DASH_WVTT_DE = "\x00\x00\x00\x18ftypmp42"
+
+ROUTES.update({
+    "/dash/manifest.mpd": ("application/dash+xml", MPD),
+    "/dash/en.vtt": ("text/vtt", DASH_VTT_EN),
+    "/dash/es-1.vtt": ("text/vtt", DASH_SEG_ES_1),
+    "/dash/es-2.vtt": ("text/vtt", DASH_SEG_ES_2),
+    "/dash/es-3.vtt": ("text/vtt", DASH_SEG_ES_3),
+    "/dash/fr.ttml": ("application/ttml+xml", DASH_TTML_FR),
+    "/dash/de.m4s": ("application/mp4", DASH_WVTT_DE),
+})
 
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"

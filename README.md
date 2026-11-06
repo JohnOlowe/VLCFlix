@@ -116,6 +116,40 @@ Chrome build and uses Chromium-only APIs), and use the user's Termux ffmpeg
 of the user's own Pro copy; no redistribution. See
 `docs/ANDROID_PORT_PLAN.md` §3A/§3D and the verification plan in §7.
 
+## Subtitles: HLS and DASH
+
+Both stream types are supported, and both end up as a valid `.vtt` (or `.srt`,
+if that is the chosen format) named after the movie and the language.
+
+- **HLS** (`.m3u8`): the renditions listed by `EXT-X-MEDIA` are read, the
+  segments of the chosen one are fetched, and cues are shifted by each
+  segment's timeline position so the file is continuous.
+- **DASH** (`.mpd`): the manifest is parsed as XML. Text `AdaptationSet`s are
+  recognised by `contentType`, `mimeType`, codecs (`stpp`, `wvtt`, `webvtt`) or
+  a `subtitle`/`caption` Role; `BaseURL`s are concatenated up the tree; and a
+  `SegmentTemplate` is walked, either through its `SegmentTimeline`
+  (`S@t`/`S@d`/`S@r`, with `$Number$`/`$Time$`/`$RepresentationID$` filled in)
+  or from a fixed `duration` bounded by the Period length. TTML, which DASH
+  carries far more often than HLS does, is converted to WebVTT.
+
+  Why this was missing for so long: the app's DASH parser records a subtitle as
+  a Representation **id**, never a URL, because on desktop the track is muxed by
+  ffmpeg rather than fetched. Anything that keeps only renditions with a URL
+  drops every DASH track before it is ever shown. The id is now resolved
+  against the manifest into a `dash:<manifest>#<id>` reference that can be
+  fetched.
+
+**One case is refused on purpose:** WebVTT wrapped in MP4 boxes (`wvtt`) is
+binary — the cues live in mdats and reading them needs an ISOBMFF parser. It is
+reported as *"WebVTT in an MP4 container (wvtt) cannot be read as plain text"*
+instead of being written out as a `.vtt` that is really an MP4. A "save all"
+still saves every other language and reports that one.
+
+Subtitles can be saved from a detected download (the CC badge and the
+**Subtitles: xx** buttons on its History row) or, for a stream that was never
+downloaded, from the address box in **Settings → Subtitles**, which takes
+either an `.m3u8` or an `.mpd` address.
+
 ## Partial files: why they used to disappear
 
 The vendor's own startup routine deletes **every** file in the extension's

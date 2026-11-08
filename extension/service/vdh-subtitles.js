@@ -303,8 +303,13 @@ export async function probeSubtitleRendition({ url, headers }) {
       if (looksLikeMpd(text)) {
         return { ok: false, reason: "that is a DASH manifest: pick one of its languages" };
       }
-      if (/^WEBVTT/.test(text.trimStart()) || looksLikeTtml(text)) return { ok: true };
-      return { ok: false, reason: "not a WebVTT or TTML file" };
+      /* SubRip counts: a plain .srt is a complete subtitle document of its own,
+         and streams do publish them (Tubi serves captions that way) */
+      if (/^WEBVTT/.test(text.trimStart()) || looksLikeTtml(text) ||
+          detectFormat(text) === "srt") {
+        return { ok: true };
+      }
+      return { ok: false, reason: "not a WebVTT, TTML or SubRip file" };
     }
     const plan = parseSubtitlePlaylist(text, url);
     if (plan.encrypted) return { ok: false, reason: `encrypted (${plan.encrypted})` };
@@ -871,6 +876,11 @@ function toWebVtt(text, format) {
     return converted;
   }
   const clean = String(text).replace(/\r/g, "");
+  /* SubRip has no header and separates milliseconds with a comma. Putting a
+     WEBVTT line in front of it would turn it into a WebVTT file that no player
+     can read, so it passes through exactly as served; the keep/smart/srt choice
+     decides later what to do with it. */
+  if (detectFormat(clean) === "srt") return clean;
   return /^WEBVTT/.test(clean.trimStart()) ? clean : "WEBVTT\n\n" + clean;
 }
 

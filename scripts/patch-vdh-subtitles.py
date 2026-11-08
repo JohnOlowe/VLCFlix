@@ -86,7 +86,7 @@ var VDH_JOURNAL_KEY = "vdh_journal",''', "service: import the subtitle module")
 
     # 2. helper: hand a WebVTT document to the browser's download manager
     svc = replace_once(svc, "async function vdhJournalPartialSize(download_id) {",
-                       '''/* vdhSubtitles: the user's format and placement choices.
+                       r'''/* vdhSubtitles: the user's format and placement choices.
      format     "keep"  - exactly what the stream served, no conversion
                 "smart" - SubRip only when nothing meaningful would be lost
                 "srt"   - always SubRip
@@ -104,6 +104,209 @@ async function vdhSubtitleSettings() {
 }
 
 /** Write one subtitle document as <subdir><basename>.<lang>.<vtt|srt> */
+/* vdhSubtitles: subtitle files the page downloads for itself --------------
+   Tubi is the case that forced this. Its subtitles are not in the stream at
+   all: the HLS playlists carry no EXT-X-MEDIA:SUBTITLES, and the captions are
+   a plain .srt on another host (s.adrise.tv) that the player fetches when
+   captions are switched on. No manifest parser can ever see it -- only the
+   network can -- so subtitle documents the page requests for itself are
+   remembered here and offered next to whatever the manifest declared. */
+var VDH_SIDECAR_KEY = "vdh_subtitle_sidecars",
+  VDH_SIDECAR_TTL = 2 * 3600 * 1000,
+  VDH_SIDECAR_KEEP = 40,
+  VDH_SIDECAR_LANGS = ["en", "eng", "es", "spa", "fr", "fre", "de", "ger", "it", "ita",
+    "pt", "por", "nl", "dut", "sv", "swe", "no", "nor", "da", "dan", "fi", "fin", "pl",
+    "pol", "ru", "rus", "uk", "ukr", "cs", "cze", "sk", "slo", "hu", "hun", "ro", "rum",
+    "el", "gre", "tr", "tur", "ar", "ara", "he", "heb", "hi", "hin", "th", "tha", "vi",
+    "vie", "id", "ind", "ms", "may", "ja", "jpn", "ko", "kor", "zh", "chi", "cmn", "yue"];
+
+var vdhSidecars = [],        /* {url, tabId, origin, language, format, at} */
+  vdhSidecarTabs = {},       /* media hash -> tab id, recorded on on_media */
+  vdhSidecarAsked = {};      /* urls already asked about, so it happens once */
+
+function vdhUnwrapSerde(v) {
+  if (v === null || v === undefined) return null;
+  if (Array.isArray(v)) return v.map(vdhUnwrapSerde);
+  if (typeof v !== "object") return v;
+  var tag = v.__serde_tag;
+  if (tag === "none") return null;
+  if (tag === "url") return v.__serde_val;
+  if (tag === "primitive" || tag === "some" || tag === "ok" || tag === "err")
+    return vdhUnwrapSerde(v.__serde_val);
+  if (tag === "object") return v.__serde_val || {};
+  return v.__serde_val !== undefined ? v.__serde_val : v;
+}
+
+function vdhOriginOf(value) {
+  var raw = vdhUnwrapSerde(value);
+  if (raw && typeof raw === "object") raw = raw.href || String(raw);
+  try { return new URL(String(raw)).origin } catch (vdhE) { return "" }
+}
+
+/** The language a subtitle URL advertises, or "" when it advertises none. */
+function vdhSidecarLang(url) {
+  var path = String(url || "").split(/[?#]/)[0],
+    patterns = [/[?&](?:lang|language|srclang)=([a-zA-Z]{2,3})/i,
+                /[._/-]([a-z]{2,3})\.[a-z0-9]{2,4}$/,
+                /\/([a-z]{2,3})\/[a-z0-9._-]*$/],
+    i, m;
+  for (i = 0; i < patterns.length; i++) {
+    m = patterns[i].exec(path);
+    if (m && VDH_SIDECAR_LANGS.indexOf(m[1].toLowerCase()) >= 0) return m[1].toLowerCase();
+  }
+  return "";
+}
+
+/** "srt" | "vtt" | "ttml" | "" (not a subtitle document). */
+function vdhSidecarFormat(url, contentType) {
+  var path = String(url || "").split(/[?#]/)[0].toLowerCase(),
+    ct = String(contentType || "").toLowerCase(),
+    ext = (path.match(/\.([a-z0-9]{2,5})$/) || [])[1] || "";
+  if (ext === "srt") return "srt";
+  if (ext === "vtt" || ext === "webvtt") return "vtt";
+  if (ext === "ttml" || ext === "dfxp") return "ttml";
+  /* .xml on its own is far too common to trust; believe it only when the
+     server says it is TTML */
+  if (ext === "xml") return /ttml|dfxp/.test(ct) ? "ttml" : "";
+  if (/application\/x-subrip|text\/plain.*srt/.test(ct)) return /ttml/.test(ct) ? "ttml" : "srt";
+  if (/text\/vtt|text\/webvtt/.test(ct)) return "vtt";
+  if (/application\/ttml\+xml|application\/xml\+ttml|text\/ttml/.test(ct)) return "ttml";
+  return "";
+}
+
+function vdhSidecarHeader(headers, name) {
+  for (var i = 0; i < (headers || []).length; i++) {
+    var h = headers[i];
+    if (h && typeof h.name === "string" && h.name.toLowerCase() === name) return String(h.value || "");
+  }
+  return "";
+}
+
+function vdhSidecarForgetStale() {
+  var cutoff = Date.now() - VDH_SIDECAR_TTL;
+  vdhSidecars = vdhSidecars.filter(function (s) { return s && s.at > cutoff });
+  if (vdhSidecars.length > VDH_SIDECAR_KEEP)
+    vdhSidecars = vdhSidecars.slice(vdhSidecars.length - VDH_SIDECAR_KEEP);
+}
+
+function vdhSidecarStore() {
+  vdhSidecarForgetStale();
+  try {
+    Vt.default.storage.local.set({ vdh_subtitle_sidecars: vdhSidecars });
+  } catch (vdhE) { console.warn("[vdhSubtitles] sidecar store", vdhE) }
+}
+
+/** A SubRip or WebVTT file the page fetched: remember where it came from. */
+function vdhSidecarNote(details) {
+  try {
+    if (!details || !details.url || typeof details.tabId !== "number" || details.tabId < 0) return;
+    if (details.statusCode && details.statusCode >= 400) return;
+    if (!/^https?:/i.test(details.url)) return;
+    var format = vdhSidecarFormat(details.url, vdhSidecarHeader(details.responseHeaders, "content-type"));
+    if (!format) return;
+    var entry = {
+      url: details.url,
+      tabId: details.tabId,
+      origin: vdhOriginOf(details.initiator || details.originUrl || details.documentUrl || details.url),
+      language: vdhSidecarLang(details.url),
+      format: format,
+      at: Date.now()
+    };
+    for (var i = 0; i < vdhSidecars.length; i++)
+      if (vdhSidecars[i].url === entry.url) { vdhSidecars[i] = entry; vdhSidecarStore(); return; }
+    vdhSidecars.push(entry);
+    vdhSidecarStore();
+    console.log("[vdhSubtitles] subtitle file seen:", format, entry.language || "(no language)",
+                details.url.slice(0, 110));
+    /* the URL usually says nothing about the language (Tubi's does not), so ask
+       the page which caption track it is showing while it is still showing */
+    if (!entry.language) vdhSidecarAskTab(entry);
+  } catch (vdhE) { console.warn("[vdhSubtitles] sidecar note", vdhE) }
+}
+
+function vdhSidecarAskTab(entry) {
+  if (vdhSidecarAsked[entry.url]) return;
+  vdhSidecarAsked[entry.url] = 1;
+  var report = function (results) {
+    try {
+      var value = results && results[0] && results[0].result;
+      if (!value) return;
+      for (var i = 0; i < vdhSidecars.length; i++)
+        if (vdhSidecars[i].url === entry.url)
+          vdhSidecars[i].language = String(value).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 12) || "und";
+      vdhSidecarStore();
+      console.log("[vdhSubtitles] caption language from the page:", value);
+    } catch (vdhE) {}
+  };
+  try {
+    Vt.default.scripting.executeScript({
+      target: { tabId: entry.tabId },
+      func: function () {
+        var out = "",
+          videos = document.querySelectorAll("video"),
+          i, j, tracks, t;
+        for (i = 0; i < videos.length && !out; i++) {
+          tracks = videos[i].textTracks || [];
+          for (j = 0; j < tracks.length; j++) {
+            t = tracks[j];
+            if (t.mode === "showing" && (t.language || t.label)) { out = String(t.language || t.label); break }
+          }
+        }
+        return out;
+      }
+    }).then(report).catch(function (vdhE) { /* tab gone, or the page refused */ });
+  } catch (vdhE) { /* no scripting permission: the URL's own language is all we get */ }
+}
+
+/** Subtitle files seen for this media: same tab, or same site within 2 hours. */
+async function vdhSidecarsForMedia(media, hash) {
+  try {
+    if (!vdhSidecars.length) {
+      var got = await Vt.default.storage.local.get(VDH_SIDECAR_KEY);
+      vdhSidecars = (got && got[VDH_SIDECAR_KEY]) || [];
+    }
+  } catch (vdhE) {}
+  vdhSidecarForgetStale();
+  var tabId = hash ? vdhSidecarTabs[hash] : null,
+    origin = vdhOriginOf((vdhUnwrapSerde(media) || {}).initiator) ||
+             vdhOriginOf((vdhUnwrapSerde(media) || {}).master_url) ||
+             vdhOriginOf((vdhUnwrapSerde(media) || {}).url),
+    out = [];
+  for (var i = 0; i < vdhSidecars.length; i++) {
+    var s = vdhSidecars[i],
+      sameTab = tabId != null && s.tabId === tabId,
+      sameSite = origin && s.origin === origin;
+    if (!sameTab && !sameSite) continue;
+    out.push({
+      url: s.url,
+      language: s.language || "und",
+      type: "sidecar",
+      format: s.format
+    });
+  }
+  return out;
+}
+
+/** Manifest renditions first, then any subtitle file the page fetched, with
+ *  the same URL never offered twice. */
+async function vdhWithSidecarSubtitles(list, media, hash) {
+  var out = [].concat(list || []),
+    seen = {},
+    i;
+  for (i = 0; i < out.length; i++) seen[out[i] && out[i].url] = 1;
+  try {
+    var extra = await vdhSidecarsForMedia(media, hash);
+    for (i = 0; i < extra.length; i++)
+      if (!seen[extra[i].url]) { seen[extra[i].url] = 1; out.push(extra[i]) }
+  } catch (vdhE) { console.warn("[vdhSubtitles] sidecar merge", vdhE) }
+  return out;
+}
+
+try {
+  Vt.default.webRequest.onCompleted.addListener(vdhSidecarNote,
+    { urls: ["<all_urls>"] }, ["responseHeaders"]);
+} catch (vdhE) { console.warn("[vdhSubtitles] sidecar listener", vdhE) }
+
 async function vdhSaveSubtitleFile(rendition, basename, subdir) {
   let track = await fetchSubtitleTrack({
       url: rendition.url,
@@ -149,11 +352,10 @@ async function vdhJournalPartialSize(download_id) {''', "service: subtitle write
     await vdhJournalPut("dl:" + n.download_id, {
       download_id: n.download_id, status: "running",''',
                        '''  try {  /* vdhJournal: durable record of the job, before any transfer */
-    await vdhJournalPut("dl:" + n.download_id, {
-      download_id: n.download_id, status: "running",
-      /* vdhSubtitles: keep the rendition list so the history page can offer the
-         subtitles later, even after a crash or a browser restart */
-      subtitles: (r && r.subtitles && r.subtitles.isSome && r.subtitles.isSome())
+    /* vdhSubtitles: the renditions the stream declared, plus any subtitle file
+       the page downloaded for itself -- Tubi publishes captions that way, as a
+       plain .srt that no playlist mentions (see vdhSidecarNote) */
+    let vdhSubs = (r && r.subtitles && r.subtitles.isSome && r.subtitles.isSome())
         ? r.subtitles.value.map(vdhS => ({
             url: vdhS.url && vdhS.url.href ? vdhS.url.href : String(vdhS.url || ""),
             language: vdhS.language, type: vdhS.type
@@ -161,7 +363,22 @@ async function vdhJournalPartialSize(download_id) {''', "service: subtitle write
         /* fall back to the detected media payload: if the vendor parser missed
            the renditions, the history page can still recover them from the
            serialized media object that Retry already replays */
-        : renditionsFromMedia(e.data.media),''', "service: journal keeps subtitle renditions")
+        : renditionsFromMedia(e.data.media);
+    vdhSubs = await vdhWithSidecarSubtitles(vdhSubs, e.data.media, r && r.hash);
+    await vdhJournalPut("dl:" + n.download_id, {
+      download_id: n.download_id, status: "running",
+      subtitles: vdhSubs,''', "service: journal keeps subtitle renditions")
+
+    # 3b. remember which tab a detected media came from, so a subtitle file that
+    #     page downloads can be attached to the download later
+    svc = replace_once(svc, '''      if (a.name == "on_media") {
+        let d = ze(a.data.media);
+        rm(d, l)''',
+                       '''      if (a.name == "on_media") {
+        let d = ze(a.data.media);
+        /* vdhSubtitles: remember the tab this media came from */
+        try { if (d && d.hash && a.data) vdhSidecarTabs[d.hash] = vdhUnwrapSerde(a.data.tab_id) } catch (vdhE) {}
+        rm(d, l)''', "service: media carries its tab id")
 
     # 4. messages: save one rendition, or all of them for a recorded download
     svc = replace_once(svc, '''      if (a.name == "vdhJournal_retry") {  /* vdhJournal: retry after a crash */''',
@@ -310,8 +527,12 @@ else:
         let r = renditions[i];
         if (!r || !r.url) continue;
         if (unavailable.indexOf(i) >= 0) continue;  /* encrypted / unsupported */
-        let sub = document.createElement("button");
-        sub.textContent = "Subtitles: " + (r.language || "?");
+        let sub = document.createElement("button"),
+          doneList = Array.isArray(e.subtitles_saved) ? e.subtitles_saved : [],
+          isDone = doneList.indexOf(r.language) >= 0;
+        /* a tick that survives the re-render the save itself triggers, so the
+           row still shows what has been saved after a reload */
+        sub.textContent = "Subtitles: " + (r.language || "?") + (isDone ? " \\u2713" : "");
         sub.onclick = async () => {
           sub.disabled = !0;
           sub.textContent = "Fetching\\u2026";

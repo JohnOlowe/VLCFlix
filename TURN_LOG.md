@@ -558,3 +558,58 @@ document order.
 
 Artifacts rebuilt (same id `gmppgmnjccgklfklpibfkejdjijlnlnd`):
 `vdh-pro-10.6.1.2.crx` 4,294,951 B sha256 1be1716a7f6ba1bd42be3b413785effea76999d566003cf5c3f90d71ba0ada61.
+
+## Round 14 - why Tubi showed no subtitles (checked on the real site)
+
+You had installed the build before the Pause fix, and on Tubi a movie
+downloaded with no subtitles at all. Three separate causes, none of them the
+two updates you are missing.
+
+**1. Tubi's captions are not in its stream.** Checked with yt-dlp against a
+real title (Coraline, 667315): Tubi is **HLS**, not DASH, and every playlist is
+a media playlist with `EXT-X-MAP` + `EXT-X-BYTERANGE` and **zero**
+`EXT-X-MEDIA` / `SUBTITLES` entries. The captions are a single complete SubRip
+file on another host (`http://s.adrise.tv/<uuid>.srt`, 89,901 bytes, `,`
+millisecond separators) that the player fetches when captions are switched on.
+No manifest parser can see it -- that is why yt-dlp finds it from Tubi's own
+content API instead. So no build, before or after, could have offered it.
+
+**2. The extension now watches the network for subtitle documents.** A
+`webRequest.onCompleted` listener records any `.vtt` / `.srt` / `.ttml`
+response (by extension, or by content type when the URL says nothing) with its
+tab and origin. When a download starts, those are merged into the record next
+to whatever the manifest declared, marked `type: "sidecar"`. The page is also
+asked which caption track it is showing, so Tubi's UUID-named file still gets
+its language ("en") instead of "und"; a URL that states one ("episode.fr.srt")
+is used as-is.
+
+**3. Two bugs that would have broken it even with the URL.**
+- A plain `.srt` was being labelled WebVTT: `toWebVtt()` glued `WEBVTT` on the
+  front, after which `detectFormat()` called it vtt and saved SubRip timestamps
+  inside a `.vtt`. It now passes straight through.
+- The probe that decides what to offer accepted only WebVTT and TTML, so
+  **every SubRip rendition was marked unavailable and hidden** -- the HLS
+  "served as .srt" fixture existed but nothing asserted on it, which is why
+  this went unnoticed. SubRip is now accepted.
+
+Also: the tick on a saved language was wiped by the re-render the save itself
+triggers; it is now rendered from `subtitles_saved`, so it survives a reload.
+
+**Verified** with `scripts/check-sidecar-subtitles.py` against a Tubi-shaped
+fixture page (`/sidecar/` in the subtitle server: a player that fetches two
+.srt files, one UUID-named with no language, and keeps a text track showing):
+both files noticed as SubRip and tied to the page, `en` recovered from the
+page, both riding along on a download whose own playlist declares no subtitles,
+and the saved file a real SubRip (`1 / 00:00:07,073 --> 00:00:10,377`, not
+`WEBVTT` + commas), named `.en.srt`, marked saved on the record and ticked on
+the row. RESULT: PASS. All twelve suites pass; extension audit clean.
+
+**How to use it on Tubi:** switch captions on in the Tubi player (the page only
+fetches the file when a track is showing), then start the download -- or start
+the download and turn captions on, then open History. Only the track the page
+actually loaded can be offered: Tubi publishes the list through its own API,
+not through the stream.
+
+Artifacts rebuilt (id `gmppgmnjccgklfklpibfkejdjijlnlnd`):
+`vdh-pro-10.6.1.2.crx` 4,298,186 B sha256
+9abc0001ec07d2cf7e914c1b14c5600046b93b0a81bcd1cf6601efe129ba15da.

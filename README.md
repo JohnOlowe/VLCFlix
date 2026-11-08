@@ -139,6 +139,21 @@ if that is the chosen format) named after the movie and the language.
   against the manifest into a `dash:<manifest>#<id>` reference that can be
   fetched.
 
+**Captions that are not in the stream.** Some sites never mention their
+subtitles in the playlist or manifest; the page just downloads a subtitle file
+of its own when captions are switched on. Tubi is the extreme case: its HLS
+playlists carry no `EXT-X-MEDIA:SUBTITLES` at all, and the captions are one
+plain `.srt` on another host (`s.adrise.tv`). No manifest parser can see that,
+so the extension also watches the network: any `.vtt`, `.srt` or `.ttml`
+response the page fetches is remembered with the tab it came from and offered
+alongside the manifest's own renditions, marked as page-fetched. Where the URL
+says nothing about the language (Tubi's does not), the page is asked which
+caption track is showing.
+
+Because the file only exists once the player has fetched it, **turn captions on
+in the player before starting the download** — or start the download, turn them
+on, then open History. Only the tracks the page actually loaded can be offered.
+
 **One case is refused on purpose:** WebVTT wrapped in MP4 boxes (`wvtt`) is
 binary — the cues live in mdats and reading them needs an ISOBMFF parser. It is
 reported as *"WebVTT in an MP4 container (wvtt) cannot be read as plain text"*

@@ -10,6 +10,14 @@ path:
                                 the cue times must be offset to stay continuous
   /encrypted/master.m3u8        EXT-X-KEY METHOD=AES-128 -> must be refused
 
+A Tubi-shaped fixture (`/sidecar/`), for scripts/check-sidecar-subtitles.py.
+Tubi's captions are not in its stream at all: the HLS playlists carry no
+EXT-X-MEDIA:SUBTITLES, and the page downloads a plain .srt from another host
+(s.adrise.tv on the real site) when captions are switched on. So this page
+fetches two .srt files the way such a player does -- one with a language in the
+URL, one with a UUID name and no language anywhere -- and keeps a text track
+showing so the extension can ask the page which language is on screen.
+
 DASH fixtures (an .mpd manifest, parsed as XML rather than as tag lines):
 
   /dash/manifest.mpd            three text AdaptationSets:
@@ -284,6 +292,55 @@ ROUTES.update({
     "/dash/fr.ttml": ("application/ttml+xml", DASH_TTML_FR),
     "/dash/de.m4s": ("application/mp4", DASH_WVTT_DE),
 })
+
+# --------------------------------------------------------------- sidecar ----
+# named like Tubi's: a UUID, no language in the URL
+SIDECAR_SRT = """1
+00:00:07,073 --> 00:00:10,377
+[eerie music]
+
+2
+00:00:18,918 --> 00:00:21,821
+Bonjour tout le monde
+
+3
+00:00:47,080 --> 00:00:49,149
+This is the sidecar caption file
+"""
+
+SIDECAR_SRT_FR = """1
+00:00:05,000 --> 00:00:08,000
+Sous-titre francais
+
+2
+00:00:12,000 --> 00:00:15,000
+Deuxieme ligne
+"""
+
+SIDECAR_PAGE = """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sidecar captions fixture</title></head>
+<body>
+<video id="v" muted playsinline width="320" height="180">
+  <track id="tr" kind="subtitles" srclang="en" label="English" default>
+</video>
+<script>
+  /* a player that fetches its captions itself, as Tubi's does */
+  fetch('/sidecar/21eb2f30-70a3-4999-af4e-535f09e56a42.srt');
+  fetch('/sidecar/episode.fr.srt');
+  const tr = document.getElementById('tr');
+  try { tr.mode = 'showing'; } catch (e) {}
+</script>
+</body>
+</html>
+"""
+
+ROUTES.update({
+    "/sidecar/index.html": ("text/html", SIDECAR_PAGE),
+    "/sidecar/21eb2f30-70a3-4999-af4e-535f09e56a42.srt": ("application/x-subrip", SIDECAR_SRT),
+    "/sidecar/episode.fr.srt": ("application/x-subrip", SIDECAR_SRT_FR),
+})
+
 
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"

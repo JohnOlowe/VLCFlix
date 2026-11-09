@@ -886,10 +886,12 @@ if '<vbox id="vdh_journal_box"' in html:
     print("skip (already patched): content/history.html")
 else:
     BLOCK = '''<vbox id="vdh_journal_box" class="roundedbox" hidden>
-        <h2>Storage &amp; interrupted downloads</h2>
-        <p id="vdh_storage_info">Checking...</p>
-        <vbox id="vdh_journal_list"></vbox>
-        <button id="vdh_purge_blobs">Purge leftover files</button>
+        <details id="vdh_journal_details" open>
+          <summary><h2>Storage &amp; interrupted downloads</h2></summary>
+          <p id="vdh_storage_info">Checking...</p>
+          <vbox id="vdh_journal_list"></vbox>
+          <button id="vdh_purge_blobs">Purge leftover files</button>
+        </details>
       </vbox>
       '''
     anchor = '<hbox id="history_controls"'
@@ -915,6 +917,7 @@ word-break: break-word;
 #vdh_journal_box {
 padding: 10px;
 margin-top: var(--spacing-medium);
+min-width: 0;
 }
 """ + style_anchor)
     HISTORY_HTML.write_text(html, encoding="utf-8")

@@ -185,6 +185,26 @@ sweeps the orphans. `scripts/check-partials.py` proves it across a real browser
 restart, and `navigator.storage.persist()` is requested on top of the
 `unlimitedStorage` permission the manifest already declares.
 
+### The history page scrolls, and the storage box cannot fill it
+
+The vendor's `history.html` sets `overflow: hidden` on `html`, so `#main` is the
+only scroll container — but the app also sets `flex-shrink: unset` on `#main`,
+which makes it grow to content height and clip everything past the bottom of the
+screen instead of scrolling it. On top of that, the **Storage & interrupted
+downloads** box we add grew with the number of records (854px with only eight),
+pushing the *"do you want Video Download Helper to remember your download
+history?"* prompt, the search box and the Clear history button off the bottom.
+
+`scripts/patch-vdh-mobile-ui.py` now constrains `#main` (`flex: 1 1 auto;
+min-height: 0; max-height: 100%`) so its existing `overflow-y: auto` engages,
+and bounds `#vdh_journal_list` to `min(38vh, 320px)` with its own scrollbar.
+`scripts/patch-vdh-download-journal.py` wraps the box in a `<details>` so one tap
+on the heading folds the whole thing away. `scripts/check-history-scroll.py`
+proves the page reaches its last element, that the box stays under 60% of the
+screen, that it folds and unfolds, and that the history controls below it are
+reachable — at 412x800 and 360x640, at 5px and 15px text, and inside the panel's
+history overlay.
+
 Two things storage cannot survive: **uninstalling or reinstalling the
 extension** (the browser deletes the origin's data) and, on Edge Canary
 Android, a **browser restart that removes a side-loaded extension**. Nothing in

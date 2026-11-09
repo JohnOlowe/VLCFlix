@@ -674,3 +674,79 @@ a cached list and a background refresh corrects them.
 Artifacts rebuilt (id `gmppgmnjccgklfklpibfkejdjijlnlnd`):
 `vdh-pro-10.6.1.2.crx` 4,301,345 B sha256
 16e5211e016d45749283b49a15c40dab2b5b6f873286b3dff935e4d48bdf53eb.
+
+## Round 16 — the history page would not scroll, and the storage box filled it
+
+**Reported:** *"the history page doesn't scroll down completely, right now it's
+the storage and interrupted downloads that is filling up the screen, the other
+clear history do not remember my history and what is below it cannot be
+scrolled to."*
+
+### What was actually wrong (measured, not guessed)
+
+Two independent faults, both reproduced against the real extension at 412x800
+with 8 seeded records:
+
+1. **The page could not scroll at all — content past the bottom was clipped and
+   unreachable.** `html` carries `overflow: hidden !important`, so `#main` is the
+   intended scroll container, and it did have `overflow-y: auto !important`. But
+   the app's own CSS sets `flex-shrink: unset` on `#main`, so as a flex child of
+   a fixed-height body it grew to its content height — measured **1046px on an
+   800px screen, `maxHeight: none`** — and its own overflow never engaged.
+   A flex child with `overflow-y: auto` does not scroll unless it is
+   height-constrained.
+
+2. **The "Storage & interrupted downloads" box grew without bound.** Measured
+   **854px tall with only 8 records** — taller than the viewport — which pushed
+   the vendor's *"We do not record your download history… Enable History"*
+   prompt, the search box and the Clear history button off the bottom.
+
+### The fix
+
+* `scripts/patch-vdh-mobile-ui.py` — `#main, #settings` gained
+  `flex: 1 1 auto; min-height: 0; max-height: 100%` (all `!important`), which
+  lets the existing `overflow-y: auto` finally engage.
+* `scripts/patch-vdh-mobile-ui.py` — `#vdh_journal_list` bounded to
+  `max-height: min(38vh, 320px)` with `overflow-y: auto`, plus `<details>`/
+  `<summary>` styling.
+* `scripts/patch-vdh-download-journal.py` — the markup block is now wrapped in
+  `<details id="vdh_journal_details" open><summary><h2>…</h2></summary>`, so the
+  whole box folds away with one tap; `#vdh_journal_box` gained `min-width: 0`.
+
+### Result
+
+At 412x800 with 12 seeded records: the box is **427px of an 800px screen (53%)**
+instead of 854px+filling it, folds to **39px** on one tap, and `#main` measures
+**780px** — inside its 800px screen and genuinely scrollable (on a 420px-tall
+screen it scrolls 474px of content in 400px). The Enable History button,
+`#history_controls` and the Clear history button are all reachable and working.
+Holds at 360x640, inside the panel's history overlay, and at text sizes 5px
+and 15px.
+
+New suite **`scripts/check-history-scroll.py`** (Parts A–E) → **RESULT: PASS**.
+Full regression: the 13 standing suites all **PASS** (the `#main` flex change
+touches every page, so popup/sidebar/settings were re-verified), and
+`check-real-extension.py` reports `errors: []`.
+
+### Lesson recorded
+
+Two traps cost time here and are worth keeping:
+
+* **CSS added to `patch-vdh-download-journal.py` is silently skipped.** Its CSS
+  block is guarded by `if "vdh_journal_row" not in html`, and
+  `patch-vdh-mobile-ui.py` already writes that string — so the guard is false and
+  nothing lands in the build. All `history.html` CSS belongs in the mobile-ui
+  patch; verify by grepping the built file, never by the patch printing
+  "patched".
+* **Assert "reachable", not "on screen at the bottom of the page."** A box
+  taller than the viewport legitimately cannot be fully visible at the
+  bottommost scroll position; the honest test is that scrolling can bring it
+  into view, and that its own list scrolls to the last row and the Purge button.
+
+### Artifacts (id `gmppgmnjccgklfklpibfkejdjijlnlnd`)
+
+| file | bytes | sha256 |
+|---|---|---|
+| `vdh-pro-10.6.1.2.crx` | 4,302,738 | `dd2e703e93174d2e1578155c9dce4acd070e4a98af5fa5d7144376b400b78e7a` |
+| `vdh-pro-10.6.1.2-crx.zip` | 4,302,876 | `8db9fcf4c045bb13526ce408924119d51457551ed39ed1d7c8b0fa651ed3eaca` |
+| `vdh-pro-10.6.1.2-sideload.zip` | 4,286,678 | `1c4953b611f2fc2d9aeba26635e0b4abea010dc018d0f0d3662034c9ee119755` |

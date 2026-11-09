@@ -240,7 +240,18 @@ body {
 }
 #main > *, #settings > * { margin-left: var(--spacing-medium) !important;
                            margin-right: var(--spacing-medium) !important; }
-#main, #settings { overflow-y: auto !important; }
+/* #main is the page's scroll container: html itself is `overflow: hidden` by
+   design. But #main is a flex child that will not shrink (`flex-shrink: unset`
+   in the app's own CSS), so it grows to the height of its content instead of to
+   the height of the space it has -- its own `overflow-y: auto` never engages,
+   and everything past the bottom of the screen is clipped and simply cannot be
+   reached. Give it the space it has, no more, and let it scroll inside that. */
+#main, #settings {
+  overflow-y: auto !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+}
 com-media, com-debug, com-banner, #nomedia {
   margin-left: var(--spacing-medium) !important;
   margin-right: var(--spacing-medium) !important;
@@ -276,6 +287,28 @@ h1 > img {
   padding: max(4px, calc(var(--vdh-ui-base-font) * 0.47619)) !important;
 }
 #vdh_journal_box button { max-width: 100% !important; }
+/* The journal list is the part that grows: a phone with a dozen interrupted
+   downloads used to push everything below the box -- the app's own "remember my
+   history" prompt, the search box, the Clear history button -- off the bottom of
+   the screen. The list scrolls inside a bounded height, and the whole box folds
+   away with one tap on its heading. */
+#vdh_journal_list {
+  max-height: min(38vh, 320px) !important;
+  overflow-y: auto !important;
+  min-width: 0 !important;
+}
+#vdh_journal_details > summary {
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  list-style-position: inside !important;
+}
+#vdh_journal_details > summary h2 {
+  display: inline !important;
+  margin: 0 !important;
+  font-size: 1em !important;
+}
+#vdh_journal_details[open] > summary { margin-bottom: 6px !important; }
 .vdh_journal_row {
   gap: max(2px, calc(var(--vdh-ui-base-font) * 0.38095)) !important;
   padding: max(2px, calc(var(--vdh-ui-base-font) * 0.28571)) 0 !important;

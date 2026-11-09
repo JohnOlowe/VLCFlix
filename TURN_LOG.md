@@ -613,3 +613,64 @@ not through the stream.
 Artifacts rebuilt (id `gmppgmnjccgklfklpibfkejdjijlnlnd`):
 `vdh-pro-10.6.1.2.crx` 4,298,186 B sha256
 9abc0001ec07d2cf7e914c1b14c5600046b93b0a81bcd1cf6601efe129ba15da.
+
+## Round 15 - two finished movies stranded in storage, Retry downloading them again
+
+What was reported: two Tubi movies finished downloading, the browser died while
+the extension was handing them to the download manager, and on reopening both
+still said "running". Retry then downloaded them again from the beginning while
+the finished copies stayed in storage -- 2.72 GB held, nothing saved.
+
+**Why the row said "running".** The record keeps the last state the download
+reported, and the crash happened before the terminal write. The row did have a
+rule for this -- `if (state === "running" && !ids.length)` -- but it only fired
+when the file was *gone*. Here the file was still there (that was the whole
+problem), so the row cheerfully claimed a download was in progress. The history
+page now asks the service worker what is actually transferring
+(`vdhJournal_live`, read from the scheduler's own downloading map) and only says
+"downloading" when it is. Otherwise it says what is true: **"downloaded, waiting
+to be saved"**, or **"interrupted at NN%"**.
+
+**Why Retry downloaded everything again.** The byte-range resume from round 9 is
+inside `Ur()`, the *progressive* (`http_*`) path. Tubi is HLS, which goes through
+`Vr()`, and that opens the output file and starts from zero -- so a retry both
+threw away the finished file and re-fetched all of it. HLS cannot be resumed
+mid-file (the muxer has to start the container again), so the fix is not to
+resume it: it is **not to re-download what is already complete**.
+
+- New `vdhJournalFinish()`: asks the download worker for a blob URL of the file
+  already on disk (only an offscreen document can mint one), hands that to
+  `chrome.downloads`, then removes the private copy so the space comes back. No
+  bytes are fetched.
+- Retry on a complete file now calls it instead of re-running the job, so the
+  old and new paths agree.
+- The row grows a **Save** button for exactly this case.
+- A *partial* HLS or DASH job still has to start over, so it now says so --
+  "interrupted at 63% (cannot resume)", the button reads **Start over**, and it
+  asks before discarding what is already there. Progressive jobs keep plain
+  Retry, because those really do resume.
+
+One real bug found while testing: the hand-off built the filename straight from
+the serialized job, so every field was still serde-wrapped and the file was
+named `[object Object].[object Object]`. The record stores the job exactly as
+the panel serialized it, so it has to be unwrapped first.
+
+**Verified** with `scripts/check-stranded-download.py`, which drives the real
+extension into the reported state -- a finished file in private storage, record
+saying "running", and a job whose URL is a 404 so that any re-fetch would show:
+the row says "downloaded, waiting to be saved" and offers Save; Save completes
+with all 65536 bytes and the right filename although the job's URL does not
+exist; the file disappears from storage and the record says done; Retry on a
+finished file hands it over rather than downloading; a 42% progressive file
+still reads "interrupted at 42%" with Retry and no Save; and a 63% HLS file
+warns before discarding 59 KB and leaves the file alone when dismissed.
+RESULT: PASS, as do the twelve earlier suites.
+
+Note on reading this back: the live-status lookup originally sat in the middle
+of the render, which delayed the first paint enough to break
+check-subtitle-options (it queried the row immediately). The rows now draw from
+a cached list and a background refresh corrects them.
+
+Artifacts rebuilt (id `gmppgmnjccgklfklpibfkejdjijlnlnd`):
+`vdh-pro-10.6.1.2.crx` 4,301,345 B sha256
+16e5211e016d45749283b49a15c40dab2b5b6f873286b3dff935e4d48bdf53eb.

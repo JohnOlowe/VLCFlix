@@ -147,6 +147,79 @@ async function vdhJournalDropFiles(download_id) {
   } catch (vdhE) {}
   return freed;
 }
+/* Is this download complete but never handed to the browser? That happens when
+   the browser dies during the last step (the copy out of private storage): the
+   journal still says "running", the bytes are all there, and re-running the job
+   would fetch the whole thing again and overwrite them. */
+function vdhJournalIsComplete(rec, onDisk) {
+  if (!rec) return false;
+  let pct = Number(rec.percent && rec.percent.value !== undefined
+    ? rec.percent.value : rec.percent);
+  if (pct >= 100) return true;
+  /* no percentage (a playlist job that never reported one): fall back on the
+     byte count the progress messages recorded, with a little slack because the
+     muxed output is not exactly the sum of the segments */
+  let wanted = Number(rec.bytes) || 0;
+  return wanted > 0 && onDisk > 0 && onDisk >= wanted * 0.98;
+}
+
+/* Hand a file that is already on disk to the browser. No bytes are fetched: the
+   worker mints a blob URL for the file it already has, and the normal
+   chrome.downloads hand-off does the rest. */
+async function vdhJournalFinish(rec) {
+  /* the record stores the job exactly as the panel serialized it, so every
+     field is still wrapped: unwrapped, `extension` is an object and the file
+     would be named "[object Object]" */
+  let vdhUnwrap = v => (v && typeof v === "object" && "__serde_tag" in v)
+      ? (v.__serde_tag === "none" ? "" : vdhUnwrap(v.__serde_val)) : v,
+    raw = (rec.download_args && rec.download_args.__serde_val) || rec.download_args || {},
+    id = rec.download_id,
+    ext = vdhUnwrap(raw.extension) || "mp4",
+    base = vdhUnwrap(raw.good_basename) ||
+           String(rec.filename || "download").replace(/[.][A-Za-z0-9]{1,5}$/, ""),
+    subdir = vdhUnwrap(raw.subdir) || "";
+  await Hn();   /* make sure the offscreen worker is up after a restart */
+  let got = await new Promise(resolve => {
+    let off = Xt(o => {
+      if (o.name == "vdh_finish_result" && o.data.download_id == id) { off(); resolve(o.data) }
+      else if (o.name == "vdh_finish_error" && o.data.download_id == id) { off(); resolve({ error: o.data.error }) }
+    });
+    wr({ name: "vdh_finish", data: { download_id: id, extension: ext } });
+  });
+  if (!got || got.error) throw new Error((got && got.error) || "no file on disk");
+  let name = subdir + base + "." + ext,
+    browserId = null;
+  try {
+    browserId = await Vt.default.downloads.download({
+      url: got.blob_url, filename: name, conflictAction: "uniquify", saveAs: false
+    });
+  } finally {
+    wr({ name: "revoke_blob_url", data: { blob_url: got.blob_url } });
+  }
+  /* the browser owns the bytes now: give the space back */
+  try { await (await navigator.storage.getDirectory()).removeEntry(got.internal_filename) } catch (vdhE) {}
+  await vdhJournalPut("dl:" + id, {
+    status: "done", percent: 100, bytes: got.size || rec.bytes || 0,
+    path: name, browser_download_id: browserId, error: null
+  });
+  console.log("[vdhJournal] handed over", name, "from disk,", got.size, "bytes");
+  return { filename: name, size: got.size || 0 };
+}
+
+/* Which downloads are actually transferring right now, so the history page can
+   tell a live download from one that only looks live because the browser died
+   before the record was updated. */
+async function vdhJournalLive() {
+  let out = [];
+  try {
+    for (let job of (fe() && fe().downloading ? fe().downloading.values() : [])) {
+      let hash = job && job.media && job.media.hash;
+      if (hash) out.push(hash);
+    }
+  } catch (vdhE) {}
+  return out;
+}
+
 /* Re-create a queued download from a journal record. Runs in its own async
    context so the job keeps going after the message handler returns; the task
    scheduler is internal to that context, so it is built fresh here. */
@@ -168,6 +241,15 @@ async function vdhJournalRetry(rec) {
      size. The download id is reused so that file is picked up as-is. */
   let args = JSON.parse(JSON.stringify(rec.download_args));
   let kept = await vdhJournalPartialSize(rec.download_id);
+  /* A finished file must never be fetched again. HLS and DASH jobs cannot
+     resume mid-file anyway -- the muxer starts over -- so without this a retry
+     after a crash during the hand-off both throws away the finished download
+     and re-downloads all of it. */
+  if (vdhJournalIsComplete(rec, kept)) {
+    console.log("[vdhJournal] complete file already on disk for", rec.download_id,
+                "-- handing it over instead of downloading it again");
+    return await vdhJournalFinish(rec);
+  }
   if (kept) console.log("[vdhJournal] resuming", rec.download_id,
                         "from byte", kept);
   else console.log("[vdhJournal] no partial file left, starting fresh");
@@ -289,6 +371,35 @@ async function vdhJournalRetry(rec) {
         a.name == "resume_download") && vdhPause(a.data.download_id, a.name == "pause_download");''',
                        '''      (a.name == "pause_download" ||
         a.name == "resume_download") && vdhPause(a.data.download_id, a.name == "pause_download");
+      if (a.name == "vdhJournal_live") {  /* vdhJournal: what is transferring now */
+        try {
+          await Vt.default.storage.local.set({
+            vdh_journal_live: { at: Date.now(), ids: await vdhJournalLive() }
+          });
+        } catch (vdhE) { console.warn("[vdhJournal] live list failed", vdhE) }
+        return;
+      }
+      if (a.name == "vdhJournal_finish") {  /* vdhJournal: save a finished file */
+        try {
+          let vdhGot = await Vt.default.storage.local.get(VDH_JOURNAL_KEY),
+            vdhRec = (vdhGot[VDH_JOURNAL_KEY] || {})[a.data.key];
+          if (!vdhRec) {
+            await Vt.default.storage.local.set({ vdh_journal_finish_reply: {
+              ok: false, at: Date.now(), key: a.data.key, error: "no such record" } });
+            return;
+          }
+          let vdhOut = await vdhJournalFinish(vdhRec);
+          await Vt.default.storage.local.set({ vdh_journal_finish_reply: {
+            ok: true, at: Date.now(), key: a.data.key,
+            filename: vdhOut.filename, size: vdhOut.size } });
+        } catch (vdhE) {
+          console.error("[vdhJournal] finish failed", vdhE);
+          await Vt.default.storage.local.set({ vdh_journal_finish_reply: {
+            ok: false, at: Date.now(), key: a.data.key,
+            error: String(vdhE && vdhE.message || vdhE) } });
+        }
+        return;
+      }
       if (a.name == "vdhJournal_retry") {  /* vdhJournal: retry after a crash */
         try {
           let vdhGot = await Vt.default.storage.local.get(VDH_JOURNAL_KEY),
@@ -433,6 +544,48 @@ else:
   }
   let n = new q(t.download_id),""", "worker: Ur picks the resume offset")
 
+
+    # vdh_finish: hand the browser a file that is already on disk. This is the
+    # crash-during-hand-off case -- the bytes are complete in private storage but
+    # the browser never received them, and re-running the job starts from zero
+    # and overwrites them. Only an offscreen document can mint a blob URL, so
+    # the worker makes it and the service worker does the chrome.downloads call.
+    worker = replace_once(worker,
+        """} else e.name == "revoke_blob_url" ? URL.revokeObjectURL(e.data.blob_url) : e.name == "is_ready" && ie({ name: "is_ready_success", data: null })""",
+        """} else if (e.name == "vdh_finish") {
+      try {
+        let vdhDir = await navigator.storage.getDirectory(),
+          vdhWant = e.data.download_id,
+          vdhName = null,
+          vdhSize = 0;
+        for await (let vdhN of vdhDir.keys()) {
+          if (vdhN === vdhWant || vdhN.indexOf(vdhWant + ".") === 0 ||
+              vdhN.indexOf(vdhWant + "_") === 0) { vdhName = vdhN; break }
+        }
+        if (!vdhName) ie({
+          name: "vdh_finish_error",
+          data: { download_id: vdhWant, error: "nothing on disk for this download" }
+        });
+        else {
+          vdhSize = (await (await vdhDir.getFileHandle(vdhName)).getFile()).size || 0;
+          ie({
+            name: "vdh_finish_result",
+            data: {
+              download_id: vdhWant, internal_filename: vdhName, size: vdhSize,
+              blob_url: await Q({ extension: e.data.extension }, vdhName)
+            }
+          });
+        }
+      } catch (vdhE) {
+        ie({
+          name: "vdh_finish_error",
+          data: { download_id: e.data.download_id,
+                  error: String(vdhE && vdhE.message || vdhE) }
+        })
+      }
+    } else e.name == "revoke_blob_url" ? URL.revokeObjectURL(e.data.blob_url) : e.name == "is_ready" && ie({ name: "is_ready_success", data: null })""",
+        "worker: hand over a file already on disk")
+
     WORKER_FILE.write_text(worker, encoding="utf-8")
     check_js(WORKER_FILE)
     # a comment that closes early is invisible to a CJS parse; assert the marker
@@ -482,12 +635,45 @@ var VDH_STORAGE = {
       return { journal: got[this.journal_key] || {}, purge: got.vdh_last_purge || null };
     } catch { return { journal: {}, purge: null } }
   },
+  /* A record can say "running" long after the browser died mid-download, so the
+     service worker is asked what is actually transferring before the row claims
+     anything is in progress. */
+  liveIds: [],
+  async live() {
+    try {
+      await chrome.runtime.sendMessage({
+        msg: { name: "vdhJournal_live", data: {} }, channel: 1
+      });
+      await new Promise(r => setTimeout(r, 250));
+      let got = await chrome.storage.local.get("vdh_journal_live");
+      return (got.vdh_journal_live && got.vdh_journal_live.ids) || [];
+    } catch { return [] }
+  },
+  /* Ask the service worker what is really transferring, and redraw only if the
+     answer changed. Called after a render, so the rows appear immediately and
+     correct themselves a moment later. */
+  async refreshLive() {
+    let ids = await this.live(),
+      same = ids.length === this.liveIds.length &&
+             ids.every((v, i) => v === this.liveIds[i]);
+    if (same) return;
+    this.liveIds = ids;
+    try { await this.refresh() } catch (vdhE) {}
+  },
+  complete(e, on_disk) {
+    if (!e) return false;
+    let pct = Number(e.percent && e.percent.value !== undefined ? e.percent.value : e.percent);
+    if (pct >= 100) return true;
+    let wanted = Number(e.bytes) || 0;
+    return wanted > 0 && on_disk > 0 && on_disk >= wanted * 0.98;
+  },
   async refresh() {
     let box = document.getElementById("vdh_journal_list"),
       info = document.getElementById("vdh_storage_info");
     if (!box || !info) return;
     let { journal, purge } = await this.records(),
       files = await this.opfs(),
+      liveIds = this.liveIds,
       bytes = 0;
     for (let size of files.values()) bytes += size;
     let est = {};
@@ -515,17 +701,77 @@ var VDH_STORAGE = {
       let label = document.createElement("span");
       label.className = "vdh_journal_label";
       let size = e.bytes ? this.fmt(e.bytes) : (on_disk ? this.fmt(on_disk) : "0 B");
-      let pct = e.percent ? " - " + Math.round(e.percent) + "%" : "";
-      let state = e.status || "unknown";
-      if (state === "running" && !ids.length) state = "interrupted (partial file gone)";
+      let pctNum = e.percent && e.percent.value !== undefined ? e.percent.value : e.percent;
+      let pct = pctNum ? " - " + Math.round(pctNum) + "%" : "";
+      let vdhArgs = (e.download_args && e.download_args.__serde_val) || e.download_args || {},
+        vdhUn = v => (v && typeof v === "object" && "__serde_tag" in v)
+          ? vdhUn(v.__serde_val) : v,
+        vdhCanResume = /^http_/.test(String(vdhUn(vdhArgs.strategy) || ""));
+      let state = e.status || "unknown",
+        isLive = liveIds.indexOf(e.media_hash) >= 0,
+        isWhole = this.complete(e, on_disk);
+      /* "running" only means running while something is running. After the
+         browser dies the record keeps its last state, so the row has to say
+         what is really true: finished but never handed over, or interrupted. */
+      if (state === "running") {
+        if (isLive) state = "downloading";
+        else if (!ids.length) state = "interrupted (nothing saved)";
+        else if (isWhole) state = "downloaded, waiting to be saved";
+        else state = "interrupted at " + Math.round(pctNum || 0) + "%"
+          + (vdhCanResume ? "" : " (cannot resume)");
+      }
+      if (state === "running" && !isLive && !ids.length) state = "interrupted (partial file gone)";
       label.textContent = (e.filename || e.download_id) + " - " + state +
         " - " + size + pct;
       row.appendChild(label);
 
+      /* The file is finished but the browser never got it (it died during the
+         hand-off). Hand over what is already there: no bytes are fetched, and
+         the space in extension storage is released. */
+      if (isWhole && !isLive && ids.length) {
+        let save = document.createElement("button");
+        save.textContent = "Save";
+        save.title = "Already downloaded - hand this file to the browser "
+          + "without downloading it again";
+        save.onclick = async () => {
+          save.disabled = !0;
+          save.textContent = "Saving...";
+          try {
+            await chrome.runtime.sendMessage({
+              msg: { name: "vdhJournal_finish", data: { key } }, channel: 1
+            });
+          } catch (vdhE) { console.warn("[vdhJournal] save send failed", vdhE) }
+          setTimeout(() => {
+            save.disabled = !1;
+            save.textContent = "Save";
+            VDH_STORAGE.refresh();
+          }, 2500);
+        };
+        row.appendChild(save);
+      }
       if (e.download_args && e.media && e.meta) {
         let retry = document.createElement("button");
-        retry.textContent = "Retry";
+        /* A progressive (http_*) job continues from the bytes already on disk.
+           An HLS or DASH job cannot: the muxer starts the file again, so the
+           part already downloaded is discarded. Say which it is, and ask
+           before throwing work away. */
+        /* vdhArgs / vdhUn / vdhCanResume are already in scope above */
+        let vdhStrategy = String(vdhUn(vdhArgs.strategy) || ""),
+          vdhResumable = vdhCanResume,
+          vdhPartial = !isWhole && on_disk > 0,
+          vdhLabel = vdhPartial && !vdhResumable ? "Start over" : "Retry";
+        retry.textContent = vdhLabel;
         retry.onclick = async () => {
+          if (vdhPartial && !vdhResumable) {
+            let go = confirm(
+              "This download is " + Math.round(pctNum || 0) + "% done, but a "
+              + (vdhStrategy.indexOf("mpd") === 0 ? "DASH" : "HLS")
+              + " stream cannot be resumed: the part already downloaded ("
+              + (on_disk ? this.fmt(on_disk) : "some bytes")
+              + ") will be discarded and the download will start again.\n\n"
+              + "Start over anyway?");
+            if (!go) return;
+          }
           retry.disabled = !0;
           retry.textContent = "Starting...";
           try {
@@ -536,7 +782,7 @@ var VDH_STORAGE = {
           } catch (vdhE) { console.warn("[vdhJournal] retry send failed", vdhE) }
           setTimeout(() => {
             retry.disabled = !1;
-            retry.textContent = "Retry";
+            retry.textContent = vdhLabel;
             VDH_STORAGE.refresh();
           }, 2000);
         };
@@ -568,6 +814,7 @@ var VDH_STORAGE = {
       row.appendChild(del);
       box.appendChild(row);
     }
+    this.refreshLive();
   },
   async purge(button) {
     button.disabled = !0;
